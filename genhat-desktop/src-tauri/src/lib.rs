@@ -1,16 +1,16 @@
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-  tauri::Builder::default()
-    .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
-      Ok(())
-    })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
-}
+//! GenHat — The Local Intelligence Engine
+//!
+//! Module structure:
+//!   config/     — Configuration loading (models.toml)
+//!   registry/   — Model definitions and lookups
+//!   backends/   — Model backend implementations (llama-server, etc.)
+//!   process/    — Process manager (spawn, health, reap, shutdown)
+//!   router/     — Task routing (maps requests to models)
+//!   commands/   — Tauri IPC command handlers
+
+pub mod config;
+pub mod registry;
+pub mod backends;
+pub mod process;
+pub mod router;
+pub mod commands;

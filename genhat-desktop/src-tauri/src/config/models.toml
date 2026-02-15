@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# GenHat Model Registry
+# ═══════════════════════════════════════════════════════════════════════════════
+# Add a new [[models]] entry to register a new model. The process control
+# module will lazily load it on first request that matches its `tasks` list.
+#
+# Fields:
+#   id              – unique slug (used in code and logs)
+#   name            – human-readable display name
+#   backend         – "llama_server" | "llama_cli" | "whisper_cpp"
+#   kind            – "child_process" | "in_process"
+#   model_file      – path relative to the models directory
+#   tasks           – list of task types this model can handle
+#   auto_start      – if true, loaded at app launch (default: false)
+#   max_instances   – max concurrent instances (child_process) or always 1 (in_process)
+#   idle_timeout_s  – seconds before an idle ephemeral instance is killed (0 = immediate)
+#   priority        – higher = preferred when multiple models match a task
+#   memory_mb       – estimated peak memory in MB (for resource budgeting)
+#   [models.params] – backend-specific key-value parameters
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── LLM: Liquid Foundation Model (llama-server) ──────────────────────────────
+
+[[models]]
+id = "lfm-1_2b"
+name = "LFM 1.2B INT8"
+backend = "llama_server"
+kind = "child_process"
+model_file = "LFM-1.2B-INT8.gguf"
+tasks = ["chat", "summarize", "mindmap", "enrich", "grade", "hyde"]
+auto_start = false
+max_instances = 2
+idle_timeout_s = 300
+priority = 10
+memory_mb = 1400
+
+[models.params]
+ctx_size = "4096"
+port = "0"
+max_tokens = "256"
+temp = "0.7"
+top_p = "0.9"
+top_k = "40"
+repeat_penalty = "1.1"
+
+# ── Vision-Language: LFM 2.5 VL (llama-mtmd-cli per-request) ─────────────────
+
+[[models]]
+id = "lfm-2_5-vl"
+name = "LFM 2.5 Vision-Language"
+backend = "llama_cli"
+kind = "child_process"
+model_file = "LFM2.5-VL-1.6B-Q4_0.gguf"
+tasks = ["vision_chat"]
+auto_start = false
+max_instances = 1
+idle_timeout_s = 0
+priority = 10
+memory_mb = 1800
+
+[models.params]
+mmproj_file = "mmproj-LFM2.5-VL-1.6b-Q8_0.gguf"
+image_max_tokens = "64"
+max_tokens = "256"
