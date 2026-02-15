@@ -159,19 +159,7 @@ impl ProcessManager {
 
         managed.instances.push(ManagedInstance {
             instance_id: instance_id.clone(),
-            handle: ModelHandle::Process(crate::registry::types::ProcessHandle {
-                child: std::process::Command::new("cmd")
-                    .arg("/C")
-                    .arg("echo placeholder")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .map_err(|e| format!("placeholder: {e}"))?,
-                pid: 0,
-                port: None,
-                started_at: std::time::Instant::now(),
-                work_dir: PathBuf::new(),
-            }),
+            handle: None,
             status: ModelStatus::Loading,
             ephemeral,
             last_activity: std::time::Instant::now(),
@@ -194,7 +182,7 @@ impl ProcessManager {
                         .iter_mut()
                         .find(|i| i.instance_id == instance_id)
                     {
-                        inst.handle = handle;
+                        inst.handle = Some(handle);
                         inst.status = ModelStatus::Ready;
                         inst.last_activity = std::time::Instant::now();
                         log::info!(
@@ -269,8 +257,10 @@ impl ProcessManager {
                 .find(|i| i.instance_id == *instance_id)
                 .ok_or("Instance not found")?;
 
+            let handle = inst.handle.as_ref().ok_or("Instance handle not ready")?;
+
             backend
-                .execute(&inst.handle, &enriched_request, &self.models_dir)
+                .execute(handle, &enriched_request, &self.models_dir)
                 .await
         };
 
@@ -370,7 +360,7 @@ impl ProcessManager {
         let models = self.models.read().await;
         models.get(model_id).and_then(|m| {
             m.instances.iter().find_map(|inst| {
-                if let ModelHandle::Process(ph) = &inst.handle {
+                if let Some(ModelHandle::Process(ph)) = &inst.handle {
                     ph.port
                 } else {
                     None
@@ -385,7 +375,7 @@ impl ProcessManager {
         models.get(model_id).and_then(|m| {
             m.instances.iter().find_map(|inst| {
                 if inst.instance_id == instance_id {
-                    if let ModelHandle::Process(ph) = &inst.handle {
+                    if let Some(ModelHandle::Process(ph)) = &inst.handle {
                         return ph.port;
                     }
                 }
@@ -451,8 +441,15 @@ impl ProcessManager {
 /// Helper: stop a single instance via its backend.
 async fn inst_stop(backend: &Option<Arc<dyn ModelBackend>>, inst: ManagedInstance) {
     if let Some(b) = backend {
-        if let Err(e) = b.stop(&inst.handle).await {
-            log::warn!("Error stopping instance '{}': {e}", &inst.instance_id[..8]);
+        if let Some(handle) = &inst.handle {
+            if let Err(e) = b.stop(handle).await {
+                log::warn!("Error stopping instance '{}': {e}", &inst.instance_id[..8]);
+            }
+        } else {
+            log::debug!(
+                "Instance '{}' has no handle yet, skipping stop call",
+                &inst.instance_id[..8]
+            );
         }
     }
 }

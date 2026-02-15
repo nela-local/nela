@@ -176,7 +176,8 @@ pub enum ModelHandle {
 #[derive(Debug)]
 pub struct ManagedInstance {
     pub instance_id: String,
-    pub handle: ModelHandle,
+    /// Handle to the running model. None when the instance is still loading.
+    pub handle: Option<ModelHandle>,
     pub status: ModelStatus,
     /// If true, this instance will be killed once its current task completes.
     pub ephemeral: bool,
