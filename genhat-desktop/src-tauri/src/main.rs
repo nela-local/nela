@@ -73,6 +73,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // Legacy-compatible commands
             app_lib::commands::models::list_models,
+            app_lib::commands::models::list_vision_models,
             app_lib::commands::models::list_audio_models,
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,

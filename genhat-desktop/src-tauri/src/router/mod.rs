@@ -174,4 +174,16 @@ impl TaskRouter {
         let model_id = self.process_manager.find_model_for_task(task).await?;
         self.process_manager.get_model_def(&model_id).await
     }
+
+    /// Look up a ModelDef by its id.
+    /// Checks the static registry first, then falls back to dynamically
+    /// registered models in the ProcessManager.
+    pub async fn get_model_def_by_id(&self, id: &str) -> Option<ModelDef> {
+        // Try static registry first
+        if let Some(def) = self.registry.get(id) {
+            return Some(def.clone());
+        }
+        // Fall back to dynamic models
+        self.process_manager.get_model_def(id).await
+    }
 }

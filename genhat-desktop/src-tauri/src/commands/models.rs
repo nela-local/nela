@@ -21,23 +21,46 @@ pub struct ModelFile {
     pub path: String,
 }
 
-/// List available .gguf LLM model files (excludes TTS models).
+/// List available .gguf LLM model files from the LiquidAI-LLM subfolder.
 /// Legacy-compatible with the original `list_models` command.
 #[tauri::command]
 pub fn list_models() -> Vec<ModelFile> {
     let dir = get_models_dir();
+    let llm_dir = dir.join("LiquidAI-LLM");
     let mut models = Vec::new();
 
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    // Scan the LiquidAI-LLM subfolder for .gguf files
+    if let Ok(entries) = std::fs::read_dir(&llm_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("gguf") {
                 if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    // Exclude TTS models
-                    if name.starts_with("t3_")
-                        || name.starts_with("s3gen")
-                        || name.starts_with("ve_")
-                    {
+                    models.push(ModelFile {
+                        name: name.to_string(),
+                        path: path.to_string_lossy().to_string(),
+                    });
+                }
+            }
+        }
+    }
+    models
+}
+
+/// List available .gguf VLM model files from the LiquidAI-VLM subfolder.
+/// Excludes mmproj files (those are companion projector weights, not selectable models).
+#[tauri::command]
+pub fn list_vision_models() -> Vec<ModelFile> {
+    let dir = get_models_dir();
+    let vlm_dir = dir.join("LiquidAI-VLM");
+    let mut models = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&vlm_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("gguf") {
+                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                    // Exclude mmproj companion files
+                    if name.starts_with("mmproj") {
                         continue;
                     }
                     models.push(ModelFile {

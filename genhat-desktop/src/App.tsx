@@ -10,6 +10,12 @@ interface ModelFile {
   path: string;
 }
 
+interface RegisteredModel {
+  id: string;
+  name: string;
+  tasks: string[];
+}
+
 function App() {
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
@@ -17,6 +23,9 @@ function App() {
   const [audioModels, setAudioModels] = useState<ModelFile[]>([]);
   const [selectedAudioModel, setSelectedAudioModel] = useState("None");
   const [audioOutput, setAudioOutput] = useState("");
+
+  const [visionModels, setVisionModels] = useState<RegisteredModel[]>([]);
+  const [selectedVisionModel, setSelectedVisionModel] = useState("");
 
   const [chatMode, setChatMode] = useState<ChatMode>("text");
   const [imagePath, setImagePath] = useState<string | null>(null);
@@ -48,6 +57,16 @@ function App() {
     invoke<ModelFile[]>("list_audio_models")
       .then((list) => {
         setAudioModels(list);
+      })
+      .catch(console.error);
+
+    invoke<RegisteredModel[]>("list_registered_models")
+      .then((list) => {
+        const vision = list.filter((m) => m.tasks.includes("vision_chat"));
+        setVisionModels(vision);
+        if (vision.length > 0) {
+          setSelectedVisionModel(vision[0].id);
+        }
       })
       .catch(console.error);
   }, []);
@@ -137,6 +156,7 @@ function App() {
           await invoke("vision_chat_stream", {
             imagePath: imagePath,
             prompt: prompt || "What's in this image?",
+            modelId: selectedVisionModel || null,
           });
         } catch (e) {
           console.error(e);
@@ -298,6 +318,25 @@ function App() {
               <option value="None">Select a TTS model</option>
               {audioModels.map((m) => (
                 <option key={m.path} value={m.path}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {chatMode === "vision" && (
+          <div>
+            <label htmlFor="vision-select" style={{ display: 'block', marginBottom: '5px' }}>Vision Model:</label>
+            <select
+              id="vision-select"
+              value={selectedVisionModel}
+              onChange={(e) => setSelectedVisionModel(e.target.value)}
+              disabled={loading || visionModels.length === 0}
+              style={{ width: '200px' }}
+            >
+              {visionModels.map((m) => (
+                <option key={m.id} value={m.id}>
                   {m.name}
                 </option>
               ))}

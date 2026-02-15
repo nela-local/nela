@@ -110,18 +110,27 @@ pub async fn vision_chat_stream(
     image_path: String,
     prompt: String,
     max_tokens: Option<String>,
+    model_id: Option<String>,
     app: AppHandle,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<(), String> {
     let models_dir = get_models_dir();
     let max_tokens = max_tokens.unwrap_or_else(|| "256".to_string());
 
-    // Look up the vision model definition from registry / dynamic models
-    let def = router_state
-        .0
-        .get_model_def_for_task(&TaskType::VisionChat)
-        .await
-        .ok_or_else(|| "No vision model registered for task 'vision_chat'".to_string())?;
+    // Look up the vision model definition — use override if provided
+    let def = if let Some(ref id) = model_id {
+        router_state
+            .0
+            .get_model_def_by_id(id)
+            .await
+            .ok_or_else(|| format!("Vision model '{id}' not found"))?
+    } else {
+        router_state
+            .0
+            .get_model_def_for_task(&TaskType::VisionChat)
+            .await
+            .ok_or_else(|| "No vision model registered for task 'vision_chat'".to_string())?
+    };
 
     let model_file = &def.model_file;
     let mmproj_file = def.param_or("mmproj_file", "");
