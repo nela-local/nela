@@ -445,6 +445,11 @@ async fn inst_stop(backend: &Option<Arc<dyn ModelBackend>>, inst: ManagedInstanc
             if let Err(e) = b.stop(handle).await {
                 log::warn!("Error stopping instance '{}': {e}", &inst.instance_id[..8]);
             }
+        } else {
+            log::debug!(
+                "Instance '{}' has no handle yet, skipping stop call",
+                &inst.instance_id[..8]
+            );
         }
     }
 }
