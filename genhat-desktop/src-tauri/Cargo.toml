@@ -34,5 +34,14 @@ dashmap = "6"
 crossbeam-channel = "0.5"
 base64 = "0.22"
 
+# ── RAG pipeline ──
+rusqlite = { version = "0.32", features = ["bundled", "blob"] }
+tantivy = "0.22"
+pdf-extract = "0.8"
+docx-rs = "0.4"
+zip = "2"
+xml-rs = "0.8"
+tempfile = "3"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

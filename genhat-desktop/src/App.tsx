@@ -3,7 +3,7 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
-type ChatMode = "text" | "vision" | "audio";
+type ChatMode = "text" | "vision" | "audio" | "rag";
 
 interface ModelFile {
   name: string;
@@ -14,6 +14,27 @@ interface RegisteredModel {
   id: string;
   name: string;
   tasks: string[];
+}
+
+interface IngestionStatus {
+  doc_id: number;
+  title: string;
+  total_chunks: number;
+  embedded_chunks: number;
+  enriched_chunks: number;
+  phase: string;
+}
+
+interface SourceChunk {
+  chunk_id: number;
+  doc_title: string;
+  text: string;
+  score: number;
+}
+
+interface RagResult {
+  answer: string;
+  sources: SourceChunk[];
 }
 
 function App() {
@@ -35,6 +56,11 @@ function App() {
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const visionUnlistenRef = useRef<(() => void) | null>(null);
+
+  // RAG state
+  const [ragDocs, setRagDocs] = useState<IngestionStatus[]>([]);
+  const [ragResult, setRagResult] = useState<RagResult | null>(null);
+  const [ragIngesting, setRagIngesting] = useState(false);
 
   // Clean up vision stream listener on unmount
   useEffect(() => {
@@ -105,12 +131,87 @@ function App() {
     setImagePreview(null);
   };
 
+  // RAG helpers
+  const loadRagDocs = async () => {
+    try {
+      const docs = await invoke<IngestionStatus[]>("list_rag_documents");
+      setRagDocs(docs);
+    } catch (e) {
+      console.error("Failed to load RAG docs:", e);
+    }
+  };
+
+  useEffect(() => {
+    if (chatMode === "rag") loadRagDocs();
+  }, [chatMode]);
+
+  const ingestFile = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          { name: "Documents", extensions: ["pdf", "docx", "pptx", "txt", "md", "rs", "py", "js", "ts", "java", "c", "cpp", "go", "toml", "yaml", "json", "xml", "csv"] },
+        ],
+      });
+      if (selected && typeof selected === "string") {
+        setRagIngesting(true);
+        await invoke("ingest_document", { path: selected });
+        await loadRagDocs();
+        setRagIngesting(false);
+      }
+    } catch (e) {
+      console.error(e);
+      setRagIngesting(false);
+      alert(`Ingest failed: ${e}`);
+    }
+  };
+
+  const ingestDir = async () => {
+    try {
+      const selected = await open({ directory: true });
+      if (selected && typeof selected === "string") {
+        setRagIngesting(true);
+        await invoke("ingest_folder", { path: selected });
+        await loadRagDocs();
+        setRagIngesting(false);
+      }
+    } catch (e) {
+      console.error(e);
+      setRagIngesting(false);
+      alert(`Folder ingest failed: ${e}`);
+    }
+  };
+
+  const deleteRagDoc = async (docId: number) => {
+    try {
+      await invoke("delete_rag_document", { docId });
+      await loadRagDocs();
+    } catch (e) {
+      console.error(e);
+      alert(`Delete failed: ${e}`);
+    }
+  };
+
   const sendPrompt = async () => {
     setResponse("");
     setAudioOutput("");
     setLoading(true);
 
     try {
+      // RAG Mode
+      if (chatMode === "rag") {
+        try {
+          const result = await invoke<RagResult>("query_rag", { query: prompt });
+          setRagResult(result);
+          setResponse(result.answer);
+        } catch (e) {
+          console.error(e);
+          setResponse(`RAG query error: ${e}`);
+        }
+        setLoading(false);
+        return;
+      }
+
       // Audio Mode
       if (chatMode === "audio" && selectedAudioModel) {
          try {
@@ -282,6 +383,19 @@ function App() {
         >
           🔊 Audio
         </button>
+        <button 
+          onClick={() => setChatMode("rag")}
+          style={{ 
+            padding: '8px 16px', 
+            background: chatMode === "rag" ? '#007bff' : '#333',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer'
+          }}
+        >
+          📚 RAG
+        </button>
       </div>
 
       {/* Model Selectors (only show relevant ones) */}
@@ -377,6 +491,62 @@ function App() {
         </div>
       )}
 
+      {/* RAG Document Management (RAG Mode only) */}
+      {chatMode === "rag" && (
+        <div style={{ marginBottom: 20, padding: 15, border: '2px solid #444', borderRadius: 8 }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: 10 }}>
+            <strong>Knowledge Base</strong>
+            <button onClick={ingestFile} disabled={ragIngesting} style={{ padding: '6px 12px', cursor: 'pointer' }}>
+              📄 Add File
+            </button>
+            <button onClick={ingestDir} disabled={ragIngesting} style={{ padding: '6px 12px', cursor: 'pointer' }}>
+              📁 Add Folder
+            </button>
+            {ragIngesting && <span style={{ color: '#ffaa00' }}>Ingesting...</span>}
+          </div>
+          {ragDocs.length === 0 ? (
+            <p style={{ color: '#888', margin: '5px 0' }}>No documents ingested yet. Add files to build your knowledge base.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #555' }}>
+                  <th style={{ textAlign: 'left', padding: '4px 8px' }}>Document</th>
+                  <th style={{ textAlign: 'center', padding: '4px 8px' }}>Chunks</th>
+                  <th style={{ textAlign: 'center', padding: '4px 8px' }}>Enriched</th>
+                  <th style={{ textAlign: 'center', padding: '4px 8px' }}>Phase</th>
+                  <th style={{ textAlign: 'center', padding: '4px 8px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {ragDocs.map((doc) => (
+                  <tr key={doc.doc_id} style={{ borderBottom: '1px solid #333' }}>
+                    <td style={{ padding: '4px 8px' }}>{doc.title}</td>
+                    <td style={{ textAlign: 'center', padding: '4px 8px' }}>{doc.total_chunks}</td>
+                    <td style={{ textAlign: 'center', padding: '4px 8px' }}>{doc.enriched_chunks}/{doc.total_chunks}</td>
+                    <td style={{ textAlign: 'center', padding: '4px 8px' }}>
+                      <span style={{ 
+                        padding: '2px 6px', 
+                        borderRadius: 3, 
+                        fontSize: '11px',
+                        background: doc.phase.includes('phase2_complete') ? '#28a745' : doc.phase.includes('phase2') ? '#ffaa00' : '#17a2b8',
+                        color: '#fff'
+                      }}>
+                        {doc.phase.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '4px 8px' }}>
+                      <button onClick={() => deleteRagDoc(doc.doc_id)} style={{ padding: '2px 8px', cursor: 'pointer', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 3, fontSize: '11px' }}>
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       <textarea
         rows={4}
         style={{ width: '100%', marginBottom: '10px' }}
@@ -387,7 +557,9 @@ function App() {
             ? "Ask about the image (e.g., 'What's in this image?')" 
             : chatMode === "audio" 
               ? "Type text to generate speech..." 
-              : "Type your prompt for the LLM..."
+              : chatMode === "rag"
+                ? "Ask a question about your documents..."
+                : "Type your prompt for the LLM..."
         }
       />
 
@@ -400,7 +572,9 @@ function App() {
             ? "Ask Vision Model" 
             : chatMode === "audio" 
               ? "Generate Audio" 
-              : "Send to LLM"}
+              : chatMode === "rag"
+                ? "Query Knowledge Base"
+                : "Send to LLM"}
       </button>
 
       <div style={{ marginTop: 20 }}>
@@ -412,6 +586,23 @@ function App() {
         )}
           <pre style={{ whiteSpace: "pre-wrap", background: '#000', color: '#fff', padding: 10, borderRadius: 4, minHeight: 50 }}>          {response}
         </pre>
+
+        {/* RAG Source Citations */}
+        {chatMode === "rag" && ragResult && ragResult.sources.length > 0 && (
+          <div style={{ marginTop: 15, padding: 10, border: '1px solid #444', borderRadius: 4 }}>
+            <strong style={{ marginBottom: 8, display: 'block' }}>📄 Sources ({ragResult.sources.length})</strong>
+            {ragResult.sources.map((src, i) => (
+              <details key={src.chunk_id} style={{ marginBottom: 8 }}>
+                <summary style={{ cursor: 'pointer', fontSize: '13px', color: '#aaf' }}>
+                  [Source {i + 1}] {src.doc_title} (score: {src.score.toFixed(4)})
+                </summary>
+                <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px', color: '#ccc', padding: '8px', background: '#111', borderRadius: 4, marginTop: 4 }}>
+                  {src.text}
+                </pre>
+              </details>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

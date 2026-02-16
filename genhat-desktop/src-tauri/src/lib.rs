@@ -14,3 +14,4 @@ pub mod backends;
 pub mod process;
 pub mod router;
 pub mod commands;
+pub mod rag;

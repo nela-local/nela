@@ -5,3 +5,4 @@
 pub mod models;
 pub mod inference;
 pub mod audio;
+pub mod rag;

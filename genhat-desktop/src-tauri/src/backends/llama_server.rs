@@ -104,27 +104,40 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         let _ = writeln!(log_file, "model: {model_str}");
     }
 
+    let mut args = vec![
+        "-m".to_string(),
+        model_str.to_string(),
+        "--ctx-size".to_string(),
+        ctx_size.clone(),
+        "--port".to_string(),
+        port_str.clone(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "-n".to_string(),
+        max_tokens.clone(),
+        "--temp".to_string(),
+        temp,
+        "--top-p".to_string(),
+        top_p,
+        "--top-k".to_string(),
+        top_k,
+        "--repeat-penalty".to_string(),
+        repeat_penalty,
+    ];
+
+    // Enable embedding mode if configured (for embedding models)
+    if def.param_or("embedding", "false") == "true" {
+        args.push("--embedding".to_string());
+        // Add batch size for embedding throughput
+        let batch_size = def.param_or("batch_size", "512");
+        args.push("--batch-size".to_string());
+        args.push(batch_size);
+    }
+
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
     let mut child = Command::new(&exe)
-        .args([
-            "-m",
-            &model_str,
-            "--ctx-size",
-            &ctx_size,
-            "--port",
-            &port_str,
-            "--host",
-            "127.0.0.1",
-            "-n",
-            &max_tokens,
-            "--temp",
-            &temp,
-            "--top-p",
-            &top_p,
-            "--top-k",
-            &top_k,
-            "--repeat-penalty",
-            &repeat_penalty,
-        ])
+        .args(&args_refs)
         .current_dir(work_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -244,6 +257,11 @@ impl ModelBackend for LlamaServerBackend {
             Process(ph) => ph.port.ok_or("llama-server has no port assigned")?,
             _ => return Err("LlamaServerBackend requires a ProcessHandle".into()),
         };
+
+        // ── Embedding requests go to /v1/embeddings ──
+        if request.task_type == crate::registry::types::TaskType::Embed {
+            return self.execute_embedding(port, request).await;
+        }
 
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
 
@@ -365,5 +383,64 @@ impl ModelBackend for LlamaServerBackend {
             }
             _ => Err("LlamaServerBackend requires a ProcessHandle".into()),
         }
+    }
+}
+
+// ── Embedding helper (outside the trait impl to keep it clean) ──
+impl LlamaServerBackend {
+    /// Call the /v1/embeddings endpoint on a llama-server running in --embedding mode.
+    async fn execute_embedding(
+        &self,
+        port: u16,
+        request: &TaskRequest,
+    ) -> Result<TaskResponse, String> {
+        let url = format!("http://127.0.0.1:{port}/v1/embeddings");
+
+        // Input is a JSON array of strings (from embed_request)
+        let texts: Vec<String> = serde_json::from_str(&request.input)
+            .unwrap_or_else(|_| vec![request.input.clone()]);
+
+        let body = serde_json::json!({
+            "input": texts
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Embedding request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Embedding endpoint returned {status}: {text}"));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse embedding response: {e}"))?;
+
+        // Parse the OpenAI-compatible response:
+        // { "data": [ { "embedding": [f32...], "index": 0 }, ... ] }
+        let data = json["data"]
+            .as_array()
+            .ok_or("Embedding response missing 'data' array")?;
+
+        let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(data.len());
+        for item in data {
+            let embedding = item["embedding"]
+                .as_array()
+                .ok_or("Embedding item missing 'embedding' array")?;
+            let vec: Vec<f32> = embedding
+                .iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect();
+            embeddings.push(vec);
+        }
+
+        Ok(TaskResponse::Embeddings(embeddings))
     }
 }

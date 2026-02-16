@@ -7,7 +7,9 @@
 
 use app_lib::commands::inference::TaskRouterState;
 use app_lib::commands::models::ProcessManagerState;
+use app_lib::commands::rag::RagPipelineState;
 use app_lib::process::ProcessManager;
+use app_lib::rag::pipeline::RagPipeline;
 use app_lib::registry::ModelRegistry;
 use app_lib::router::TaskRouter;
 use std::sync::Arc;
@@ -64,9 +66,24 @@ fn main() {
                 });
             }
 
-            // 7. Register state for Tauri commands
+            // 7. Initialize RAG pipeline
+            let rag_data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"));
+            let rag_dir = rag_data_dir.join("rag");
+            let rag_pipeline = Arc::new(
+                RagPipeline::open(&rag_dir, router.clone())
+                    .expect("Failed to initialize RAG pipeline"),
+            );
+
+            // Start background enrichment worker
+            RagPipeline::start_enrichment_worker(rag_pipeline.clone());
+
+            // 8. Register state for Tauri commands
             app.manage(ProcessManagerState(process_manager));
             app.manage(TaskRouterState(router));
+            app.manage(RagPipelineState(rag_pipeline));
 
             Ok(())
         })
@@ -90,6 +107,13 @@ fn main() {
             app_lib::commands::inference::vision_chat,
             app_lib::commands::inference::vision_chat_stream,
             app_lib::commands::audio::transcribe_audio,
+            // RAG commands
+            app_lib::commands::rag::ingest_document,
+            app_lib::commands::rag::ingest_folder,
+            app_lib::commands::rag::query_rag,
+            app_lib::commands::rag::list_rag_documents,
+            app_lib::commands::rag::delete_rag_document,
+            app_lib::commands::rag::enrich_rag_documents,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")
