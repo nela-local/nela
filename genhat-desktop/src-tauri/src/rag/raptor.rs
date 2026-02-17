@@ -2,7 +2,7 @@
 //!
 //! RAPTOR builds a hierarchical tree structure over document chunks:
 //!   1. Cluster chunks using k-means on their embeddings
-//!   2. Summarize each cluster via LLM (with logprobs for confidence)
+//!   2. Summarize each cluster via LLM (with confidence scores)
 //!   3. Store summaries as parent nodes with confidence scores
 //!   4. Recursively build 1-2 levels
 //!
@@ -11,6 +11,38 @@
 //!   - Otherwise, use the summary text directly
 //!
 //! This prevents generic/hallucinated summaries from poisoning retrieval.
+//!
+//! # Example Usage
+//!
+//! ```no_run
+//! use app_lib::rag::raptor;
+//!
+//! // Build a RAPTOR tree for document ID 1
+//! let status = raptor::build_raptor_tree(db.clone(), router.clone(), 1).await?;
+//! println!("Created {} nodes across {} levels", status.nodes_created, status.levels);
+//!
+//! // Query using the RAPTOR tree
+//! let results = raptor::raptor_retrieve(
+//!     db.clone(),
+//!     router.clone(),
+//!     1,  // doc_id
+//!     "What are the key findings?",
+//!     5,  // top_k
+//!     None // Use default confidence threshold
+//! ).await?;
+//!
+//! for (chunk_id, score, text) in results {
+//!     println!("Chunk {}: {} (score: {:.2})", chunk_id, &text[..50.min(text.len())], score);
+//! }
+//! ```
+//!
+//! # Configuration
+//!
+//! Key parameters can be adjusted via constants:
+//! - `DEFAULT_CONFIDENCE_THRESHOLD`: -1.5 (expand nodes below this)
+//! - `MAX_CLUSTERS_PER_LEVEL`: 10
+//! - `MIN_CLUSTER_SIZE`: 3
+//! - `MAX_TREE_DEPTH`: 2
 
 use crate::rag::db::{bytes_to_embedding, cosine_similarity, embedding_to_bytes, RagDb};
 use crate::registry::types::TaskResponse;
@@ -307,6 +339,34 @@ fn group_by_cluster<T: Clone>(items: &[T], assignments: &[usize]) -> HashMap<usi
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Build a RAPTOR tree for a document.
+///
+/// This function performs the full tree-building process:
+/// 1. Collects all chunk embeddings for the document
+/// 2. Clusters chunks using k-means at each level
+/// 3. Summarizes each cluster via LLM with confidence scoring
+/// 4. Stores summaries as RAPTOR nodes with their embeddings
+/// 5. Recursively builds up to MAX_TREE_DEPTH levels
+///
+/// # Arguments
+/// * `db` - Database handle for storage
+/// * `router` - Task router for LLM inference
+/// * `doc_id` - Document ID to build tree for
+///
+/// # Returns
+/// * `Ok(RaptorTreeStatus)` - Tree statistics (nodes created, levels)
+/// * `Err(String)` - Error message if tree building fails
+///
+/// # Errors
+/// * Document has no chunks
+/// * Document has no embeddings (run Phase 1 first)
+/// * Tree already exists (delete it first to rebuild)
+/// * LLM summarization fails
+///
+/// # Example
+/// ```no_run
+/// let status = build_raptor_tree(db, router, doc_id).await?;
+/// println!("Built tree: {} nodes, {} levels", status.nodes_created, status.levels);
+/// ```
 pub async fn build_raptor_tree(
     db: Arc<RagDb>,
     router: Arc<TaskRouter>,
@@ -546,7 +606,38 @@ async fn embed_text(router: &TaskRouter, text: &str) -> Result<Vec<f32>, String>
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Retrieve using RAPTOR tree with confidence-aware traversal.
-/// If a matched RAPTOR node has low confidence, expand to its children instead.
+///
+/// This function implements the key innovation of RAPTOR:
+/// 1. Finds top-k most similar RAPTOR nodes via vector search
+/// 2. For each matched node:
+///    - If confidence < threshold: expand to child chunks/nodes
+///    - If confidence >= threshold: use summary directly
+/// 3. Returns expanded results with original similarity scores
+///
+/// This prevents generic/hallucinated summaries from being used,
+/// falling back to more detailed child content when needed.
+///
+/// # Arguments
+/// * `db` - Database handle
+/// * `router` - Task router for embedding the query
+/// * `doc_id` - Document to search within
+/// * `query` - Query text
+/// * `top_k` - Number of results to return
+/// * `confidence_threshold` - Optional threshold (default: -1.5)
+///
+/// # Returns
+/// Vec of (chunk_id, score, text) tuples, where:
+/// - chunk_id is the original chunk ID (or RAPTOR node ID)
+/// - score is the cosine similarity to the query
+/// - text is either summary or expanded child text
+///
+/// # Example
+/// ```no_run
+/// let results = raptor_retrieve(db, router, 1, "key findings", 5, None).await?;
+/// for (id, score, text) in results {
+///     println!("Result {}: {:.2} - {}", id, score, &text[..50]);
+/// }
+/// ```
 pub async fn raptor_retrieve(
     db: Arc<RagDb>,
     router: Arc<TaskRouter>,
