@@ -4,6 +4,7 @@ import { Api } from "./api";
 import type { ChatMessage, ModelFile } from "./types";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
+import ModelSelector from "./components/ModelSelector";
 import "./App.css";
 
 function App() {
@@ -19,10 +20,14 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    refreshModels();
+  }, []);
+
+  const refreshModels = () => {
     Api.listModels()
       .then((list) => {
         setModels(list);
-        if (list.length > 0) {
+        if (list.length > 0 && !selectedModel) {
           setSelectedModel(list[0].path);
         }
       })
@@ -33,18 +38,23 @@ function App() {
         setAudioModels(list);
       })
       .catch(console.error);
-  }, []);
+  };
 
   const handleModelChange = async (path: string) => {
     try {
       setSelectedModel(path);
       await Api.switchModel(path);
-      setMessages([]); // Clear chat on model switch
-      alert(`Switched to model: ${path.split("/").pop()}`);
+      setMessages([]); 
+      // alert(`Switched to model: ${path.split("/").pop()}`); // Removed explicit alert for smoother UX
     } catch (err) {
       console.error(err);
       alert("Failed to switch model");
     }
+  };
+
+  const handleAddModel = () => {
+    alert("To add a model, place the .gguf file into the 'models' folder of the application and restart/refresh.");
+    // Future: Implement file picker + copy logic here
   };
 
   const handleSend = async (text: string) => {
@@ -57,13 +67,6 @@ function App() {
     // If Audio Mode is enabled
     if (selectedAudioModel && selectedAudioModel !== "None") {
       try {
-        // For audio, we just generate speech from the prompt directly (demo mode)
-        // Ideally we would get the LLM response first, then TTS that.
-        // But following existing logic: user prompt -> audio.
-        // Wait, the original code did `input: prompt`.
-        
-        // Let's improve: LLM -> TTS
-        // 1. Get LLM response
         let fullResponse = "";
         await Api.streamChat(
           [...messages, newMsg],
@@ -120,15 +123,29 @@ function App() {
 
   return (
     <div className="app-container">
-      <Sidebar
-        models={models}
-        selectedModel={selectedModel}
-        onModelSelect={handleModelChange}
-        audioModels={audioModels}
-        selectedAudio={selectedAudioModel}
-        onAudioSelect={setSelectedAudioModel}
-      />
+      {/* Sidebar simplified or removed in favor of top bar? User asked for selection in chat bar. 
+          We keep sidebar for Chat History potentially, but remove model selection from it. */}
+      {/* <Sidebar ... />  <- removing for now as per request to focus on chat bar selection */}
+      
       <main className="main-content">
+        {/* Top Floating Bar for Models */}
+        <div className="model-selector-group">
+            <ModelSelector
+                models={models}
+                selectedModel={selectedModel}
+                onSelect={handleModelChange}
+                type="llm"
+                onAdd={handleAddModel}
+            />
+            <ModelSelector
+                models={audioModels}
+                selectedModel={selectedAudioModel}
+                onSelect={setSelectedAudioModel}
+                type="audio"
+                onAdd={handleAddModel}
+            />
+        </div>
+
         <ChatWindow 
            messages={messages}
            streamingContent={streamingContent}
