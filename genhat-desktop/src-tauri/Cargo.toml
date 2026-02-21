@@ -23,3 +23,31 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.10.0", features = [] }
 tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+toml = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+portpicker = "0.1"
+uuid = { version = "1", features = ["v4"] }
+dashmap = "6"
+crossbeam-channel = "0.5"
+base64 = "0.22"
+
+# ── RAG pipeline ──
+rusqlite = { version = "0.32", features = ["bundled", "blob"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+tantivy = "0.22"
+pdf-extract = "0.8"
+docx-rs = "0.4"
+zip = "2"
+xml-rs = "0.8"
+tempfile = "3"
+
+# ── ONNX Runtime (in-process DistilBERT classifier) ──
+ort = { version = "2.0.0-rc.11", features = ["download-binaries"] }
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
