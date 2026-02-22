@@ -828,6 +828,39 @@ body {
   box-shadow: none;
 }
 
+.stop-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--bg-elevated) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border-subtle) !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  padding: 0 !important;
+}
+
+.stop-btn:hover {
+  background: rgba(220, 60, 60, 0.15) !important;
+  border-color: rgba(220, 60, 60, 0.5) !important;
+  color: #ff6b6b !important;
+  transform: scale(1.05);
+}
+
+.cancelled-notice {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 6px 0 2px;
+  opacity: 0.65;
+  user-select: none;
+  letter-spacing: 0.01em;
+}
+
 .input-hint {
   font-size: 0.68rem;
   color: var(--text-muted);

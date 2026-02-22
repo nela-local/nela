@@ -224,7 +224,8 @@ export const Api = {
     onChunk: (chunk: string) => void,
     onFinish: () => void,
     onError: (err: unknown) => void,
-    port?: number
+    port?: number,
+    signal?: AbortSignal
   ) {
     try {
       const llamaPort =
@@ -241,6 +242,7 @@ export const Api = {
             max_tokens: 1024,
             temperature: 0.7,
           }),
+          signal,
         }
       );
 
@@ -282,6 +284,8 @@ export const Api = {
 
       onFinish();
     } catch (err) {
+      // AbortError means the user cancelled — stop silently without error msg
+      if (err instanceof DOMException && err.name === "AbortError") return;
       onError(err);
     }
   },

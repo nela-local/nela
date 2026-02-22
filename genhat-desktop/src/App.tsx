@@ -59,6 +59,8 @@ function App() {
   const [streamingContent, setStreamingContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [audioOutput, setAudioOutput] = useState("");
+  const [cancelled, setCancelled] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // ── Vision state ───────────────────────────────────────────────────────────
   const [imagePath, setImagePath] = useState<string | null>(null);
@@ -243,6 +245,24 @@ function App() {
     }
   };
 
+  // ── Cancel handler ────────────────────────────────────────────────────────
+
+  const handleCancel = () => {
+    // Abort the SSE fetch (text / RAG modes)
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    // Stop vision event listener
+    visionUnlistenRef.current?.();
+    visionUnlistenRef.current = null;
+    // Commit whatever partial response was received
+    setMessages((prev) =>
+      streamingContent ? [...prev, { role: "assistant", content: streamingContent }] : prev
+    );
+    setStreamingContent("");
+    setLoading(false);
+    setCancelled(true);
+  };
+
   // ── Main send handler ─────────────────────────────────────────────────────
 
   const handleSend = async (text: string) => {
@@ -251,6 +271,10 @@ function App() {
     setLoading(true);
     setStreamingContent("");
     setAudioOutput("");
+    setCancelled(false);
+    // Create a fresh AbortController for this request
+    const ctrl = new AbortController();
+    abortControllerRef.current = ctrl;
 
     try {
       // ── RAG Mode (streaming) ────────────────────────────────────────────
@@ -304,7 +328,8 @@ function App() {
               ]);
               setLoading(false);
             },
-            setup.llama_port
+            setup.llama_port,
+            ctrl.signal
           );
         } catch (e) {
           console.error(e);
@@ -421,7 +446,9 @@ function App() {
             { role: "assistant", content: `Error: ${err}` },
           ]);
           setLoading(false);
-        }
+        },
+        undefined,
+        ctrl.signal
       );
     } catch (err) {
       console.error(err);
@@ -444,7 +471,7 @@ function App() {
       case "rag":
         return "Ask a question about your documents...";
       default:
-        return "Message GenHat...";
+        return "Message NELA...";
     }
   };
 
@@ -688,6 +715,8 @@ function App() {
           streamingContent={streamingContent}
           isLoading={loading}
           onSend={handleSend}
+          onCancel={handleCancel}
+          cancelled={cancelled}
           audioSrc={audioOutput}
           placeholder={getPlaceholder()}
         />
