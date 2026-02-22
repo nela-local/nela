@@ -8,6 +8,19 @@ interface MarkdownRendererProps {
   content: string;
 }
 
+/** Recursively extract plain text from React nodes (handles rehype-highlight spans). */
+function extractText(node: React.ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (!node) return "";
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (typeof node === "object" && "props" in node) {
+    const element = node as React.ReactElement<{ children?: React.ReactNode }>;
+    return extractText(element.props.children);
+  }
+  return "";
+}
+
 /**
  * Copy-to-clipboard button for code blocks.
  */
@@ -47,7 +60,7 @@ const markdownComponents: Components = {
   // Code blocks (``` ```) and inline code (` `)
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className || "");
-    const codeString = String(children).replace(/\n$/, "");
+    const codeString = extractText(children).replace(/\n$/, "");
 
     // If it has a language class or is multi-line, render as a block
     const isBlock = match || codeString.includes("\n");

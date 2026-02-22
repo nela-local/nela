@@ -13,3 +13,4 @@ genhat-desktop/src-tauri/node_modules/
 The-Bare/TTS-inference/--collect-data
 The-Bare/TTS-inference/--hidden-import
 .DS_Store
+genhat-desktop/package-lock.json
