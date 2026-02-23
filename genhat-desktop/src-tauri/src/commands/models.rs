@@ -74,34 +74,6 @@ pub fn list_vision_models() -> Vec<ModelFile> {
     models
 }
 
-/// List available TTS audio model files.
-/// Legacy-compatible with the original `list_audio_models` command.
-#[tauri::command]
-pub fn list_audio_models() -> Vec<ModelFile> {
-    let dir = get_models_dir();
-    let search_dirs = vec![dir.clone(), dir.join("tts-chatterbox-q4-k-m")];
-    let mut models = Vec::new();
-
-    for d in search_dirs {
-        if let Ok(entries) = std::fs::read_dir(d) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("gguf") {
-                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                        if name.starts_with("s3gen") {
-                            models.push(ModelFile {
-                                name: name.to_string(),
-                                path: path.to_string_lossy().to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    models
-}
-
 // ── New unified model commands ──────────────────────────────────────────────
 
 /// List all registered models with their current status.

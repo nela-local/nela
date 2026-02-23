@@ -30,7 +30,10 @@
     "resources": [
       "bin/llama-lin/*",
       "bin/llama-win/*",
-      "bin/llama-mac/*"
+      "bin/llama-mac/*",
+      "bin/espeak-ng-lin/*",
+      "bin/espeak-ng-lin/espeak-ng-data/*",
+      "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/*"
     ],
     "icon": [
       "icons/32x32.png",

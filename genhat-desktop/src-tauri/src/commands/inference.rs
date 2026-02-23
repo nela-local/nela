@@ -17,7 +17,7 @@ pub struct TaskRouterState(pub Arc<TaskRouter>);
 /// task type and input, and the router handles model selection and execution.
 ///
 /// # Arguments
-/// * `task_type` — One of: "chat", "summarize", "mindmap", "tts", "podcast_script",
+/// * `task_type` — One of: "chat", "summarize", "mindmap", "tts",
 ///   "transcribe", "embed", "classify", "enrich", "grade", "hyde"
 /// * `input` — The input text/prompt
 /// * `model_override` — Optional: force a specific model ID
@@ -50,8 +50,6 @@ fn parse_task_type(s: &str) -> Result<TaskType, String> {
         "summarize" => Ok(TaskType::Summarize),
         "mindmap" => Ok(TaskType::Mindmap),
         "tts" => Ok(TaskType::Tts),
-        "podcast_audio" => Ok(TaskType::PodcastAudio),
-        "podcast_script" => Ok(TaskType::PodcastScript),
         "transcribe" => Ok(TaskType::Transcribe),
         "stt" => Ok(TaskType::Stt),
         "embed" => Ok(TaskType::Embed),

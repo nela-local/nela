@@ -44,6 +44,20 @@ export interface RagStreamSetup {
 
 export type ChatMode = "text" | "vision" | "audio" | "rag";
 
+/** Available KittenTTS voice names. */
+export const KITTEN_TTS_VOICES = [
+  "Bella",
+  "Jasper",
+  "Luna",
+  "Bruno",
+  "Rosie",
+  "Hugo",
+  "Kiki",
+  "Leo",
+] as const;
+
+export type KittenTtsVoice = (typeof KITTEN_TTS_VOICES)[number];
+
 export interface ChatCompletionRequest {
   model?: string;
   messages: ChatMessage[];

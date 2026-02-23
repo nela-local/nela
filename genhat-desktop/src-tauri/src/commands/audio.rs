@@ -7,29 +7,36 @@ use crate::registry::types::{TaskRequest, TaskType};
 use std::collections::HashMap;
 use tauri::State;
 
-/// Generate speech from text using the TTS model.
-/// Legacy-compatible with the original `generate_speech` command.
+/// Generate speech from text using the KittenTTS engine.
 ///
 /// # Arguments
-/// * `model_path` — Path to the S3Gen GGUF model file
 /// * `input` — Text to synthesize
+/// * `voice` — Optional voice name (e.g. "Leo", "Bella")
+/// * `speed` — Optional speaking speed (e.g. 1.0)
 ///
 /// # Returns
 /// Absolute path to the generated `.wav` file.
 #[tauri::command]
 pub async fn generate_speech(
-    model_path: String,
     input: String,
+    voice: Option<String>,
+    speed: Option<f32>,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<String, String> {
     let mut extra = HashMap::new();
-    extra.insert("model_path".to_string(), model_path.clone());
+
+    if let Some(v) = voice {
+        extra.insert("voice".to_string(), v);
+    }
+    if let Some(s) = speed {
+        extra.insert("speed".to_string(), s.to_string());
+    }
 
     let request = TaskRequest {
         request_id: uuid::Uuid::new_v4().to_string(),
         task_type: TaskType::Tts,
         input,
-        model_override: None, // Add the model at later point of time
+        model_override: None,
         extra,
     };
 

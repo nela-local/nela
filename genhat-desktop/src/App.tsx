@@ -24,7 +24,9 @@ import type {
   RegisteredModel,
   IngestionStatus,
   RagResult,
+  KittenTtsVoice,
 } from "./types";
+import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
 import ModelSelector from "./components/ModelSelector";
 import "./App.css";
@@ -47,8 +49,11 @@ function App() {
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
 
-  const [audioModels, setAudioModels] = useState<ModelFile[]>([]);
-  const [selectedAudioModel, setSelectedAudioModel] = useState("None");
+  // ── TTS engine state (registered models with TTS task) ─────────────────
+  const [ttsEngines, setTtsEngines] = useState<RegisteredModel[]>([]);
+  const [selectedTtsEngine, setSelectedTtsEngine] = useState("");
+  const [ttsVoice, setTtsVoice] = useState<KittenTtsVoice>("Leo");
+  const [ttsSpeed, setTtsSpeed] = useState(1.0);
 
   const [visionModels, setVisionModels] = useState<RegisteredModel[]>([]);
   const [selectedVisionModel, setSelectedVisionModel] = useState("");
@@ -122,15 +127,18 @@ function App() {
       })
       .catch(console.error);
 
-    Api.listAudioModels()
-      .then((list) => setAudioModels(list))
-      .catch(console.error);
-
     Api.listRegisteredModels()
       .then((list) => {
         const vision = list.filter((m) => m.tasks.includes("vision_chat"));
         setVisionModels(vision);
         if (vision.length > 0) setSelectedVisionModel(vision[0].id);
+
+        // TTS engines from the registry
+        const tts = list.filter((m) => m.tasks.includes("tts"));
+        setTtsEngines(tts);
+        if (tts.length > 0 && !selectedTtsEngine) {
+          setSelectedTtsEngine(tts[0].id);
+        }
       })
       .catch(console.error);
   };
@@ -343,13 +351,22 @@ function App() {
       }
 
       // ── Audio Mode ──────────────────────────────────────────────────────
-      if (chatMode === "audio" && selectedAudioModel !== "None") {
+      if (chatMode === "audio" && selectedTtsEngine) {
         try {
-          const audioUrl = await Api.generateSpeech(selectedAudioModel, text);
+          const audioUrl = await Api.generateSpeech(
+            text,
+            {
+              voice: ttsVoice,
+              speed: ttsSpeed,
+            }
+          );
           setAudioOutput(audioUrl);
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: "🔊 Audio generated successfully." },
+            {
+              role: "assistant",
+              content: `🔊 Audio generated (${ttsVoice}, ${ttsSpeed}x speed).`,
+            },
           ]);
         } catch (e) {
           console.error(e);
@@ -542,14 +559,62 @@ function App() {
                 onAdd={handleAddModel}
               />
             )}
-            {chatMode === "audio" && (
-              <ModelSelector
-                models={audioModels}
-                selectedModel={selectedAudioModel}
-                onSelect={setSelectedAudioModel}
-                type="audio"
-                onAdd={handleAddModel}
-              />
+            {chatMode === "audio" && ttsEngines.length > 0 && (
+              <div className="tts-controls">
+                {/* TTS engine selector */}
+                <div className="tts-engine-select">
+                  <select
+                    value={selectedTtsEngine}
+                    onChange={(e) => setSelectedTtsEngine(e.target.value)}
+                    className="model-select"
+                    disabled={loading}
+                  >
+                    {ttsEngines.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="select-chevron" />
+                </div>
+
+                {/* KittenTTS voice + speed controls */}
+                {selectedTtsEngine === "kitten-tts" && (
+                  <>
+                    <div className="tts-voice-select">
+                      <select
+                        value={ttsVoice}
+                        onChange={(e) => setTtsVoice(e.target.value as KittenTtsVoice)}
+                        className="model-select"
+                        disabled={loading}
+                      >
+                        {KITTEN_TTS_VOICES.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="select-chevron" />
+                    </div>
+
+                    <div className="tts-speed-control">
+                      <label className="tts-speed-label" title="Speaking speed">
+                        {ttsSpeed.toFixed(1)}x
+                      </label>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="2.0"
+                        step="0.1"
+                        value={ttsSpeed}
+                        onChange={(e) => setTtsSpeed(parseFloat(e.target.value))}
+                        className="tts-speed-slider"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
             )}
             {chatMode === "vision" && visionModels.length > 0 && (
               <div className="vision-model-select">

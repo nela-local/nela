@@ -41,8 +41,6 @@ function App() {
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   
-  const [audioModels, setAudioModels] = useState<ModelFile[]>([]);
-  const [selectedAudioModel, setSelectedAudioModel] = useState("None");
   const [audioOutput, setAudioOutput] = useState("");
 
   const [visionModels, setVisionModels] = useState<RegisteredModel[]>([]);
@@ -78,12 +76,6 @@ function App() {
         if (list.length > 0) {
           setSelectedModel(list[0].path);
         }
-      })
-      .catch(console.error);
-
-    invoke<ModelFile[]>("list_audio_models")
-      .then((list) => {
-        setAudioModels(list);
       })
       .catch(console.error);
 
@@ -229,10 +221,9 @@ function App() {
       }
 
       // Audio Mode
-      if (chatMode === "audio" && selectedAudioModel) {
+      if (chatMode === "audio") {
          try {
            const path = await invoke<string>("generate_speech", {
-             modelPath: selectedAudioModel,
              input: prompt,
            });
            setAudioOutput(convertFileSrc(path));
@@ -437,21 +428,7 @@ function App() {
 
         {chatMode === "audio" && (
           <div>
-            <label htmlFor="audio-select" style={{ display: 'block', marginBottom: '5px' }}>Audio Model:</label>
-            <select
-              id="audio-select"
-              value={selectedAudioModel}
-              onChange={(e) => setSelectedAudioModel(e.target.value)}
-              disabled={loading}
-              style={{ width: '200px' }}
-            >
-              <option value="None">Select a TTS model</option>
-              {audioModels.map((m) => (
-                <option key={m.path} value={m.path}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            <p style={{ fontSize: '0.9em', color: '#888' }}>Using KittenTTS engine</p>
           </div>
         )}
 

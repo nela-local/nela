@@ -18,8 +18,6 @@ pub fn task_priority(task: &TaskType) -> TaskPriority {
         | TaskType::Summarize
         | TaskType::Mindmap
         | TaskType::Tts
-        | TaskType::PodcastAudio
-        | TaskType::PodcastScript
         | TaskType::Transcribe
         | TaskType::Stt => TaskPriority::High,
 

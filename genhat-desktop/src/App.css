@@ -256,6 +256,46 @@ body {
   gap: 12px;
 }
 
+/* ── TTS Controls ─────────────────────────────────────────────────────── */
+
+.tts-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tts-engine-select,
+.tts-voice-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.tts-voice-select .model-select {
+  min-width: 100px;
+}
+
+.tts-speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tts-speed-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  min-width: 32px;
+  text-align: right;
+  user-select: none;
+}
+
+.tts-speed-slider {
+  width: 72px;
+  height: 4px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════════
    CONTEXT PANELS (Vision / RAG)

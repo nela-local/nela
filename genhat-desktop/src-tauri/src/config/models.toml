@@ -124,20 +124,20 @@ config_file = "distilBert-query-router/onnx_model/config.json"
 tokenizer_file = "distilBert-query-router/onnx_model/tokenizer.json"
 max_length = "64"
 
-# ── TTS: ChatterboxTTS (tts-inference PyInstaller binary) ────────────────────
+# ── TTS: KittenTTS Mini (ONNX Runtime in-process) ────────────────────────────
 
 [[models]]
-id = "chatterbox-tts"
-name = "ChatterboxTTS Q4-K-M"
-backend = "tts_inference"
-kind = "child_process"
-model_file = "tts-chatterbox-q4-k-m/s3gen-bf16.gguf"
-tasks = ["tts", "podcast_audio"]
+id = "kitten-tts"
+name = "KittenTTS Mini v0.8"
+backend = "kitten_tts"
+kind = "in_process"
+model_file = "kittenTTS/mini"
+tasks = ["tts"]
 auto_start = false
 max_instances = 1
-idle_timeout_s = 0
-priority = 10
-memory_mb = 2000
+idle_timeout_s = 300
+priority = 15
+memory_mb = 200
 
 # ── Relevance Grader: ms-marco-MiniLM-L6-v2 (ONNX Runtime in-process) ────────
 

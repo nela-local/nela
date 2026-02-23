@@ -21,11 +21,6 @@ export const Api = {
     return invoke<ModelFile[]>("list_vision_models");
   },
 
-  /** List TTS audio model files. */
-  async listAudioModels(): Promise<ModelFile[]> {
-    return invoke<ModelFile[]>("list_audio_models");
-  },
-
   /** List all registered models with their current status and supported tasks. */
   async listRegisteredModels(): Promise<RegisteredModel[]> {
     return invoke<RegisteredModel[]>("list_registered_models");
@@ -69,10 +64,14 @@ export const Api = {
   // ── Audio ──────────────────────────────────────────────────────────────────
 
   /** Generate speech from text using the TTS backend. Returns a playable URL. */
-  async generateSpeech(modelPath: string, input: string): Promise<string> {
+  async generateSpeech(
+    input: string,
+    options?: { voice?: string; speed?: number }
+  ): Promise<string> {
     const filePath = await invoke<string>("generate_speech", {
-      modelPath,
       input,
+      voice: options?.voice ?? null,
+      speed: options?.speed ?? null,
     });
     return convertFileSrc(filePath);
   },

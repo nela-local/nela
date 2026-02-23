@@ -81,9 +81,9 @@ fn parse_backend(s: &str) -> Result<BackendKind, String> {
         "llama_server" => Ok(BackendKind::LlamaServer),
         "llama_cli" => Ok(BackendKind::LlamaCli),
         "whisper_cpp" => Ok(BackendKind::WhisperCpp),
-        "tts_inference" => Ok(BackendKind::TtsInference),
         "onnx_classifier" => Ok(BackendKind::OnnxClassifier),
         "cross_encoder" => Ok(BackendKind::CrossEncoder),
+        "kitten_tts" => Ok(BackendKind::KittenTts),
         other => Err(format!("Unknown backend: {other}")),
     }
 }
@@ -103,8 +103,6 @@ fn parse_task(s: &str) -> Result<TaskType, String> {
         "summarize" => Ok(TaskType::Summarize),
         "mindmap" => Ok(TaskType::Mindmap),
         "tts" => Ok(TaskType::Tts),
-        "podcast_audio" => Ok(TaskType::PodcastAudio),
-        "podcast_script" => Ok(TaskType::PodcastScript),
         "transcribe" => Ok(TaskType::Transcribe),
         "stt" => Ok(TaskType::Stt),
         "embed" => Ok(TaskType::Embed),

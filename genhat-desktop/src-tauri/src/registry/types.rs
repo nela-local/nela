@@ -20,9 +20,9 @@ pub enum BackendKind {
     LlamaServer,
     LlamaCli,
     WhisperCpp,
-    TtsInference,
     OnnxClassifier,
     CrossEncoder,
+    KittenTts,
 }
 
 /// Whether the model runs as a child process or in the Tauri process.
@@ -42,8 +42,6 @@ pub enum TaskType {
     Summarize,
     Mindmap,
     Tts,
-    PodcastAudio,
-    PodcastScript,
     Transcribe,
     Stt,
     // RAG-internal
@@ -64,8 +62,6 @@ impl std::fmt::Display for TaskType {
             TaskType::Summarize => write!(f, "summarize"),
             TaskType::Mindmap => write!(f, "mindmap"),
             TaskType::Tts => write!(f, "tts"),
-            TaskType::PodcastAudio => write!(f, "podcast_audio"),
-            TaskType::PodcastScript => write!(f, "podcast_script"),
             TaskType::Transcribe => write!(f, "transcribe"),
             TaskType::Stt => write!(f, "stt"),
             TaskType::Embed => write!(f, "embed"),

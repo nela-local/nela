@@ -45,9 +45,13 @@ zip = "2"
 xml-rs = "0.8"
 tempfile = "3"
 
-# ── ONNX Runtime (in-process DistilBERT classifier) ──
+# ── ONNX Runtime (in-process DistilBERT classifier + KittenTTS) ──
 ort = { version = "2.0.0-rc.11", features = ["download-binaries"] }
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+
+# ── KittenTTS text preprocessing ──
+regex = "1"
+fancy-regex = "0.14"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -91,7 +91,6 @@ fn main() {
             // Legacy-compatible commands
             app_lib::commands::models::list_models,
             app_lib::commands::models::list_vision_models,
-            app_lib::commands::models::list_audio_models,
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,
             app_lib::commands::audio::generate_speech,

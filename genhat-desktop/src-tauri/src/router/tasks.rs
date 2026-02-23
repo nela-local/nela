@@ -40,18 +40,13 @@ pub fn mindmap_request(input: &str) -> TaskRequest {
 }
 
 /// Create a TTS task request.
-pub fn tts_request(text: &str, model_path: &str, vae: &str, clip: &str) -> TaskRequest {
-    let mut extra = HashMap::new();
-    extra.insert("model_path".to_string(), model_path.to_string());
-    extra.insert("vae_file".to_string(), vae.to_string());
-    extra.insert("clip_file".to_string(), clip.to_string());
-
+pub fn tts_request(text: &str) -> TaskRequest {
     TaskRequest {
         request_id: uuid::Uuid::new_v4().to_string(),
         task_type: TaskType::Tts,
         input: text.to_string(),
         model_override: None,
-        extra,
+        extra: HashMap::new(),
     }
 }
 
