@@ -17,6 +17,7 @@ export interface RegisteredModel {
 export interface IngestionStatus {
   doc_id: number;
   title: string;
+  file_path: string;
   total_chunks: number;
   embedded_chunks: number;
   enriched_chunks: number;

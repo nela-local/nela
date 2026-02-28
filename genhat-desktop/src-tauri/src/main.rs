@@ -125,6 +125,8 @@ fn main() {
             // Media retrieval commands
             app_lib::commands::rag::retrieve_media_for_response,
             app_lib::commands::rag::get_media_for_document,
+            // File viewer commands
+            app_lib::commands::rag::read_file_base64,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

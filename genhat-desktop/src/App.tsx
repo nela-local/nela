@@ -5,12 +5,11 @@ import {
   MessageSquare,
   Eye,
   Volume2,
-  BookOpen,
   Plus,
   ImageIcon,
+  X,
   FileText,
   FolderOpen,
-  X,
   Trash2,
   Loader2,
   CheckCircle2,
@@ -30,6 +29,7 @@ import type {
 import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
 import ModelSelector from "./components/ModelSelector";
+import PdfViewer from "./components/PdfViewer";
 import "./App.css";
 
 /* ── Mode metadata for the sidebar ──────────────────────────────────────── */
@@ -42,7 +42,6 @@ const MODE_CONFIG: {
   { mode: "text", label: "Chat", icon: MessageSquare, desc: "Text conversation" },
   { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
   { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
-  { mode: "rag", label: "RAG", icon: BookOpen, desc: "Document Q&A" },
 ];
 
 function App() {
@@ -91,19 +90,30 @@ function App() {
   /** Media assets (images/tables) keyed by message index in the messages array. */
   const [mediaAssets, setMediaAssets] = useState<Record<number, MediaAsset[]>>({});
 
+  // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
+  const [docPanelOpen, setDocPanelOpen] = useState(false);
+
+  // ── PDF Viewer state ───────────────────────────────────────────────────────
+  const [pdfViewerData, setPdfViewerData] = useState<{
+    data: string;
+    title: string;
+  } | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
     refreshModels();
+    loadRagDocs(); // Always load RAG docs on startup
     return () => {
       visionUnlistenRef.current?.();
       visionUnlistenRef.current = null;
     };
   }, []);
 
-  // Load RAG docs when switching to RAG mode
+  // Reload RAG docs periodically when in text mode
   useEffect(() => {
-    if (chatMode === "rag") loadRagDocs();
+    if (chatMode === "text") loadRagDocs();
   }, [chatMode]);
 
   // Listen for background enrichment progress events
@@ -116,7 +126,7 @@ function App() {
           setEnrichmentStatus(
             `Enriched ${event.payload.enriched_this_round} chunks`
           );
-          if (chatMode === "rag") loadRagDocs();
+          loadRagDocs();
           setTimeout(() => setEnrichmentStatus(null), 5000);
         }
       }
@@ -274,6 +284,28 @@ function App() {
     }
   };
 
+  // ── PDF Viewer handlers ───────────────────────────────────────────────────
+
+  const openPdfViewer = async (doc: IngestionStatus) => {
+    const ext = doc.file_path.split(".").pop()?.toLowerCase();
+    if (ext !== "pdf") return; // only PDFs are viewable
+
+    try {
+      setPdfLoading(true);
+      const data = await Api.readFileBase64(doc.file_path);
+      setPdfViewerData({ data, title: doc.title });
+    } catch (e) {
+      console.error("Failed to load PDF:", e);
+      alert(`Failed to open PDF: ${e}`);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const closePdfViewer = () => {
+    setPdfViewerData(null);
+  };
+
   // ── Cancel handler ────────────────────────────────────────────────────────
 
   const handleCancel = () => {
@@ -306,8 +338,8 @@ function App() {
     abortControllerRef.current = ctrl;
 
     try {
-      // ── RAG Mode (streaming) ────────────────────────────────────────────
-      if (chatMode === "rag") {
+      // ── RAG-enhanced Chat (auto-activates when documents are ingested) ──
+      if (chatMode === "text" && ragDocs.length > 0) {
         try {
           // Start timer
           setGeneralGenerating(true);
@@ -326,95 +358,68 @@ function App() {
           const setup = await Api.queryRagStream(text);
           setRagResult({ answer: "", sources: setup.sources });
 
-          // Handle empty results
-          if (!setup.prompt) {
-            // Stop timer on empty results
-            if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-            setGeneralGenerating(false);
-            const msg =
-              setup.sources.length === 0
-                ? "No relevant documents found. Please ingest some documents first."
-                : "";
-            setMessages((prev) => [
-              ...prev,
-              { role: "assistant", content: msg },
-            ]);
-            setLoading(false);
+          // If no relevant docs found, fall through to normal text chat
+          if (!setup.prompt || setup.sources.length === 0) {
+            // Fall through to normal text chat below
+          } else {
+            // Phase 2: Stream the answer from llama-server SSE
+            let fullAnswer = "";
+            await Api.streamChat(
+              [
+                { role: "system", content: "You are a helpful assistant." },
+                { role: "user", content: setup.prompt },
+              ],
+              (chunk) => {
+                fullAnswer += chunk;
+                setStreamingContent((prev) => prev + chunk);
+              },
+              () => {
+                setRagResult((prev) =>
+                  prev ? { ...prev, answer: fullAnswer } : null
+                );
+                setMessages((prev) => {
+                  const updated = [
+                    ...prev,
+                    { role: "assistant" as const, content: fullAnswer },
+                  ];
+                  const assistantIdx = updated.length - 1;
+                  Api.retrieveMediaForResponse(fullAnswer)
+                    .then((assets) => {
+                      if (assets.length > 0) {
+                        setMediaAssets((prev) => ({
+                          ...prev,
+                          [assistantIdx]: assets,
+                        }));
+                      }
+                    })
+                    .catch((e) =>
+                      console.warn("Media retrieval failed:", e)
+                    );
+                  return updated;
+                });
+                setStreamingContent("");
+                setLoading(false);
+              },
+              (err) => {
+                console.error("RAG stream error:", err);
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "assistant", content: `RAG query error: ${err}` },
+                ]);
+                setLoading(false);
+              },
+              setup.llama_port,
+              ctrl.signal
+            );
             return;
           }
-
-          // Phase 2: Stream the answer from llama-server SSE
-          let fullAnswer = "";
-          await Api.streamChat(
-            [
-              { role: "system", content: "You are a helpful assistant." },
-              { role: "user", content: setup.prompt },
-            ],
-            (chunk) => {
-              fullAnswer += chunk;
-              setStreamingContent((prev) => prev + chunk);
-            },
-            () => {
-              // Stop timer
-              if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-              const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
-              setGeneralGenerating(false);
-              setGeneralElapsedTime(totalTime);
-              setGeneralGenerationTime(totalTime);
-
-              setRagResult((prev) =>
-                prev ? { ...prev, answer: fullAnswer } : null
-              );
-              setMessages((prev) => {
-                const updated = [
-                  ...prev,
-                  { role: "assistant" as const, content: fullAnswer },
-                ];
-                // Two-phase media retrieval: match response → captions
-                const assistantIdx = updated.length - 1;
-                Api.retrieveMediaForResponse(fullAnswer)
-                  .then((assets) => {
-                    if (assets.length > 0) {
-                      setMediaAssets((prev) => ({
-                        ...prev,
-                        [assistantIdx]: assets,
-                      }));
-                    }
-                  })
-                  .catch((e) =>
-                    console.warn("Media retrieval failed:", e)
-                  );
-                return updated;
-              });
-              setStreamingContent("");
-              setLoading(false);
-            },
-            (err) => {
-              // Stop timer on error
-              if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-              setGeneralGenerating(false);
-              console.error("RAG stream error:", err);
-              setMessages((prev) => [
-                ...prev,
-                { role: "assistant", content: `RAG query error: ${err}` },
-              ]);
-              setLoading(false);
-            },
-            setup.llama_port,
-            ctrl.signal
-          );
         } catch (e) {
           // Stop timer on error
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
           setGeneralGenerating(false);
-          console.error(e);
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: `RAG query error: ${e}` },
-          ]);
-          setLoading(false);
+          console.error("RAG attempt failed, falling back to normal chat:", e);
+          // Fall through to normal text chat
         }
-        return;
       }
 
       // ── Audio Mode ──────────────────────────────────────────────────────
@@ -625,10 +630,10 @@ function App() {
         return "Ask about the image (e.g., 'What's in this image?')";
       case "audio":
         return "Type text to generate speech...";
-      case "rag":
-        return "Ask a question about your documents...";
       default:
-        return "Message NELA...";
+        return ragDocs.length > 0
+          ? "Ask about your documents or chat freely..."
+          : "Message NELA...";
     }
   };
 
@@ -820,30 +825,83 @@ function App() {
           </div>
         )}
 
-        {/* ── RAG Panel ── */}
-        {chatMode === "rag" && (
-          <div className="context-panel">
-            <div className="context-panel-header">
-              <BookOpen size={16} strokeWidth={1.8} />
-              <span>Knowledge Base</span>
-              <div className="context-panel-actions">
-                <button
-                  onClick={ingestFile}
-                  disabled={ragIngesting}
-                  className="action-btn"
-                >
-                  <FileText size={14} />
-                  Add File
-                </button>
-                <button
-                  onClick={ingestDir}
-                  disabled={ragIngesting}
-                  className="action-btn"
-                >
-                  <FolderOpen size={14} />
-                  Add Folder
-                </button>
-              </div>
+        {/* ── RAG Panel ── now in right sidebar */}
+
+        {/* ── Chat Area ── */}
+        <ChatWindow
+          messages={messages}
+          streamingContent={streamingContent}
+          isLoading={loading}
+          onSend={handleSend}
+          onCancel={handleCancel}
+          cancelled={cancelled}
+          audioSrc={audioOutput}
+          placeholder={getPlaceholder()}
+          mediaAssets={mediaAssets}
+          ragDocs={ragDocs}
+          ragIngesting={ragIngesting}
+          enrichmentStatus={enrichmentStatus}
+          onIngestFile={ingestFile}
+          onIngestDir={ingestDir}
+          onToggleDocPanel={() => setDocPanelOpen((v) => !v)}
+          showRagControls={chatMode === "text"}
+          docPanelOpen={docPanelOpen}
+        />
+
+        {/* ── PDF Viewer Overlay ── */}
+        {pdfLoading && (
+          <div className="pdf-loading-overlay">
+            <div className="pdf-spinner" />
+            <span>Loading PDF...</span>
+          </div>
+        )}
+        {pdfViewerData && (
+          <PdfViewer
+            pdfData={pdfViewerData.data}
+            title={pdfViewerData.title}
+            onClose={closePdfViewer}
+          />
+        )}
+      </main>
+
+      {/* ══════════ RIGHT SIDEBAR — Knowledge Base ══════════ */}
+      <aside className={`kb-sidebar ${docPanelOpen ? "open" : ""}`}>
+        <div className="kb-sidebar-inner">
+          {/* Header */}
+          <div className="kb-sidebar-header">
+            <div className="kb-sidebar-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              Knowledge Base
+            </div>
+            <button
+              className="kb-sidebar-close"
+              onClick={() => setDocPanelOpen(false)}
+              title="Close panel"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Actions */}
+          <div className="kb-sidebar-actions">
+            <button onClick={ingestFile} disabled={ragIngesting} className="action-btn">
+              <FileText size={14} />
+              Add File
+            </button>
+            <button onClick={ingestDir} disabled={ragIngesting} className="action-btn">
+              <FolderOpen size={14} />
+              Add Folder
+            </button>
+          </div>
+
+          {/* Status indicators */}
+          {(ragIngesting || enrichmentStatus) && (
+            <div className="kb-sidebar-status">
               {ragIngesting && (
                 <span className="status-badge warning">
                   <Loader2 size={12} className="spin" />
@@ -857,83 +915,66 @@ function App() {
                 </span>
               )}
             </div>
-            <div className="context-panel-body">
-              {ragDocs.length === 0 ? (
-                <p className="rag-empty">
-                  No documents ingested yet. Add files to build your knowledge base.
-                </p>
-              ) : (
-                <div className="rag-doc-list">
-                  {ragDocs.map((doc) => (
-                    <div key={doc.doc_id} className="rag-doc-item">
-                      <FileText size={14} className="doc-icon" />
-                      <span className="doc-title">{doc.title}</span>
-                      <span className="doc-meta">
-                        {doc.total_chunks} chunks
-                      </span>
-                      <span className="doc-meta">
-                        {doc.enriched_chunks}/{doc.total_chunks} enriched
-                      </span>
-                      <span
-                        className={`doc-phase ${
-                          doc.phase.includes("phase2_complete") ? "complete" : ""
-                        }`}
-                      >
-                        {doc.phase.replace(/_/g, " ")}
-                      </span>
-                      <button
-                        onClick={() => deleteRagDoc(doc.doc_id)}
-                        className="doc-delete"
-                        title="Remove document"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* RAG Source Citations */}
-              {ragResult && ragResult.sources.length > 0 && (
-                <div className="rag-sources">
-                  <div className="rag-sources-header">
-                    <FileText size={14} />
-                    <strong>Sources ({ragResult.sources.length})</strong>
-                  </div>
-                  {ragResult.sources.map((src, i) => (
-                    <details key={src.chunk_id} className="source-item">
-                      <summary>
-                        [Source {i + 1}] {src.doc_title} (score:{" "}
-                        {src.score.toFixed(4)})
-                      </summary>
-                      <pre className="source-text">{src.text}</pre>
-                    </details>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+          )}
 
-        {/* ── Chat Area ── */}
-        <ChatWindow
-          messages={messages}
-          streamingContent={streamingContent}
-          isLoading={loading}
-          onSend={handleSend}
-          onCancel={handleCancel}
-          cancelled={cancelled}
-          audioSrc={audioOutput}
-          placeholder={getPlaceholder()}
-          mediaAssets={mediaAssets}
-          chatMode={chatMode}
-          ttsGenerating={ttsGenerating}
-          ttsElapsedTime={ttsElapsedTime}
-          ttsGenerationTime={ttsGenerationTime}
-          generalGenerating={generalGenerating}
-          generalElapsedTime={generalElapsedTime}
-          generalGenerationTime={generalGenerationTime}
-        />
-      </main>
+          {/* Document List */}
+          <div className="kb-sidebar-docs">
+            {ragDocs.length === 0 ? (
+              <p className="rag-empty">
+                No documents ingested yet. Use the buttons above to add files.
+              </p>
+            ) : (
+              <div className="rag-doc-list">
+                {ragDocs.map((doc) => {
+                  const isPdf = doc.file_path?.toLowerCase().endsWith(".pdf");
+                  return (
+                  <div
+                    key={doc.doc_id}
+                    className={`rag-doc-item${isPdf ? " clickable" : ""}`}
+                    onClick={() => isPdf && openPdfViewer(doc)}
+                    title={isPdf ? "Click to view PDF" : doc.title}
+                  >
+                    <FileText size={14} className="doc-icon" />
+                    <span className="doc-title">{doc.title}</span>
+                    <span className="doc-meta">{doc.total_chunks} chunks</span>
+                    <span
+                      className={`doc-phase ${doc.phase.includes("phase2_complete") ? "complete" : ""}`}
+                    >
+                      {doc.phase.replace(/_/g, " ")}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteRagDoc(doc.doc_id); }}
+                      className="doc-delete"
+                      title="Remove document"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* RAG Source Citations */}
+          {ragResult && ragResult.sources.length > 0 && (
+            <div className="kb-sidebar-sources">
+              <div className="rag-sources-header">
+                <FileText size={14} />
+                <strong>Sources ({ragResult.sources.length})</strong>
+              </div>
+              {ragResult.sources.map((src, i) => (
+                <details key={src.chunk_id} className="source-item">
+                  <summary>
+                    [Source {i + 1}] {src.doc_title} (score: {src.score.toFixed(4)})
+                  </summary>
+                  <pre className="source-text">{src.text}</pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }

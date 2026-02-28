@@ -64,6 +64,7 @@ pub struct SourceChunk {
 pub struct IngestionStatus {
     pub doc_id: i64,
     pub title: String,
+    pub file_path: String,
     pub total_chunks: usize,
     pub embedded_chunks: usize,
     pub enriched_chunks: usize,
@@ -252,6 +253,7 @@ impl RagPipeline {
         Ok(IngestionStatus {
             doc_id,
             title,
+            file_path: path_str,
             total_chunks: chunk_count,
             embedded_chunks: embedded_count,
             enriched_chunks: 0,
@@ -702,6 +704,13 @@ impl RagPipeline {
 
             // Use retry_sources for answer generation (with context expansion)
             let context = self.build_expanded_context(&retry_sources, &retry_chunks);
+            let max_context_chars: usize = 2800;
+            let context = if context.len() > max_context_chars {
+                log::warn!("RAG retry context truncated from {} to {} chars", context.len(), max_context_chars);
+                context[..max_context_chars].to_string()
+            } else {
+                context
+            };
 
             let augmented_prompt = format!(
                 "Use the following context to answer the question. \
@@ -727,6 +736,13 @@ impl RagPipeline {
         // 8. Build augmented prompt with context window expansion
         let context = self.build_expanded_context(&sources, &chunks);
         log::debug!("RAG context ({} chars, {} sources)", context.len(), sources.len());
+        let max_context_chars: usize = 2800;
+        let context = if context.len() > max_context_chars {
+            log::warn!("RAG context truncated from {} to {} chars", context.len(), max_context_chars);
+            context[..max_context_chars].to_string()
+        } else {
+            context
+        };
 
         let augmented_prompt = format!(
             "Use the following context to answer the question. \
@@ -878,6 +894,21 @@ impl RagPipeline {
         let context = self.build_expanded_context(&sources, &chunks);
         log::debug!("RAG streaming context ({} chars, {} sources)", context.len(), sources.len());
 
+        // Truncate context to ~2800 chars (~700 tokens) to stay within
+        // 4096-token context window after adding system/user framing and
+        // leaving room for the 512-token max_tokens output.
+        let max_context_chars: usize = 2800;
+        let context = if context.len() > max_context_chars {
+            log::warn!(
+                "RAG context truncated from {} to {} chars to fit context window",
+                context.len(),
+                max_context_chars
+            );
+            context[..max_context_chars].to_string()
+        } else {
+            context
+        };
+
         let augmented_prompt = format!(
             "Use the following context to answer the question. \
              Cite sources using [Source N] when referencing specific information.\n\n\
@@ -954,6 +985,19 @@ impl RagPipeline {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
+
+        // Truncate context to fit within context window
+        let max_context_chars: usize = 2800;
+        let context = if context.len() > max_context_chars {
+            log::warn!(
+                "RAPTOR context truncated from {} to {} chars to fit context window",
+                context.len(),
+                max_context_chars
+            );
+            context[..max_context_chars].to_string()
+        } else {
+            context
+        };
 
         let augmented_prompt = format!(
             "Use the following context to answer the question. \
@@ -1254,6 +1298,7 @@ impl RagPipeline {
             .map(|d| IngestionStatus {
                 doc_id: d.id,
                 title: d.title,
+                file_path: d.path,
                 total_chunks: d.chunk_count as usize,
                 embedded_chunks: d.chunk_count as usize, // Phase 1 embeds all
                 enriched_chunks: d.enriched_count as usize,

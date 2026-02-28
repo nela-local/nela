@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { Api } from "../api";
-import type { MediaAsset } from "../types";
+import type { MediaAsset, IngestionStatus } from "../types";
 
 /** Copy button for a full assistant response */
 const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
@@ -61,6 +61,15 @@ interface ChatWindowProps {
   generalGenerating?: boolean;
   generalElapsedTime?: number;
   generalGenerationTime?: number | null;
+  /** RAG integration props */
+  ragDocs?: IngestionStatus[];
+  ragIngesting?: boolean;
+  enrichmentStatus?: string | null;
+  onIngestFile?: () => void;
+  onIngestDir?: () => void;
+  onToggleDocPanel?: () => void;
+  showRagControls?: boolean;
+  docPanelOpen?: boolean;
 }
 
 /** Inline gallery for extracted images/tables attached to an assistant message. */
@@ -145,13 +154,36 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   generalGenerating = false,
   generalElapsedTime = 0,
   generalGenerationTime = null,
+  ragDocs = [],
+  ragIngesting = false,
+  enrichmentStatus = null,
+  onIngestFile,
+  onIngestDir,
+  onToggleDocPanel,
+  showRagControls = false,
+  docPanelOpen = false,
 }) => {
   const [inputObj, setInputObj] = useState("");
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
+
+  // Close attach menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (attachMenuRef.current && !attachMenuRef.current.contains(e.target as Node)) {
+        setShowAttachMenu(false);
+      }
+    };
+    if (showAttachMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showAttachMenu]);
 
   const handleSend = () => {
     if (!inputObj.trim()) return;
@@ -271,7 +303,85 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       </div>
 
       <div className="input-area">
+        {/* RAG doc indicators — inline pill toggles the right sidebar */}
+        {showRagControls && ragDocs.length > 0 && (
+          <div className="rag-inline-bar">
+            <button
+              className={`rag-docs-pill ${docPanelOpen ? "active" : ""}`}
+              onClick={onToggleDocPanel}
+              title="Toggle knowledge base panel"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              {ragDocs.length} doc{ragDocs.length !== 1 ? "s" : ""} loaded
+            </button>
+            {ragIngesting && (
+              <span className="rag-inline-status ingesting">
+                <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                Ingesting...
+              </span>
+            )}
+            {enrichmentStatus && (
+              <span className="rag-inline-status enriched">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+                {enrichmentStatus}
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="input-wrapper">
+          {/* + Attach button for RAG uploads */}
+          {showRagControls && (
+            <div className="attach-container" ref={attachMenuRef}>
+              <button
+                className="attach-btn"
+                onClick={() => setShowAttachMenu(!showAttachMenu)}
+                title="Add documents to knowledge base"
+                disabled={isLoading}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showAttachMenu ? "rotate(45deg)" : "none", transition: "transform 0.2s" }}
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+
+              {showAttachMenu && (
+                <div className="attach-menu">
+                  <button
+                    className="attach-menu-item"
+                    onClick={() => { onIngestFile?.(); setShowAttachMenu(false); }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    <span>Add File</span>
+                    <span className="attach-menu-hint">PDF, DOCX, TXT, code...</span>
+                  </button>
+                  <button
+                    className="attach-menu-item"
+                    onClick={() => { onIngestDir?.(); setShowAttachMenu(false); }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                    </svg>
+                    <span>Add Folder</span>
+                    <span className="attach-menu-hint">Ingest entire directory</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <textarea
             value={inputObj}
             onChange={(e) => setInputObj(e.target.value)}
@@ -281,14 +391,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           />
           {isLoading ? (
             <button className="stop-btn" onClick={onCancel} title="Stop generation">
-              {/* Stop square icon */}
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                 <rect x="4" y="4" width="16" height="16" rx="2" />
               </svg>
             </button>
           ) : (
             <button className="send-btn" onClick={handleSend} disabled={!inputObj.trim()}>
-              {/* Arrow Icon SVG */}
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>

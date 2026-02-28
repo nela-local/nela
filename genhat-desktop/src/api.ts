@@ -148,6 +148,11 @@ export const Api = {
     await invoke("delete_rag_document", { docId });
   },
 
+  /** Read a file as base64 data URL for the frontend viewer. */
+  async readFileBase64(path: string): Promise<string> {
+    return invoke<string>("read_file_base64", { path });
+  },
+
   /** Manually trigger a round of background enrichment. */
   async enrichRagDocuments(batchSize?: number): Promise<number> {
     return invoke<number>("enrich_rag_documents", { batchSize });
@@ -271,12 +276,19 @@ export const Api = {
           body: JSON.stringify({
             messages,
             stream: true,
-            max_tokens: 1024,
+            max_tokens: 512,
             temperature: 0.7,
           }),
           signal,
         }
       );
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => res.statusText);
+        throw new Error(
+          `LLM server returned ${res.status}: ${errBody}`
+        );
+      }
 
       if (!res.body)
         throw new Error("No response body received from local LLM");

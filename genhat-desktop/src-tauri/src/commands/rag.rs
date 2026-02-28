@@ -263,3 +263,31 @@ pub async fn query_rag_with_raptor_stream(
     })
 }
 
+/// Read a file (PDF or other) as base64 data URL for the frontend viewer.
+#[tauri::command]
+pub fn read_file_base64(path: String) -> Result<String, String> {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {}", p.display()));
+    }
+
+    let mime = match p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("txt") => "text/plain",
+        Some("md") => "text/markdown",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _ => "application/octet-stream",
+    };
+
+    let data = std::fs::read(p).map_err(|e| format!("Failed to read file: {e}"))?;
+    let b64 = STANDARD.encode(&data);
+    Ok(format!("data:{};base64,{}", mime, b64))
+}

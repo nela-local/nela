@@ -21,10 +21,10 @@
 }
 
 .model-selector-btn:hover, .model-selector-btn.active {
-    background-color: #2a2e3d;
+    background-color: #112d4a;
     color: var(--text-primary);
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.2);
+    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.2);
 }
 
 .model-selector-btn .model-name {
@@ -98,7 +98,7 @@
 }
 
 .model-item.selected {
-    background-color: rgba(99, 102, 241, 0.1);
+    background-color: rgba(45, 212, 191, 0.10);
     color: var(--accent-primary);
 }
 
