@@ -186,7 +186,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   }, [showAttachMenu]);
 
   const handleSend = () => {
-    if (!inputObj.trim()) return;
+    if (!inputObj.trim() || isLoading) return;
     onSend(inputObj);
     setInputObj("");
   };
@@ -194,7 +194,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!isLoading) handleSend();
     }
   };
 

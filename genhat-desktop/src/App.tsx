@@ -327,6 +327,7 @@ function App() {
   // ── Main send handler ─────────────────────────────────────────────────────
 
   const handleSend = async (text: string) => {
+    if (loading) return; // Prevent concurrent requests
     const newMsg: ChatMessage = { role: "user", content: text };
     setMessages((prev) => [...prev, newMsg]);
     setLoading(true);
