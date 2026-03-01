@@ -115,6 +115,8 @@ export default function DocumentViewer({ filePath, title, onClose }: DocumentVie
       try {
         setLoading(true);
         setError(null);
+        setDataUrl("");
+        setTextContent("");
 
         if (kind === "image" || kind === "audio" || kind === "docx" || kind === "pptx") {
           // Binary files: load as base64 data URL
@@ -144,6 +146,7 @@ export default function DocumentViewer({ filePath, title, onClose }: DocumentVie
   useEffect(() => {
     if (kind !== "docx" || !dataUrl || !docxContainerRef.current) return;
 
+    let cancelled = false;
     const container = docxContainerRef.current;
     container.innerHTML = ""; // clear previous
 
@@ -171,9 +174,11 @@ export default function DocumentViewer({ filePath, title, onClose }: DocumentVie
       renderFootnotes: true,
       renderEndnotes: true,
     }).catch((err: unknown) => {
-      setError(`Failed to render DOCX: ${err}`);
+      if (!cancelled) setError(`Failed to render DOCX: ${err}`);
     });
-  }, [kind, dataUrl]);
+
+    return () => { cancelled = true; };
+  }, [kind, dataUrl, filePath]);
 
   /* ── Subrenderers ───────────────────────────────────────────────────────── */
 

@@ -327,6 +327,7 @@ function App() {
         setPdfLoading(true);
         const data = await Api.readFileBase64(doc.file_path);
         setPdfViewerData({ data, title: doc.title });
+        setDocViewerFile(null); // Clear any other open viewer
       } catch (e) {
         console.error("Failed to load PDF:", e);
         alert(`Failed to open PDF: ${e}`);
@@ -336,6 +337,7 @@ function App() {
     } else if (VIEWABLE_EXTS.has(ext)) {
       // Everything else uses the universal DocumentViewer
       setDocViewerFile({ filePath: doc.file_path, title: doc.title });
+      setPdfViewerData(null); // Clear any PDF viewer
     }
   };
 
@@ -908,6 +910,7 @@ function App() {
         {/* ── Document Viewer Overlay (non-PDF) ── */}
         {docViewerFile && (
           <DocumentViewer
+            key={docViewerFile.filePath}
             filePath={docViewerFile.filePath}
             title={docViewerFile.title}
             onClose={closeDocViewer}
