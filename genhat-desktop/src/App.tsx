@@ -408,23 +408,41 @@ function App() {
           } else {
             // Phase 2: Stream the answer from llama-server SSE
             let fullAnswer = "";
+            let firstTokenTimeMs: number | null = null;
             await Api.streamChat(
               [
                 { role: "system", content: "You are a helpful assistant. Answer the question using the provided reference text. Write a clear, natural response without repeating source labels, tags, or brackets. If the user asks for a specific format (table, list, bullet points, etc.), use that format. If the reference text does not cover the question, say you don't know." },
                 { role: "user", content: setup.prompt },
               ],
               (chunk) => {
+                if (firstTokenTimeMs === null) {
+                  firstTokenTimeMs = Date.now();
+                }
                 fullAnswer += chunk;
                 setStreamingContent((prev) => prev + chunk);
               },
               () => {
+                // Stop timer
+                if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+                const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
+                const timeToFirstToken = firstTokenTimeMs ? Math.floor((firstTokenTimeMs - ragStartTime) / 100) / 10 : null;
+                
+                setGeneralGenerating(false);
+                setGeneralElapsedTime(totalTime);
+                setGeneralGenerationTime(totalTime);
+                
                 setRagResult((prev) =>
                   prev ? { ...prev, answer: fullAnswer } : null
                 );
                 setMessages((prev) => {
-                  const updated = [
+                  const updated: ChatMessage[] = [
                     ...prev,
-                    { role: "assistant" as const, content: fullAnswer },
+                    { 
+                      role: "assistant", 
+                      content: fullAnswer, 
+                      generateTime: totalTime,
+                      firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
+                    },
                   ];
                   const assistantIdx = updated.length - 1;
                   Api.retrieveMediaForResponse(fullAnswer)
@@ -503,6 +521,7 @@ function App() {
             {
               role: "assistant",
               content: `🔊 Audio generated (${ttsVoice}, ${ttsSpeed}x speed).`,
+              generateTime: totalTime
             },
           ]);
         } catch (e) {
@@ -549,6 +568,7 @@ function App() {
           visionUnlistenRef.current = null;
 
           let visionResponse = "";
+          let firstTokenTimeMs: number | null = null;
 
           const unlisten = await listen<{ chunk: string; done: boolean }>(
             "vision-stream",
@@ -557,6 +577,8 @@ function App() {
                 // Stop timer
                 if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
                 const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
+                const timeToFirstToken = firstTokenTimeMs ? Math.floor((firstTokenTimeMs - startTime) / 100) / 10 : null;
+                
                 setGeneralGenerating(false);
                 setGeneralElapsedTime(totalTime);
                 setGeneralGenerationTime(totalTime);
@@ -565,13 +587,21 @@ function App() {
                 if (visionResponse) {
                   setMessages((prev) => [
                     ...prev,
-                    { role: "assistant", content: visionResponse },
+                    { 
+                      role: "assistant", 
+                      content: visionResponse, 
+                      generateTime: totalTime,
+                      firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
+                    },
                   ]);
                   setStreamingContent("");
                 }
                 visionUnlistenRef.current?.();
                 visionUnlistenRef.current = null;
               } else if (event.payload.chunk) {
+                if (firstTokenTimeMs === null) {
+                  firstTokenTimeMs = Date.now();
+                }
                 visionResponse += event.payload.chunk;
                 setStreamingContent((prev) => prev + event.payload.chunk);
               }
@@ -616,9 +646,13 @@ function App() {
       }, 100);
 
       let fullResponse = "";
+      let textFirstTokenTimeMs: number | null = null;
       Api.streamChat(
         [...messages, newMsg],
         (chunk) => {
+          if (textFirstTokenTimeMs === null) {
+            textFirstTokenTimeMs = Date.now();
+          }
           setStreamingContent((prev) => prev + chunk);
           fullResponse += chunk;
         },
@@ -626,6 +660,8 @@ function App() {
           // Stop timer
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
           const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
+          const timeToFirstToken = textFirstTokenTimeMs ? Math.floor((textFirstTokenTimeMs - chatStartTime) / 100) / 10 : null;
+          
           setGeneralGenerating(false);
           setGeneralElapsedTime(totalTime);
           setGeneralGenerationTime(totalTime);
@@ -634,7 +670,12 @@ function App() {
           if (fullResponse) {
             setMessages((prev) => [
               ...prev,
-              { role: "assistant", content: fullResponse },
+              { 
+                role: "assistant", 
+                content: fullResponse, 
+                generateTime: totalTime,
+                firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
+              },
             ]);
             setStreamingContent("");
           }

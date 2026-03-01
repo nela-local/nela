@@ -6,6 +6,8 @@ export interface ModelFile {
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  generateTime?: number;
+  firstTokenTime?: number;
 }
 
 export interface RegisteredModel {

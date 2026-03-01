@@ -224,6 +224,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                     )}
                     <div className="msg-actions">
                       <CopyMsgButton text={msg.content} />
+                      {msg.generateTime !== undefined && (
+                        <span className="msg-generate-time" title={msg.firstTokenTime !== undefined ? `Generated in ${msg.generateTime}s\nFirst token in ${msg.firstTokenTime}s` : `Generated in ${msg.generateTime}s`}>
+                          Generated in {msg.generateTime}s {msg.firstTokenTime !== undefined && `• First token in ${msg.firstTokenTime}s`}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -315,7 +320,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
               </svg>
-              {ragDocs.length} doc{ragDocs.length !== 1 ? "s" : ""} loaded
+              {ragDocs.length} file{ragDocs.length !== 1 ? "s" : ""} loaded
             </button>
             {ragIngesting && (
               <span className="rag-inline-status ingesting">

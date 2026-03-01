@@ -928,12 +928,23 @@ body {
 .msg-actions {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  gap: 12px;
   opacity: 0;
   transition: opacity 0.15s ease;
 }
 
 .message.assistant:hover .msg-actions {
   opacity: 1;
+}
+
+.msg-generate-time {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .msg-copy-btn {
