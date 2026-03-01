@@ -29,6 +29,8 @@ export interface SourceChunk {
   doc_title: string;
   text: string;
   score: number;
+  /** Page/slide provenance from the original document (e.g. "page:3", "slide:2"). */
+  page_info?: string;
 }
 
 export interface RagResult {

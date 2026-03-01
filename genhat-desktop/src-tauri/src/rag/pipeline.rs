@@ -9,7 +9,7 @@
 //!   query → optional HyDE → BM25 search + vector search → RRF fusion
 //!   → fetch chunks → optional grading → build context
 
-use crate::rag::chunker::{chunk_text_default, Chunk};
+use crate::rag::chunker::{chunk_text_default, chunk_text_default_meta, Chunk};
 use crate::rag::db::RagDb;
 use crate::rag::fusion::{rrf_fuse, FusedResult};
 use crate::rag::parsers;
@@ -23,6 +23,55 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::Mutex as TokioMutex;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Prompt Template
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Build the augmented RAG prompt that wraps retrieved context + user question.
+///
+/// Designed to work well with small (1-3B) LLMs: uses explicit language so the
+/// model knows the `Document content` section IS the user's uploaded material.
+fn build_rag_prompt(context: &str, user_query: &str) -> String {
+    format!(
+        "Use ONLY the following reference text to answer the question.\n\
+         If the reference text does not contain the answer, say you don't know.\n\
+         Do NOT repeat or quote the reference text verbatim.\n\
+         Do NOT include any source labels, tags, or brackets in your answer.\n\
+         Write a clear answer in your own words.\n\
+         If the user asks for a specific format (table, list, bullet points, etc.), \n\
+         use that format in your answer.\n\n\
+         Reference text:\n\
+         {context}\n\n\
+         Question: {user_query}\n\n\
+         Answer:"
+    )
+}
+
+/// Convert internal metadata tags like "page:3" or "slide:2" to a
+/// human-readable label such as "Page 3" or "Slide 2".
+/// Returns an empty string for unrecognized or empty metadata.
+#[allow(dead_code)]
+fn format_page_label(metadata: &str) -> String {
+    if metadata.is_empty() {
+        return String::new();
+    }
+    if let Some(num) = metadata.strip_prefix("page:") {
+        // e.g. "page:3" → "Page 3"
+        let num = num.split(':').next().unwrap_or(num);
+        return format!("Page {num}");
+    }
+    if let Some(rest) = metadata.strip_prefix("slide:") {
+        // e.g. "slide:2" or "slide:2:table:1"
+        let num = rest.split(':').next().unwrap_or(rest);
+        return format!("Slide {num}");
+    }
+    if let Some(num) = metadata.strip_prefix("paragraph:") {
+        return format!("Paragraph {num}");
+    }
+    // Fallback: return as-is if it contains useful info
+    metadata.to_string()
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -57,6 +106,9 @@ pub struct SourceChunk {
     pub doc_title: String,
     pub text: String,
     pub score: f64,
+    /// Page/slide/section provenance from the original document (e.g. "page:3", "slide:2").
+    #[serde(default)]
+    pub page_info: String,
 }
 
 /// Status of document ingestion.
@@ -187,11 +239,16 @@ impl RagPipeline {
             }
         }
 
-        // 2. Chunk the sections
+        // 2. Chunk the sections (carry metadata like "page:3" or "slide:2")
         let mut all_chunks: Vec<Chunk> = Vec::new();
         for section in &parsed.sections {
-            let section_chunks = chunk_text_default(&section.text);
-            all_chunks.extend(section_chunks);
+            if section.metadata.is_empty() {
+                let section_chunks = chunk_text_default(&section.text);
+                all_chunks.extend(section_chunks);
+            } else {
+                let section_chunks = chunk_text_default_meta(&section.text, &section.metadata);
+                all_chunks.extend(section_chunks);
+            }
         }
 
         // Re-index chunks sequentially
@@ -226,10 +283,10 @@ impl RagPipeline {
             chunk_count as i64,
         )?;
 
-        // 4. Insert chunk records (text only, no embeddings yet)
-        let chunk_texts: Vec<(usize, String)> = all_chunks
+        // 4. Insert chunk records (text + metadata, no embeddings yet)
+        let chunk_texts: Vec<(usize, String, String)> = all_chunks
             .iter()
-            .map(|c| (c.index, c.text.clone()))
+            .map(|c| (c.index, c.text.clone(), c.metadata.clone()))
             .collect();
         let chunk_ids = self.db.insert_chunks(doc_id, &chunk_texts)?;
 
@@ -243,6 +300,10 @@ impl RagPipeline {
 
         // 6. Embed chunks via TaskRouter
         let embedded_count = self.embed_chunks(&chunk_ids, &all_chunks).await;
+        log::info!(
+            "Ingestion summary for '{}': {} chunks, {} embedded, vec_index now has {} vectors",
+            title, chunk_count, embedded_count, self.vec_index.len()
+        );
 
         // 7. Store media assets and embed their captions
         let media_count = self.store_media_assets(doc_id, &parsed).await;
@@ -341,6 +402,8 @@ impl RagPipeline {
     async fn embed_chunks(&self, chunk_ids: &[i64], chunks: &[Chunk]) -> usize {
         // Batch embeddings (submit all texts at once)
         let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+        log::info!("Embedding {} chunks (vec_index has {} vectors before)",
+                   texts.len(), self.vec_index.len());
 
         let request = tasks::embed_request(texts);
         match self.router.route(&request).await {
@@ -357,6 +420,8 @@ impl RagPipeline {
                         }
                     }
                 }
+                log::info!("Successfully embedded {}/{} chunks (vec_index now has {} vectors)",
+                           count, chunk_ids.len(), self.vec_index.len());
                 count
             }
             Ok(other) => {
@@ -364,7 +429,8 @@ impl RagPipeline {
                 0
             }
             Err(e) => {
-                log::warn!("Embedding failed (model may not be loaded): {e}");
+                log::warn!("⚠ Embedding FAILED (model may not be loaded): {e} — \
+                            retrieval will fall back to BM25 only");
                 0
             }
         }
@@ -532,8 +598,7 @@ impl RagPipeline {
 
         sources
             .iter()
-            .enumerate()
-            .map(|(i, s)| {
+            .map(|s| {
                 // Find the meta for this source
                 let meta = fetched_chunks.iter().find(|c| c.id == s.chunk_id);
 
@@ -567,7 +632,7 @@ impl RagPipeline {
                     s.text.clone()
                 };
 
-                format!("[Source {} — {}]\n{}", i + 1, s.doc_title, body)
+                body
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -581,10 +646,17 @@ impl RagPipeline {
     pub async fn query(&self, user_query: &str, top_k: usize) -> Result<RagResult, String> {
         // 0. Classify the query to decide retrieval strategy
         let query_class = self.classify_query(user_query).await;
-        log::info!("Query classified as: {}", query_class);
+        let doc_count = self.db.document_count().unwrap_or(0);
+        log::info!(
+            "Query classified as: {} (docs in DB: {}, vec_index: {} vectors)",
+            query_class, doc_count, self.vec_index.len()
+        );
 
-        // Skip retrieval entirely for general knowledge questions
-        if query_class == "no_retrieval" {
+        // Skip retrieval ONLY if classifier says no_retrieval AND there are no
+        // documents ingested.  When the user has ingested content we should
+        // always attempt retrieval — generic questions like "what is in the
+        // document" are intended to hit the knowledge base.
+        if query_class == "no_retrieval" && doc_count == 0 {
             let chat_request = tasks::chat_request(user_query);
             let answer = match self.router.route(&chat_request).await {
                 Ok(TaskResponse::Text(text)) => text,
@@ -605,12 +677,21 @@ impl RagPipeline {
 
         // 2. BM25 keyword search
         let bm25_results = self.bm25.search(user_query, top_k)?;
+        log::info!("BM25 returned {} results", bm25_results.len());
+        for (id, score) in bm25_results.iter().take(3) {
+            log::debug!("  BM25 chunk_id={} score={:.4}", id, score);
+        }
 
         // 3. Vector similarity search (using the potentially HyDE-enhanced query)
         let vector_results = self.vector_search(&search_query, top_k).await?;
+        log::info!("Vector search returned {} results", vector_results.len());
+        for (id, score) in vector_results.iter().take(3) {
+            log::debug!("  Vector chunk_id={} score={:.4}", id, score);
+        }
 
         // 4. RRF fusion
         let fused = rrf_fuse(&[bm25_results, vector_results]);
+        log::info!("RRF fused into {} results", fused.len());
 
         // 5. Take top-k fused results (fetch extra for grading headroom)
         let grading_pool = top_k * 2; // fetch 2x candidates, grade down to top_k
@@ -639,6 +720,13 @@ impl RagPipeline {
 
                 // Ask LLM to grade relevance (1-5). Falls back to 3 if grading unavailable.
                 let grade = self.grade_chunk(user_query, &chunk.text).await;
+                log::info!(
+                    "  Graded chunk_id={} '{}' → grade={} (rrf_score={:.4})",
+                    chunk.id,
+                    chunk.text.chars().take(60).collect::<String>(),
+                    grade,
+                    fused_result.rrf_score
+                );
 
                 graded_sources.push((
                     SourceChunk {
@@ -646,14 +734,21 @@ impl RagPipeline {
                         doc_title,
                         text: chunk.text.clone(),
                         score: fused_result.rrf_score,
+                        page_info: chunk.metadata.clone(),
                     },
                     grade,
                 ));
             }
         }
 
+        let before_filter = graded_sources.len();
         // Filter: keep only chunks with grade >= 3, then take top_k
         graded_sources.retain(|(_, grade)| *grade >= 3);
+        log::info!(
+            "Grading kept {}/{} chunks (grade >= 3)",
+            graded_sources.len(),
+            before_filter
+        );
         graded_sources.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal)));
         graded_sources.truncate(top_k);
 
@@ -683,6 +778,7 @@ impl RagPipeline {
                             doc_title,
                             text: chunk.text.clone(),
                             score: fused_result.rrf_score,
+                            page_info: chunk.metadata.clone(),
                         });
                     }
                     retry_chunks.extend(fetched);
@@ -704,7 +800,7 @@ impl RagPipeline {
 
             // Use retry_sources for answer generation (with context expansion)
             let context = self.build_expanded_context(&retry_sources, &retry_chunks);
-            let max_context_chars: usize = 2800;
+            let max_context_chars: usize = 65536;
             let context = if context.len() > max_context_chars {
                 log::warn!("RAG retry context truncated from {} to {} chars", context.len(), max_context_chars);
                 context[..max_context_chars].to_string()
@@ -712,13 +808,7 @@ impl RagPipeline {
                 context
             };
 
-            let augmented_prompt = format!(
-                "Use the following context to answer the question. \
-                 Cite sources using [Source N] when referencing specific information.\n\n\
-                 Context:\n{context}\n\n\
-                 Question: {user_query}\n\n\
-                 Answer:"
-            );
+            let augmented_prompt = build_rag_prompt(&context, user_query);
 
             let chat_request = tasks::chat_request(&augmented_prompt);
             let answer = match self.router.route(&chat_request).await {
@@ -735,8 +825,13 @@ impl RagPipeline {
 
         // 8. Build augmented prompt with context window expansion
         let context = self.build_expanded_context(&sources, &chunks);
-        log::debug!("RAG context ({} chars, {} sources)", context.len(), sources.len());
-        let max_context_chars: usize = 2800;
+        log::info!(
+            "RAG context: {} chars, {} sources (first 200: '{}')",
+            context.len(),
+            sources.len(),
+            context.chars().take(200).collect::<String>()
+        );
+        let max_context_chars: usize = 65536;
         let context = if context.len() > max_context_chars {
             log::warn!("RAG context truncated from {} to {} chars", context.len(), max_context_chars);
             context[..max_context_chars].to_string()
@@ -744,13 +839,7 @@ impl RagPipeline {
             context
         };
 
-        let augmented_prompt = format!(
-            "Use the following context to answer the question. \
-             Cite sources using [Source N] when referencing specific information.\n\n\
-             Context:\n{context}\n\n\
-             Question: {user_query}\n\n\
-             Answer:"
-        );
+        let augmented_prompt = build_rag_prompt(&context, user_query);
 
         // 9. Generate answer via LLM
         let chat_request = tasks::chat_request(&augmented_prompt);
@@ -772,9 +861,14 @@ impl RagPipeline {
     ) -> Result<RetrievalResult, String> {
         // 0. Classify the query to decide retrieval strategy
         let query_class = self.classify_query(user_query).await;
-        log::info!("Query classified as: {} (streaming)", query_class);
+        let doc_count = self.db.document_count().unwrap_or(0);
+        log::info!(
+            "Query classified as: {} (streaming, docs={}, vec={})",
+            query_class, doc_count, self.vec_index.len()
+        );
 
-        if query_class == "no_retrieval" {
+        // Only skip retrieval when no documents exist
+        if query_class == "no_retrieval" && doc_count == 0 {
             return Ok(RetrievalResult {
                 sources: vec![],
                 augmented_prompt: String::new(),
@@ -790,12 +884,15 @@ impl RagPipeline {
 
         // 2. BM25 keyword search
         let bm25_results = self.bm25.search(user_query, top_k)?;
+        log::info!("[stream] BM25 returned {} results", bm25_results.len());
 
         // 3. Vector similarity search
         let vector_results = self.vector_search(&search_query, top_k).await?;
+        log::info!("[stream] Vector search returned {} results", vector_results.len());
 
         // 4. RRF fusion
         let fused = rrf_fuse(&[bm25_results, vector_results]);
+        log::info!("[stream] RRF fused into {} results", fused.len());
 
         // 5. Take top-k fused results (fetch extra for grading headroom)
         let grading_pool = top_k * 2;
@@ -822,19 +919,29 @@ impl RagPipeline {
                     .doc_title_for_chunk(chunk.id)
                     .unwrap_or_else(|_| "Unknown".to_string());
                 let grade = self.grade_chunk(user_query, &chunk.text).await;
+                log::info!(
+                    "[stream] Graded chunk_id={} grade={} (rrf={:.4})",
+                    chunk.id, grade, fused_result.rrf_score
+                );
                 graded_sources.push((
                     SourceChunk {
                         chunk_id: chunk.id,
                         doc_title,
                         text: chunk.text.clone(),
                         score: fused_result.rrf_score,
+                        page_info: chunk.metadata.clone(),
                     },
                     grade,
                 ));
             }
         }
 
+        let before_filter = graded_sources.len();
         graded_sources.retain(|(_, grade)| *grade >= 3);
+        log::info!(
+            "[stream] Grading kept {}/{} chunks",
+            graded_sources.len(), before_filter
+        );
         graded_sources.sort_by(|a, b| {
             b.1.cmp(&a.1)
                 .then(b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal))
@@ -865,6 +972,7 @@ impl RagPipeline {
                             doc_title,
                             text: chunk.text.clone(),
                             score: fused_result.rrf_score,
+                            page_info: chunk.metadata.clone(),
                         });
                     }
                     retry_chunks.extend(fetched);
@@ -892,12 +1000,17 @@ impl RagPipeline {
 
         // Build augmented prompt with context window expansion
         let context = self.build_expanded_context(&sources, &chunks);
-        log::debug!("RAG streaming context ({} chars, {} sources)", context.len(), sources.len());
+        log::info!(
+            "[stream] RAG context: {} chars, {} sources (first 200: '{}')",
+            context.len(),
+            sources.len(),
+            context.chars().take(200).collect::<String>()
+        );
 
-        // Truncate context to ~2800 chars (~700 tokens) to stay within
-        // 4096-token context window after adding system/user framing and
-        // leaving room for the 512-token max_tokens output.
-        let max_context_chars: usize = 2800;
+        // Truncate context to ~65536 chars (~16384 tokens) to stay within
+        // the model's context window after adding system/user framing and
+        // leaving room for the max_tokens output.
+        let max_context_chars: usize = 65536;
         let context = if context.len() > max_context_chars {
             log::warn!(
                 "RAG context truncated from {} to {} chars to fit context window",
@@ -909,13 +1022,7 @@ impl RagPipeline {
             context
         };
 
-        let augmented_prompt = format!(
-            "Use the following context to answer the question. \
-             Cite sources using [Source N] when referencing specific information.\n\n\
-             Context:\n{context}\n\n\
-             Question: {user_query}\n\n\
-             Answer:"
-        );
+        let augmented_prompt = build_rag_prompt(&context, user_query);
 
         Ok(RetrievalResult {
             sources,
@@ -973,6 +1080,7 @@ impl RagPipeline {
                     doc_title,
                     text,
                     score,
+                    page_info: String::new(),
                 }
             })
             .collect();
@@ -980,14 +1088,14 @@ impl RagPipeline {
         let context = sources
             .iter()
             .enumerate()
-            .map(|(i, s)| {
-                format!("[Source {} — {}]\n{}", i + 1, s.doc_title, s.text)
+            .map(|(_, s)| {
+                s.text.clone()
             })
             .collect::<Vec<_>>()
             .join("\n\n");
 
         // Truncate context to fit within context window
-        let max_context_chars: usize = 2800;
+        let max_context_chars: usize = 65536;
         let context = if context.len() > max_context_chars {
             log::warn!(
                 "RAPTOR context truncated from {} to {} chars to fit context window",
@@ -999,13 +1107,7 @@ impl RagPipeline {
             context
         };
 
-        let augmented_prompt = format!(
-            "Use the following context to answer the question. \
-             Cite sources using [Source N] when referencing specific information.\n\n\
-             Context:\n{context}\n\n\
-             Question: {user_query}\n\n\
-             Answer:"
-        );
+        let augmented_prompt = build_rag_prompt(&context, user_query);
 
         Ok(RetrievalResult {
             sources,
@@ -1040,6 +1142,7 @@ impl RagPipeline {
                     doc_title,
                     text: chunk.text.clone(),
                     score: fused_result.rrf_score,
+                    page_info: chunk.metadata.clone(),
                 });
             }
         }
@@ -1425,6 +1528,7 @@ impl RagPipeline {
                 doc_title,
                 text,
                 score,
+                page_info: String::new(),
             });
         }
 
@@ -1432,24 +1536,13 @@ impl RagPipeline {
         let context = sources
             .iter()
             .enumerate()
-            .map(|(i, s)| {
-                format!(
-                    "[Source {} — {}]\n{}",
-                    i + 1,
-                    s.doc_title,
-                    s.text
-                )
+            .map(|(_, s)| {
+                s.text.clone()
             })
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let augmented_prompt = format!(
-            "Use the following context to answer the question. \
-             Cite sources using [Source N] when referencing specific information.\n\n\
-             Context:\n{context}\n\n\
-             Question: {user_query}\n\n\
-             Answer:"
-        );
+        let augmented_prompt = build_rag_prompt(&context, user_query);
 
         // Generate answer via LLM
         let chat_request = tasks::chat_request(&augmented_prompt);

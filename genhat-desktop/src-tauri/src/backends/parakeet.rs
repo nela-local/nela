@@ -1,0 +1,126 @@
+//! ModelBackend implementation for Parakeet ASR — in-process ONNX speech recognition.
+//!
+//! Follows the same `InMemoryHandle` pattern as `kitten_tts.rs` and
+//! `onnx_classifier.rs`: the ONNX session and preprocessing tables are
+//! loaded into memory in `start()`, and `execute()` runs inference
+//! directly without spawning any external process.
+//!
+//! Replaces the previous `whisper_cpp.rs` backend — no external binary
+//! or Python sidecar needed.
+
+use crate::asr::inference::ParakeetEngine;
+use crate::registry::types::{
+    InMemoryHandle, ModelDef, ModelHandle, TaskRequest, TaskResponse, TranscriptSegment,
+};
+use async_trait::async_trait;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Backend
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct ParakeetBackend;
+
+impl ParakeetBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl super::ModelBackend for ParakeetBackend {
+    /// Load the Parakeet ONNX model, vocabulary, and pre-compute DSP tables.
+    async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
+        // model_file points to the model directory (e.g. "parakeet")
+        let model_dir = models_dir.join(&def.model_file);
+
+        if !model_dir.exists() {
+            return Err(format!(
+                "Parakeet model directory not found: {}",
+                model_dir.display()
+            ));
+        }
+
+        log::info!("[Parakeet] Starting from {}", model_dir.display());
+
+        let engine = ParakeetEngine::load(&model_dir)?;
+
+        log::info!("[Parakeet] Engine loaded and ready");
+
+        Ok(ModelHandle::InMemory(InMemoryHandle {
+            model: Arc::new(engine),
+            loaded_at: Instant::now(),
+        }))
+    }
+
+    async fn is_healthy(&self, handle: &ModelHandle) -> bool {
+        matches!(handle, ModelHandle::InMemory(_))
+    }
+
+    /// Transcribe an audio file.
+    ///
+    /// `request.input` must be the absolute path to an audio file.
+    /// Returns `TaskResponse::Transcription` with a single segment
+    /// containing the full transcription text.
+    async fn execute(
+        &self,
+        handle: &ModelHandle,
+        request: &TaskRequest,
+        _models_dir: &Path,
+    ) -> Result<TaskResponse, String> {
+        let mem = match handle {
+            ModelHandle::InMemory(h) => h,
+            _ => return Err("Parakeet requires InMemoryHandle".into()),
+        };
+
+        let engine = mem
+            .model
+            .downcast_ref::<ParakeetEngine>()
+            .ok_or("Failed to downcast to ParakeetEngine")?;
+
+        let audio_path = std::path::Path::new(&request.input);
+        if !audio_path.exists() {
+            return Err(format!("Audio file not found: {}", audio_path.display()));
+        }
+
+        let start = Instant::now();
+        let text = engine.transcribe(audio_path)?;
+        let elapsed = start.elapsed();
+
+        log::info!(
+            "[Parakeet] Transcribed {} in {:.2}s",
+            audio_path.display(),
+            elapsed.as_secs_f64(),
+        );
+
+        // Return as a single-segment transcription (no sub-segment timestamps
+        // from greedy TDT decode — the text covers the entire file).
+        let segments = if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![TranscriptSegment {
+                text,
+                start_ms: 0,
+                end_ms: 0,
+            }]
+        };
+
+        Ok(TaskResponse::Transcription { segments })
+    }
+
+    async fn stop(&self, _handle: &ModelHandle) -> Result<(), String> {
+        log::info!("[Parakeet] Stopped (memory freed on drop)");
+        Ok(())
+    }
+
+    fn estimated_memory_mb(&self, def: &ModelDef) -> u32 {
+        if def.memory_mb > 0 {
+            def.memory_mb
+        } else {
+            700 // Parakeet TDT 0.6B INT8: encoder ~622MB + decoder ~12MB + joiner ~6MB
+        }
+    }
+}

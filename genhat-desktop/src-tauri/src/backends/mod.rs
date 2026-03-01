@@ -6,7 +6,7 @@
 
 pub mod llama_server;
 pub mod llama_cli;
-pub mod whisper_cpp;
+pub mod parakeet;
 pub mod onnx_classifier;
 pub mod cross_encoder;
 pub mod kitten_tts;
@@ -17,8 +17,9 @@ use std::path::Path;
 
 /// Trait implemented by every model backend.
 ///
-/// - **Child-process backends** (`LlamaServer`, `PythonExe`, `WhisperCpp`):
+/// - **Child-process backends** (`LlamaServer`, `LlamaCli`):
 ///   `start()` spawns a binary, `execute()` communicates via HTTP/CLI.
+/// - **In-process backends** (`OnnxClassifier`, `CrossEncoder`, `KittenTts`, `Parakeet`):
 ///   `start()` loads model into memory, `execute()` runs inference directly.
 #[async_trait]
 pub trait ModelBackend: Send + Sync + std::fmt::Debug {
@@ -52,7 +53,7 @@ pub fn create_backend(def: &ModelDef) -> Box<dyn ModelBackend> {
     match &def.backend {
         BackendKind::LlamaServer => Box::new(llama_server::LlamaServerBackend::new()),
         BackendKind::LlamaCli => Box::new(llama_cli::LlamaCliBackend::new()),
-        BackendKind::WhisperCpp => Box::new(whisper_cpp::WhisperCppBackend::new()),
+        BackendKind::Parakeet => Box::new(parakeet::ParakeetBackend::new()),
         BackendKind::OnnxClassifier => Box::new(onnx_classifier::OnnxClassifierBackend::new()),
         BackendKind::CrossEncoder => Box::new(cross_encoder::CrossEncoderBackend::new()),
         BackendKind::KittenTts => Box::new(kitten_tts::KittenTtsBackend::new()),

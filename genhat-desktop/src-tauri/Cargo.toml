@@ -48,9 +48,13 @@ xml-rs = "0.8"
 tempfile = "3"
 sha2 = "0.10"
 
-# ── ONNX Runtime (in-process DistilBERT classifier + KittenTTS) ──
+# ── ONNX Runtime (in-process DistilBERT classifier + KittenTTS + Parakeet ASR) ──
 ort = { version = "2.0.0-rc.11", features = ["download-binaries"] }
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+
+# ── Parakeet ASR audio preprocessing ──
+hound = "3"
+realfft = "3"
 
 # ── KittenTTS text preprocessing ──
 regex = "1"

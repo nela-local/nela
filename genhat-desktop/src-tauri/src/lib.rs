@@ -16,3 +16,4 @@ pub mod router;
 pub mod commands;
 pub mod rag;
 pub mod tts;
+pub mod asr;

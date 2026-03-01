@@ -15,6 +15,8 @@ pub struct Chunk {
     pub text: String,
     /// Index within the document (0-based).
     pub index: usize,
+    /// Provenance metadata inherited from the source section (e.g. "page:3", "slide:2").
+    pub metadata: String,
 }
 
 /// Chunker configuration.
@@ -44,6 +46,11 @@ impl Default for ChunkerConfig {
 
 /// Split a document into overlapping chunks using recursive character splitting.
 pub fn chunk_text(text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
+    chunk_text_meta(text, config, "")
+}
+
+/// Split text into overlapping chunks, tagging each with `metadata`.
+pub fn chunk_text_meta(text: &str, config: &ChunkerConfig, metadata: &str) -> Vec<Chunk> {
     let raw_splits = recursive_split(text, &config.separators, config.chunk_size);
 
     // Merge tiny splits and apply overlap
@@ -65,6 +72,7 @@ pub fn chunk_text(text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
                     offset: current_offset,
                     text: current.clone(),
                     index: chunks.len(),
+                    metadata: metadata.to_string(),
                 });
             }
 
@@ -83,6 +91,7 @@ pub fn chunk_text(text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
             offset: current_offset,
             text: current,
             index: chunks.len(),
+            metadata: metadata.to_string(),
         });
     }
 
@@ -92,6 +101,11 @@ pub fn chunk_text(text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
 /// Convenience: chunk with default config.
 pub fn chunk_text_default(text: &str) -> Vec<Chunk> {
     chunk_text(text, &ChunkerConfig::default())
+}
+
+/// Convenience: chunk with default config and metadata tag.
+pub fn chunk_text_default_meta(text: &str, metadata: &str) -> Vec<Chunk> {
+    chunk_text_meta(text, &ChunkerConfig::default(), metadata)
 }
 
 /// Recursively split text using separators.

@@ -279,24 +279,36 @@ impl RagDb {
         Ok(count > 0)
     }
 
+    /// Count total ingested documents.
+    pub fn document_count(&self) -> Result<i64, String> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM documents")
+            .map_err(|e| format!("Query error: {e}"))?;
+        let count: i64 = stmt
+            .query_row([], |row| row.get(0))
+            .map_err(|e| format!("Query error: {e}"))?;
+        Ok(count)
+    }
+
     // ── Chunk CRUD ──
 
     /// Insert a batch of chunks for a document. Returns the chunk IDs.
     pub fn insert_chunks(
         &self,
         doc_id: i64,
-        chunks: &[(usize, String)], // (chunk_index, text)
+        chunks: &[(usize, String, String)], // (chunk_index, text, metadata)
     ) -> Result<Vec<i64>, String> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
-                "INSERT INTO chunks (doc_id, chunk_index, text, metadata) VALUES (?1, ?2, ?3, '')",
+                "INSERT INTO chunks (doc_id, chunk_index, text, metadata) VALUES (?1, ?2, ?3, ?4)",
             )
             .map_err(|e| format!("Prepare error: {e}"))?;
 
         let mut ids = Vec::with_capacity(chunks.len());
-        for (idx, text) in chunks {
-            stmt.execute(params![doc_id, *idx as i32, text])
+        for (idx, text, meta) in chunks {
+            stmt.execute(params![doc_id, *idx as i32, text, meta])
                 .map_err(|e| format!("Insert chunk error: {e}"))?;
             ids.push(conn.last_insert_rowid());
         }

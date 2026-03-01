@@ -80,7 +80,7 @@ fn parse_backend(s: &str) -> Result<BackendKind, String> {
     match s {
         "llama_server" => Ok(BackendKind::LlamaServer),
         "llama_cli" => Ok(BackendKind::LlamaCli),
-        "whisper_cpp" => Ok(BackendKind::WhisperCpp),
+        "parakeet" => Ok(BackendKind::Parakeet),
         "onnx_classifier" => Ok(BackendKind::OnnxClassifier),
         "cross_encoder" => Ok(BackendKind::CrossEncoder),
         "kitten_tts" => Ok(BackendKind::KittenTts),

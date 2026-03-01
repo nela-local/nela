@@ -7,7 +7,7 @@
 # Fields:
 #   id              – unique slug (used in code and logs)
 #   name            – human-readable display name
-#   backend         – "llama_server" | "llama_cli" | "whisper_cpp"
+#   backend         – "llama_server" | "llama_cli" | "parakeet"
 #   kind            – "child_process" | "in_process"
 #   model_file      – path relative to the models directory
 #   tasks           – list of task types this model can handle
@@ -158,17 +158,17 @@ memory_mb = 100
 tokenizer_file = "grader/ms-marco-MiniLM-L6-v2-onnx-int8/tokenizer.json"
 max_length = "512"
 
-# ── STT: Whisper (whisper.cpp per-request) ────────────────────────────────────
+# ── STT: Parakeet TDT 0.6B (ONNX Runtime in-process) ─────────────────────────
 
 [[models]]
-id = "whisper-base"
-name = "Whisper Q4_K"
-backend = "whisper_cpp"
-kind = "child_process"
-model_file = "whisper/model_q4_k.gguf"
+id = "parakeet-tdt"
+name = "Parakeet TDT 0.6B INT8"
+backend = "parakeet"
+kind = "in_process"
+model_file = "parakeet"
 tasks = ["transcribe", "stt"]
 auto_start = false
 max_instances = 1
-idle_timeout_s = 0
+idle_timeout_s = 300
 priority = 10
-memory_mb = 500
+memory_mb = 700

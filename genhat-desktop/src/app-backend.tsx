@@ -30,6 +30,7 @@ interface SourceChunk {
   doc_title: string;
   text: string;
   score: number;
+  page_info?: string;
 }
 
 interface RagResult {

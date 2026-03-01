@@ -19,7 +19,7 @@ use std::time::Instant;
 pub enum BackendKind {
     LlamaServer,
     LlamaCli,
-    WhisperCpp,
+    Parakeet,
     OnnxClassifier,
     CrossEncoder,
     KittenTts,

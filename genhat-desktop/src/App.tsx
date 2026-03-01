@@ -45,6 +45,16 @@ const VIEWABLE_EXTS = new Set([
 ]);
 
 /* ── Mode metadata for the sidebar ──────────────────────────────────────── */
+
+/** Turn raw page_info metadata (e.g. "page:3", "slide:2") into a readable label. */
+function formatPageLabel(meta?: string): string {
+  if (!meta) return "";
+  if (meta.startsWith("page:")) return `Page ${meta.split(":")[1]}`;
+  if (meta.startsWith("slide:")) return `Slide ${meta.split(":")[1]}`;
+  if (meta.startsWith("paragraph:")) return `Paragraph ${meta.split(":")[1]}`;
+  return meta;
+}
+
 const MODE_CONFIG: {
   mode: ChatMode;
   label: string;
@@ -398,7 +408,7 @@ function App() {
             let fullAnswer = "";
             await Api.streamChat(
               [
-                { role: "system", content: "You are a helpful assistant." },
+                { role: "system", content: "You are a helpful assistant. Answer the question using the provided reference text. Write a clear, natural response without repeating source labels, tags, or brackets. If the user asks for a specific format (table, list, bullet points, etc.), use that format. If the reference text does not cover the question, say you don't know." },
                 { role: "user", content: setup.prompt },
               ],
               (chunk) => {
@@ -1008,7 +1018,9 @@ function App() {
               {ragResult.sources.map((src, i) => (
                 <details key={src.chunk_id} className="source-item">
                   <summary>
-                    [Source {i + 1}] {src.doc_title} (score: {src.score.toFixed(4)})
+                    [Source {i + 1}] {src.doc_title}
+                    {src.page_info ? `, ${formatPageLabel(src.page_info)}` : ""}
+                    {" "}(score: {src.score.toFixed(4)})
                   </summary>
                   <pre className="source-text">{src.text}</pre>
                 </details>
