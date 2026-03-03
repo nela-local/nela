@@ -1,13 +1,36 @@
-models/
+## Only models directories with .gitkeep files will be tracked by git
+
+models/kittenTTS/
+!models/kittenTTS/.gitkeep
+models/grader/
+!models/grader/.gitkeep
+models/distilBert-query-router/
+!models/distilBert-query-router/.gitkeep
+models/bge-1.5-embed/
+!models/bge-1.5-embed/.gitkeep
+models/LiquidAI-LLM/
+!models/LiquidAI-LLM/.gitkeep
+models/LiquidAI-VLM/
+!models/LiquidAI-VLM/.gitkeep
+models/parakeet/
+!models/parakeet/.gitkeep
+models/parakeet.zip
+
+# App's binary files and build/dist directories
 genhat-desktop/src-tauri/bin/tts*
 genhat-desktop/src-tauri/bin/tts*/tts-inference
 build/
 dist/
+
+# Backend build and dist directories, models, and TTS inference data
 The-Bare/build/
 The-Bare/dist/
 The-Bare/models/
 The-Bare/DistilBERT-fine-tune/*
 The-Bare/**/__pycache__/
+
+# Frontend build and dist directories
+
 genhat-desktop/node_modules/
 genhat-desktop/src-tauri/node_modules/
 The-Bare/TTS-inference/--collect-data

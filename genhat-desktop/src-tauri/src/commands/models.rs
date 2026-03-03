@@ -213,32 +213,10 @@ pub async fn get_memory_usage(
 /// Resolution order:
 ///   1. `GENHAT_MODEL_PATH` environment variable (absolute path to dir or any file inside it)
 ///   2. `models/` folder next to the running executable (production install location)
-///   3. `../../models` relative to the crate root at compile time (dev / cargo run fallback)
+///   3. Tauri resource directory (Linux: `/usr/lib/GenHat/models/`)
+///   4. `../../models` relative to the crate root at compile time (dev / cargo run fallback)
 pub fn get_models_dir() -> PathBuf {
-    // 1. Explicit override
-    if let Ok(val) = std::env::var("GENHAT_MODEL_PATH") {
-        let p = PathBuf::from(val);
-        if p.is_file() {
-            if let Some(parent) = p.parent() {
-                return parent.to_path_buf();
-            }
-        } else if p.is_dir() {
-            return p;
-        }
-    }
-    // 2. Sibling of the running executable (installed location)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let candidate = exe_dir.join("models");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    // 3. Dev fallback — path baked in at compile time
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let models = manifest_dir.join("../../models");
-    models.canonicalize().unwrap_or(models)
+    crate::paths::resolve_models_dir()
 }
 
 // ── File utilities ──────────────────────────────────────────────────────────

@@ -42,35 +42,11 @@ impl LlamaCliBackend {
 }
 
 /// Resolve the llama-mtmd-cli executable path.
-/// Walks up from `current_exe()` checking known subdirectories, mirroring
-/// the strategy used by `llama_server.rs` so it works in dev and production.
+/// Uses the shared `paths::resolve_bundled_binary` helper which checks both
+/// dev locations (ancestor walk) and production Tauri resource directories.
 fn resolve_cli_exe() -> Result<PathBuf, String> {
-    let exe_path =
-        std::env::current_exe().map_err(|e| format!("Cannot get current_exe: {e}"))?;
-    let mut checked = Vec::new();
-
-    exe_path
-        .ancestors()
-        .find_map(|dir| {
-            for sub in &["src-tauri/bin", "bin", "resources/bin"] {
-                let candidate = dir.join(sub).join(OS_FOLDER).join(EXE_NAME);
-                checked.push(candidate.clone());
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-            None
-        })
-        .ok_or_else(|| {
-            format!(
-                "llama-mtmd-cli not found. Checked:\n{}",
-                checked
-                    .iter()
-                    .map(|p| format!("  {}", p.display()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        })
+    crate::paths::resolve_bundled_binary(OS_FOLDER, &[EXE_NAME])
+        .map_err(|e| format!("llama-mtmd-cli not found. {e}"))
 }
 
 /// Ensure the binary at `path` has execute permission (no-op on Windows).

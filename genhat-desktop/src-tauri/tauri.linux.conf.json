@@ -5,7 +5,18 @@
       "bin/pdfium-lin/*": "bin/pdfium-lin/",
       "bin/espeak-ng-lin/*": "bin/espeak-ng-lin/",
       "bin/espeak-ng-lin/espeak-ng-data/*": "bin/espeak-ng-lin/espeak-ng-data/",
-      "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/"
+      "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/*": "bin/espeak-ng-lin/espeak-ng-data/lang/gmw/",
+      "models/*": "models/",
+      "models/bge-1.5-embed/*": "models/bge-1.5-embed/",
+      "models/distilBert-query-router/*": "models/distilBert-query-router/",
+      "models/distilBert-query-router/onnx_model/*": "models/distilBert-query-router/onnx_model/",
+      "models/grader/*": "models/grader/",
+      "models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/*": "models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/",
+      "models/kittenTTS/*": "models/kittenTTS/",
+      "models/kittenTTS/mini/*": "models/kittenTTS/mini/",
+      "models/LiquidAI-LLM/*": "models/LiquidAI-LLM/",
+      "models/LiquidAI-VLM/*": "models/LiquidAI-VLM/",
+      "models/parakeet/*": "models/parakeet/"
     }
   }
 }

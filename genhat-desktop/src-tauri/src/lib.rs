@@ -9,6 +9,7 @@
 //!   commands/   — Tauri IPC command handlers
 
 pub mod config;
+pub mod paths;
 pub mod registry;
 pub mod backends;
 pub mod process;

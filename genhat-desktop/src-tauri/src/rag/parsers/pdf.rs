@@ -141,30 +141,17 @@ fn resolve_pdfium_library() -> Result<Box<dyn pdfium_render::prelude::PdfiumLibr
         "libpdfium.so"
     };
 
-    let exe_path = std::env::current_exe()
-        .map_err(|e| format!("Cannot get current_exe: {e}"))?;
-
-    let mut checked = Vec::new();
-
-    for ancestor in exe_path.ancestors() {
-        for sub in &["src-tauri/bin", "bin", "resources/bin"] {
-            let candidate = ancestor.join(sub).join(os_folder).join(lib_name);
-            if candidate.exists() {
-                log::info!("Found bundled pdfium at: {}", candidate.display());
-                return Pdfium::bind_to_library(
-                    Pdfium::pdfium_platform_library_name_at_path(
-                        candidate.parent().unwrap().to_str().unwrap()
-                    )
-                ).map_err(|e| format!("Failed to bind to bundled pdfium: {e}"));
-            }
-            checked.push(candidate);
+    match crate::paths::resolve_bundled_library(os_folder, lib_name) {
+        Ok(candidate) => {
+            log::info!("Found bundled pdfium at: {}", candidate.display());
+            return Pdfium::bind_to_library(
+                Pdfium::pdfium_platform_library_name_at_path(
+                    candidate.parent().unwrap().to_str().unwrap()
+                )
+            ).map_err(|e| format!("Failed to bind to bundled pdfium: {e}"));
         }
+        Err(e) => Err(format!("Bundled libpdfium not found. {e}")),
     }
-
-    Err(format!(
-        "Bundled libpdfium not found. Checked:\n{}",
-        checked.iter().map(|p| format!("  {}", p.display())).collect::<Vec<_>>().join("\n")
-    ))
 }
 
 /// Extract images and table regions from a PDF using pdfium-render.

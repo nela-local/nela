@@ -36,26 +36,22 @@ fn exe_name() -> &'static str {
 
 /// Locate the bundled espeak-ng executable + its sibling `espeak-ng-data/` directory.
 ///
+/// Uses the shared `paths::resolve_bundled_binary` helper which checks both
+/// dev locations and production Tauri resource directories.
+///
 /// Returns `(exe_path, data_dir)` on success.
 fn resolve_bundled() -> Option<(PathBuf, PathBuf)> {
     let folder = os_folder();
     let name = exe_name();
 
-    let exe_path = std::env::current_exe().ok()?;
-
-    for dir in exe_path.ancestors() {
-        for sub in &["src-tauri/bin", "bin", "resources/bin"] {
-            let candidate = dir.join(sub).join(folder).join(name);
-            if candidate.exists() {
-                let parent = candidate.parent()?;
-                let data_dir = parent.join("espeak-ng-data");
-                if data_dir.is_dir() {
-                    return Some((candidate, data_dir));
-                }
-            }
-        }
+    let exe = crate::paths::resolve_bundled_binary(folder, &[name]).ok()?;
+    let parent = exe.parent()?;
+    let data_dir = parent.join("espeak-ng-data");
+    if data_dir.is_dir() {
+        Some((exe, data_dir))
+    } else {
+        None
     }
-    None
 }
 
 // ── Public API ───────────────────────────────────────────────────────────

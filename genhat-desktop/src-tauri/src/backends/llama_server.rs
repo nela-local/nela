@@ -23,7 +23,8 @@ impl LlamaServerBackend {
 }
 
 /// Resolve the llama-server executable path.
-/// Walks up from `current_exe()` looking in known locations.
+/// Uses the shared `paths::resolve_bundled_binary` helper which checks both
+/// dev locations (ancestor walk) and production Tauri resource directories.
 fn resolve_llama_exe() -> Result<PathBuf, String> {
     let os_folder = if cfg!(windows) {
         "llama-win"
@@ -45,33 +46,8 @@ fn resolve_llama_exe() -> Result<PathBuf, String> {
         vec!["llama-server"]
     };
 
-    let exe_path = std::env::current_exe().map_err(|e| format!("Cannot get current_exe: {e}"))?;
-    let mut checked = Vec::new();
-
-    exe_path
-        .ancestors()
-        .find_map(|dir| {
-            for &exe_name in &exe_names {
-                for sub in &["src-tauri/bin", "bin", "resources/bin"] {
-                    let candidate = dir.join(sub).join(os_folder).join(exe_name);
-                    checked.push(candidate.clone());
-                    if candidate.exists() {
-                        return Some(candidate);
-                    }
-                }
-            }
-            None
-        })
-        .ok_or_else(|| {
-            format!(
-                "llama-server not found. Checked:\n{}",
-                checked
-                    .iter()
-                    .map(|p| format!("  {}", p.display()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        })
+    crate::paths::resolve_bundled_binary(os_folder, &exe_names)
+        .map_err(|e| format!("llama-server not found. {e}"))
 }
 
 /// Spawn a llama-server child process with the given model and port.
