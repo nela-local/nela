@@ -447,6 +447,7 @@ function App() {
                   const assistantIdx = updated.length - 1;
                   Api.retrieveMediaForResponse(fullAnswer)
                     .then((assets) => {
+                      console.log(`Media retrieval: found ${assets.length} assets`);
                       if (assets.length > 0) {
                         setMediaAssets((prev) => ({
                           ...prev,
@@ -455,7 +456,7 @@ function App() {
                       }
                     })
                     .catch((e) =>
-                      console.warn("Media retrieval failed:", e)
+                      console.error("Media retrieval failed:", e)
                     );
                   return updated;
                 });

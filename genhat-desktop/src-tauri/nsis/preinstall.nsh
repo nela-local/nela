@@ -7,7 +7,7 @@
 
 !macro NSIS_HOOK_PREINSTALL
     CreateDirectory "$INSTDIR\models"
-    CreateDirectory "$INSTDIR\models\LiquidAI-LLM"
+    CreateDirectory "$INSTDIR\models\LLM"
     CreateDirectory "$INSTDIR\models\LiquidAI-VLM"
     CreateDirectory "$INSTDIR\models\bge-1.5-embed"
     CreateDirectory "$INSTDIR\models\distilBert-query-router"

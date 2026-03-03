@@ -14,7 +14,7 @@
       "models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/*": "models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/",
       "models/kittenTTS/*": "models/kittenTTS/",
       "models/kittenTTS/mini/*": "models/kittenTTS/mini/",
-      "models/LiquidAI-LLM/*": "models/LiquidAI-LLM/",
+      "models/LLM/*": "models/LLM/",
       "models/LiquidAI-VLM/*": "models/LiquidAI-VLM/",
       "models/parakeet/*": "models/parakeet/"
     }

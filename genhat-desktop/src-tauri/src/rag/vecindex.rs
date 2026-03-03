@@ -63,13 +63,29 @@ impl VectorIndex {
         }
     }
 
-    /// Load all existing embeddings from the database into memory.
+    /// Load all existing embeddings from the database into memory,
+    /// including both chunk embeddings and media caption embeddings.
     pub fn load_from_db(db: &RagDb) -> Result<Self, String> {
         let all_embeddings = db.get_all_embeddings()?;
         let mut map = HashMap::with_capacity(all_embeddings.len());
-        for (id, emb) in all_embeddings {
-            map.insert(id, emb);
+        for (id, emb) in &all_embeddings {
+            map.insert(*id, emb.clone());
         }
+        let chunk_count = map.len();
+
+        // Also load media caption embeddings (stored with negative IDs)
+        let media_embeddings = db.get_all_media_embeddings().unwrap_or_default();
+        let media_count = media_embeddings.len();
+        for (neg_id, emb) in media_embeddings {
+            map.insert(neg_id, emb);
+        }
+
+        log::info!(
+            "VectorIndex loaded: {} chunk vectors + {} media vectors = {} total",
+            chunk_count,
+            media_count,
+            map.len()
+        );
 
         let index = Self {
             vectors: RwLock::new(map),

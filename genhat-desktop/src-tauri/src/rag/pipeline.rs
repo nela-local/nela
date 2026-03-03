@@ -368,28 +368,51 @@ impl RagPipeline {
             }
         }
 
-        // Batch embed all captions
+        // Batch embed all captions — retry up to 3 times to handle
+        // the embedding model not being loaded yet at ingestion time.
         if !captions_to_embed.is_empty() {
             let texts: Vec<String> = captions_to_embed.iter().map(|(_, t)| t.clone()).collect();
-            let request = tasks::embed_request(texts);
+            let n_captions = texts.len();
+            let mut embedded_count = 0usize;
 
-            match self.router.route(&request).await {
-                Ok(TaskResponse::Embeddings(vectors)) => {
-                    for (i, embedding) in vectors.iter().enumerate() {
-                        if i < captions_to_embed.len() {
-                            let asset_id = captions_to_embed[i].0;
-                            if let Ok(()) = self.db.set_media_embedding(asset_id, embedding) {
-                                // Also add to in-memory vector index (negative ID for media)
-                                self.vec_index.insert(-asset_id, embedding.clone());
+            for attempt in 1..=3 {
+                let request = tasks::embed_request(texts.clone());
+                match self.router.route(&request).await {
+                    Ok(TaskResponse::Embeddings(vectors)) => {
+                        for (i, embedding) in vectors.iter().enumerate() {
+                            if i < captions_to_embed.len() {
+                                let asset_id = captions_to_embed[i].0;
+                                if let Ok(()) = self.db.set_media_embedding(asset_id, embedding) {
+                                    self.vec_index.insert(-asset_id, embedding.clone());
+                                    embedded_count += 1;
+                                }
                             }
                         }
+                        log::info!(
+                            "Embedded {embedded_count}/{n_captions} media captions (attempt {attempt})"
+                        );
+                        break; // success
                     }
-                }
-                Ok(_) => {
-                    log::warn!("Caption embedding returned unexpected response type");
-                }
-                Err(e) => {
-                    log::warn!("Caption embedding failed: {e}");
+                    Ok(_) => {
+                        log::warn!("Caption embedding returned unexpected response type (attempt {attempt})");
+                        break; // non-retryable
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Caption embedding failed (attempt {attempt}/3): {e}"
+                        );
+                        if attempt < 3 {
+                            // Wait before retry — gives the embed model time to load
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        } else {
+                            log::error!(
+                                "❌ Caption embedding failed after 3 attempts — \
+                                 {n_captions} media assets stored WITHOUT embeddings. \
+                                 They will be invisible to media retrieval. \
+                                 Use re_embed_unembedded_media to fix later."
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1161,6 +1184,63 @@ impl RagPipeline {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // Media Embedding Recovery
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Re-embed media assets whose caption embedding failed during ingestion.
+    /// This recovers from the common case where the embedding model wasn't
+    /// loaded when the document was first ingested.
+    ///
+    /// Returns the number of successfully (re-)embedded media assets.
+    pub async fn re_embed_unembedded_media(&self) -> usize {
+        let unembedded = match self.db.get_unembedded_media() {
+            Ok(u) => u,
+            Err(e) => {
+                log::warn!("Failed to query unembedded media: {e}");
+                return 0;
+            }
+        };
+
+        if unembedded.is_empty() {
+            log::debug!("No unembedded media assets found — nothing to fix");
+            return 0;
+        }
+
+        log::info!(
+            "Found {} media assets without embeddings — attempting re-embed",
+            unembedded.len()
+        );
+
+        let texts: Vec<String> = unembedded.iter().map(|(_, t)| t.clone()).collect();
+        let request = tasks::embed_request(texts);
+
+        match self.router.route(&request).await {
+            Ok(TaskResponse::Embeddings(vectors)) => {
+                let mut count = 0usize;
+                for (i, embedding) in vectors.iter().enumerate() {
+                    if i < unembedded.len() {
+                        let asset_id = unembedded[i].0;
+                        if let Ok(()) = self.db.set_media_embedding(asset_id, embedding) {
+                            self.vec_index.insert(-asset_id, embedding.clone());
+                            count += 1;
+                        }
+                    }
+                }
+                log::info!("Re-embedded {count}/{} media captions", unembedded.len());
+                count
+            }
+            Ok(_) => {
+                log::warn!("Re-embed returned unexpected response type");
+                0
+            }
+            Err(e) => {
+                log::warn!("Re-embed failed: {e}");
+                0
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Two-Phase Media Retrieval
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -1180,9 +1260,10 @@ impl RagPipeline {
         similarity_threshold: f32,
     ) -> Vec<crate::rag::db::MediaAssetRecord> {
         let trimmed = response_text.trim();
-        // Skip media retrieval for empty or very short/generic responses
-        // that are unlikely to reference specific document content.
-        if trimmed.is_empty() || trimmed.split_whitespace().count() < 15 {
+        let word_count = trimmed.split_whitespace().count();
+        // Skip media retrieval for empty or very short responses
+        if trimmed.is_empty() || word_count < 5 {
+            log::debug!("Skipping media retrieval: response too short ({word_count} words)");
             return vec![];
         }
 
@@ -1191,11 +1272,19 @@ impl RagPipeline {
         let response_embedding = match self.router.route(&request).await {
             Ok(TaskResponse::Embeddings(mut vecs)) => {
                 if vecs.is_empty() {
+                    log::warn!("Media retrieval: embed returned empty vector list");
                     return vec![];
                 }
                 vecs.remove(0)
             }
-            _ => return vec![],
+            Ok(_) => {
+                log::warn!("Media retrieval: embed returned unexpected response type");
+                return vec![];
+            }
+            Err(e) => {
+                log::warn!("Media retrieval: embed failed: {e}");
+                return vec![];
+            }
         };
 
         // Search against media caption embeddings
@@ -1204,6 +1293,15 @@ impl RagPipeline {
             .media_vector_search(&response_embedding, top_k)
             .unwrap_or_default();
 
+        log::info!(
+            "Media vector search returned {} candidates (threshold={:.2})",
+            media_results.len(),
+            similarity_threshold
+        );
+        for (asset_id, sim) in &media_results {
+            log::debug!("  candidate asset_id={asset_id} sim={sim:.3}");
+        }
+
         // Filter by similarity threshold and fetch full records
         let mut assets = Vec::new();
         for (asset_id, sim) in &media_results {
@@ -1211,16 +1309,29 @@ impl RagPipeline {
                 if let Ok(asset) = self.db.get_media_asset(*asset_id) {
                     // Verify the file still exists on disk
                     if std::path::Path::new(&asset.file_path).exists() {
-                        log::debug!(
+                        log::info!(
                             "Media match: {} (sim={:.3}, type={})",
                             asset.file_path,
                             sim,
                             asset.asset_type
                         );
                         assets.push(asset);
+                    } else {
+                        log::warn!(
+                            "Media asset file missing: {} (asset_id={asset_id})",
+                            asset.file_path
+                        );
                     }
                 }
             }
+        }
+
+        if assets.is_empty() && !media_results.is_empty() {
+            log::info!(
+                "No media assets passed threshold {:.2} — best similarity was {:.3}",
+                similarity_threshold,
+                media_results.first().map(|(_, s)| *s).unwrap_or(0.0)
+            );
         }
 
         assets

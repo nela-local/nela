@@ -20,19 +20,48 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── LLM: Liquid Foundation Model (llama-server) ──────────────────────────────
+# Dedicated enrichment model (small, fast). Also available for chat/RAG but at
+# lower priority than Famino — the user can still select it from the model
+# picker if desired.
 
 [[models]]
 id = "lfm-1_2b"
 name = "LFM 1.2B INT8"
 backend = "llama_server"
 kind = "child_process"
-model_file = "LiquidAI-LLM/LFM-1.2B-INT8.gguf"
-tasks = ["chat", "summarize", "mindmap", "enrich", "grade", "hyde"]
+model_file = "LLM/LFM-1.2B-INT8.gguf"
+tasks = ["chat", "summarize", "mindmap", "enrich", "hyde"]
+auto_start = false
+max_instances = 2
+idle_timeout_s = 300
+priority = 20
+memory_mb = 1400
+
+[models.params]
+ctx_size = "4096"
+port = "0"
+max_tokens = "256"
+temp = "0.7"
+top_p = "0.9"
+top_k = "40"
+repeat_penalty = "1.1"
+
+# ── LLM: Famino-12B (llama-server) ───────────────────────────────────────────
+# Primary chat/RAG model (larger, higher quality). Does NOT handle enrichment
+# (which runs in background and would block the large model).
+
+[[models]]
+id = "famino-12-b"
+name = "Famino 12B INT2"
+backend = "llama_server"
+kind = "child_process"
+model_file = "LLM/Famino-12B-Model_Stock.Q2_K.gguf"
+tasks = ["chat", "summarize", "mindmap", "hyde"]
 auto_start = false
 max_instances = 2
 idle_timeout_s = 300
 priority = 10
-memory_mb = 1400
+memory_mb = 5200
 
 [models.params]
 ctx_size = "4096"

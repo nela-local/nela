@@ -26,7 +26,7 @@ pub struct ModelFile {
 #[tauri::command]
 pub fn list_models() -> Vec<ModelFile> {
     let dir = get_models_dir();
-    let llm_dir = dir.join("LiquidAI-LLM");
+    let llm_dir = dir.join("LLM");
     let mut models = Vec::new();
 
     // Scan the LiquidAI-LLM subfolder for .gguf files
@@ -146,6 +146,8 @@ pub async fn switch_model(
     // Build a ModelDef for the new model.
     // Use the absolute path as model_file — Path::join with an absolute path
     // ignores the base, so the backend will use it directly.
+    // NOTE: Enrich is excluded — the dedicated enrichment model (LFM) handles
+    // that in the background so it doesn't block the user's chat model.
     let def = ModelDef {
         id: model_id.clone(),
         name: file_name.clone(),
@@ -156,7 +158,6 @@ pub async fn switch_model(
             TaskType::Chat,
             TaskType::Summarize,
             TaskType::Mindmap,
-            TaskType::Enrich,
             TaskType::Grade,
             TaskType::Hyde,
         ],

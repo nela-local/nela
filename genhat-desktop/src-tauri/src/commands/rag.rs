@@ -191,6 +191,9 @@ pub async fn query_rag_stream(
 /// Two-phase media retrieval: given the LLM's response text, find images/tables
 /// whose captions are semantically similar to the response content.
 /// Returns media assets that should be displayed alongside the chat answer.
+///
+/// Automatically attempts to re-embed any unembedded media before searching
+/// (recovers from embedding model not being loaded at ingestion time).
 #[tauri::command]
 pub async fn retrieve_media_for_response(
     response_text: String,
@@ -200,7 +203,14 @@ pub async fn retrieve_media_for_response(
 ) -> Result<Vec<crate::rag::db::MediaAssetRecord>, String> {
     let pipeline = state.0.clone();
     let k = top_k.unwrap_or(3);
-    let sim_threshold = threshold.unwrap_or(0.55);
+    let sim_threshold = threshold.unwrap_or(0.50);
+
+    // Recover any media assets whose caption embedding failed during ingestion
+    let re_embedded = pipeline.re_embed_unembedded_media().await;
+    if re_embedded > 0 {
+        log::info!("Recovered {re_embedded} media embeddings before retrieval");
+    }
+
     Ok(pipeline
         .retrieve_media_for_response(&response_text, k, sim_threshold)
         .await)

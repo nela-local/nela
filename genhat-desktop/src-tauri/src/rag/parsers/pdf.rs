@@ -96,18 +96,26 @@ pub fn parse(path: &Path, media_dir: Option<&Path>) -> Result<ParsedDocument, St
     // ── 3. Media extraction (pdfium-render) — only if media_dir is provided ──
     if let Some(media_dir) = media_dir {
         if let Err(e) = std::fs::create_dir_all(media_dir) {
-            log::warn!("Failed to create media dir: {e}");
+            log::error!("❌ Failed to create media dir {}: {e}", media_dir.display());
         } else {
             match extract_media_pdfium(&bytes, media_dir, &sections) {
                 Ok(media_elements) => {
-                    log::info!("Extracted {} media elements from PDF", media_elements.len());
+                    log::info!(
+                        "Extracted {} media elements from PDF (dir={})",
+                        media_elements.len(),
+                        media_dir.display()
+                    );
                     elements.extend(media_elements);
                 }
                 Err(e) => {
-                    log::warn!("PDF media extraction failed (text still available): {e}");
+                    log::error!(
+                        "❌ PDF media extraction FAILED — images/tables will NOT be available: {e}"
+                    );
                 }
             }
         }
+    } else {
+        log::debug!("No media_dir provided — skipping image/table extraction");
     }
 
     Ok(ParsedDocument {
@@ -141,16 +149,21 @@ fn resolve_pdfium_library() -> Result<Box<dyn pdfium_render::prelude::PdfiumLibr
         "libpdfium.so"
     };
 
+    log::debug!("Resolving pdfium: looking for {os_folder}/{lib_name}");
+
     match crate::paths::resolve_bundled_library(os_folder, lib_name) {
         Ok(candidate) => {
+            let dir = candidate.parent().unwrap().to_str().unwrap();
             log::info!("Found bundled pdfium at: {}", candidate.display());
-            return Pdfium::bind_to_library(
-                Pdfium::pdfium_platform_library_name_at_path(
-                    candidate.parent().unwrap().to_str().unwrap()
-                )
-            ).map_err(|e| format!("Failed to bind to bundled pdfium: {e}"));
+            let lib_path = Pdfium::pdfium_platform_library_name_at_path(dir);
+            log::debug!("Binding to pdfium library: {}", lib_path.display());
+            Pdfium::bind_to_library(&lib_path)
+                .map_err(|e| format!("Failed to bind to bundled pdfium at {}: {e}", candidate.display()))
         }
-        Err(e) => Err(format!("Bundled libpdfium not found. {e}")),
+        Err(e) => {
+            log::warn!("Bundled pdfium not found: {e}");
+            Err(format!("Bundled libpdfium not found. {e}"))
+        }
     }
 }
 

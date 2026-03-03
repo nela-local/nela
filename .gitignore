@@ -8,13 +8,15 @@ models/distilBert-query-router/
 !models/distilBert-query-router/.gitkeep
 models/bge-1.5-embed/
 !models/bge-1.5-embed/.gitkeep
-models/LiquidAI-LLM/
-!models/LiquidAI-LLM/.gitkeep
+models/LLM/
+!models/LLM/.gitkeep
 models/LiquidAI-VLM/
 !models/LiquidAI-VLM/.gitkeep
 models/parakeet/
 !models/parakeet/.gitkeep
 models/parakeet.zip
+models/Famino-12B
+!models/Famino-12B/.gitkeep
 
 # App's binary files and build/dist directories
 genhat-desktop/src-tauri/bin/tts*

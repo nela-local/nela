@@ -713,6 +713,27 @@ impl RagDb {
         Ok(results)
     }
 
+    /// Get all media assets that were stored without embeddings (failed during ingestion).
+    /// Returns (asset_id, caption) pairs.
+    pub fn get_unembedded_media(&self) -> Result<Vec<(i64, String)>, String> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, caption FROM media_assets WHERE embedding IS NULL AND caption != ''",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let results = stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let caption: String = row.get(1)?;
+                Ok((id, caption))
+            })
+            .map_err(|e| format!("Query error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(results)
+    }
+
     /// Delete all media assets for a document (also deletes files from disk).
     pub fn delete_media_for_doc(&self, doc_id: i64) -> Result<Vec<String>, String> {
         let conn = self.conn()?;
