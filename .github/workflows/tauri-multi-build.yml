@@ -103,4 +103,4 @@ jobs:
       # Upload to Google Drive — AppFiles/Releases/<OS>
       - name: Upload to Google Drive
         run: |
-          rclone copy "${{ env.ARTIFACT_PATH }}" "gdrive:AppFiles/Releases/${{ matrix.drive_folder }}" --progress
+          rclone copy "${{ env.ARTIFACT_PATH }}" "gdrive:${{ vars.DRIVE_BASE_PATH }}/${{ matrix.drive_folder }}" --progress
