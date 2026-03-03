@@ -1,0 +1,94 @@
+name: Tauri Multi-Platform Build & Upload
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      NODE_VERSION: 20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Setup Node
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Node Dependencies
+        run: npm install
+
+      # Setup Rust
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Linux System Dependencies
+      - name: Install Linux Dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # Build Tauri
+      - name: Build Tauri App
+        run: npx tauri build --verbose
+
+      # Collect Build Artifact
+      - name: Locate Windows Build
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $file = Get-ChildItem -Path src-tauri/target/release -Recurse -Include *.exe,*.msi | Select-Object -First 1
+          echo "ARTIFACT_PATH=$($file.FullName)" >> $env:GITHUB_ENV
+          echo "ARTIFACT_NAME=$($file.Name)" >> $env:GITHUB_ENV
+
+      - name: Locate Linux Build
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          FILE=$(find src-tauri/target/release -type f \( -name "*.AppImage" -o -name "*.deb" \) | head -n 1)
+          echo "ARTIFACT_PATH=$FILE" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=$(basename $FILE)" >> $GITHUB_ENV
+
+      - name: Locate macOS Build
+        if: matrix.os == 'macos-latest'
+        run: |
+          FILE=$(find src-tauri/target/release -type f \( -name "*.dmg" -o -name "*.app" \) | head -n 1)
+          echo "ARTIFACT_PATH=$FILE" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=$(basename $FILE)" >> $GITHUB_ENV
+
+      # Setup rclone for Google Drive
+      - name: Install rclone
+        if: matrix.os == 'windows-latest'
+        run: choco install rclone -y
+
+      - name: Install rclone (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        run: |
+          echo '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service-account.json
+          rclone config create gdrive drive \
+            scope=drive.file \
+            service_account_file=service-account.json
+
+      # Upload to Google Drive (Overwrites Same Name)
+      - name: Upload to Google Drive
+        run: |
+          rclone copy "${{ env.ARTIFACT_PATH }}" gdrive:tauri-builds/${{ matrix.os }}/ --progress
