@@ -28,6 +28,7 @@ jobs:
 
       - name: Install Node Dependencies
         run: npm install
+        working-directory: genhat-desktop
 
       # Setup Rust
       - name: Install Rust
@@ -47,6 +48,7 @@ jobs:
       # Build Tauri
       - name: Build Tauri App
         run: npx tauri build --verbose
+        working-directory: genhat-desktop
 
       # Collect Windows Build Artifact
       - name: Locate Windows Build
