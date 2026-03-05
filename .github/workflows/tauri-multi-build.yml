@@ -115,3 +115,30 @@ jobs:
           draft: false
           prerelease: false
           files: ${{ env.ARTIFACT_PATHS }}
+          
+  trigger-vercel-deploy:
+    name: Trigger Vercel Deploy
+    needs: build # This ensures it waits for the OS matrix builds to finish successfully
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Vercel Deploy Hook with Retries
+        run: |
+          # Loop 4 times total (1 initial attempt + 3 retries)
+          for i in 1 2 3 4; do
+            echo "Attempt $i to trigger Vercel..."
+            
+            # -f: Fail on HTTP errors
+            # -sS: Silent progress bar, but show errors if it fails
+            if curl -f -sS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"; then
+              echo -e "\nSuccessfully triggered Vercel deploy!"
+              exit 0
+            fi
+            
+            if [ $i -lt 4 ]; then
+              echo "Attempt $i failed. Retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+          
+          echo "All attempts to trigger Vercel failed."
+          exit 1
