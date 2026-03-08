@@ -129,10 +129,10 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
       <div className="podcast-header">
         <div className="podcast-header-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="23"/>
-            <line x1="8" y1="23" x2="16" y2="23"/>
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="23" />
+            <line x1="8" y1="23" x2="16" y2="23" />
           </svg>
         </div>
         <div>
@@ -146,7 +146,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
       {!hasDocuments && (
         <div className="podcast-warning">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
           <span>No documents ingested. Add documents in Chat mode first, then return here to generate a podcast.</span>
         </div>
@@ -240,20 +240,20 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
           <button
             onClick={handleGenerate}
             disabled={isGenerating || !query.trim() || !hasDocuments}
-            className="podcast-generate-btn"
+            className="glass-btn podcast-generate-btn"
           >
             {isGenerating ? (
               <>
                 <svg className="spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
                 Generating...
               </>
             ) : (
               <>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                 </svg>
                 Generate Podcast
               </>
@@ -282,7 +282,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
       {error && (
         <div className="podcast-error">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
           </svg>
           <span>{error}</span>
         </div>
@@ -296,16 +296,16 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
             <h3 className="podcast-result-title">{result.script.title}</h3>
             <div className="podcast-result-actions">
               {isPlaying ? (
-                <button className="podcast-stop-btn" onClick={stopPlayback}>
+                <button className="glass-btn podcast-stop-btn" onClick={stopPlayback}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                    <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
                   </svg>
                   Stop
                 </button>
               ) : (
-                <button className="podcast-play-btn" onClick={playFullPodcast}>
+                <button className="glass-btn podcast-play-btn" onClick={playFullPodcast}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <polygon points="5 3 19 12 5 21 5 3"/>
+                    <polygon points="5 3 19 12 5 21 5 3" />
                   </svg>
                   Play Full Podcast
                 </button>
@@ -318,9 +318,8 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
             {result.script.lines.map((line, i) => (
               <div
                 key={i}
-                className={`podcast-line ${activeLine === i ? "active" : ""} ${
-                  line.speaker === speakerA ? "speaker-a" : "speaker-b"
-                }`}
+                className={`podcast-line ${activeLine === i ? "active" : ""} ${line.speaker === speakerA ? "speaker-a" : "speaker-b"
+                  }`}
                 onClick={() => playSegment(i)}
               >
                 <span className={`podcast-speaker ${line.speaker === speakerA ? "speaker-a-name" : "speaker-b-name"}`}>
@@ -328,12 +327,12 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
                 </span>
                 <span className="podcast-line-text">{line.text}</span>
                 <button
-                  className="podcast-line-play"
+                  className="glass-btn podcast-line-play"
                   onClick={(e) => { e.stopPropagation(); playSegment(i); }}
                   title="Play this line"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                    <polygon points="5 3 19 12 5 21 5 3"/>
+                    <polygon points="5 3 19 12 5 21 5 3" />
                   </svg>
                 </button>
               </div>
@@ -344,8 +343,8 @@ const PodcastTab: React.FC<PodcastTabProps> = ({ hasDocuments }) => {
           <details className="podcast-sources">
             <summary>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
               </svg>
               Sources ({result.script.source_chunks.length} chunks used)
             </summary>

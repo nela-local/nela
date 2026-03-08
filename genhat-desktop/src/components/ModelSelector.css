@@ -1,4 +1,4 @@
-/* Model Selector Styles */
+/* Model Selector — Void Glass */
 .model-selector-container {
     position: relative;
     user-select: none;
@@ -9,10 +9,10 @@
     align-items: center;
     gap: 8px;
     padding: 7px 14px;
-    background-color: var(--bg-tertiary);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    background-color: var(--color-void-700);
+    color: var(--color-txt-secondary);
+    border: 1px solid var(--color-glass-border);
+    border-radius: 10px;
     font-size: 0.85rem;
     cursor: pointer;
     transition: all 0.2s;
@@ -20,11 +20,12 @@
     justify-content: space-between;
 }
 
-.model-selector-btn:hover, .model-selector-btn.active {
-    background-color: #112d4a;
-    color: var(--text-primary);
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.2);
+.model-selector-btn:hover,
+.model-selector-btn.active {
+    background-color: var(--color-void-600);
+    color: var(--color-txt);
+    border-color: var(--color-neon);
+    box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.15);
 }
 
 .model-selector-btn .model-name {
@@ -50,28 +51,25 @@
     top: calc(100% + 6px);
     right: 0;
     width: 260px;
-    background-color: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    background-color: var(--color-void-700);
+    border: 1px solid var(--color-glass-border);
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
     padding: 4px;
     z-index: 100;
     animation: dropdownFade 0.15s ease-out;
-}
-
-@keyframes dropdownFade {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: translateY(0); }
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
 }
 
 .dropdown-header {
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--text-muted);
+    color: var(--color-txt-muted);
     padding: 8px 12px;
     font-weight: 600;
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--color-glass-border);
     margin-bottom: 4px;
 }
 
@@ -85,29 +83,29 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    color: var(--color-txt-secondary);
     transition: background 0.1s;
 }
 
 .model-item:hover {
-    background-color: var(--bg-tertiary);
-    color: var(--text-primary);
+    background-color: var(--color-glass-hover);
+    color: var(--color-txt);
 }
 
 .model-item.selected {
-    background-color: rgba(45, 212, 191, 0.10);
-    color: var(--accent-primary);
+    background-color: var(--color-neon-subtle);
+    color: var(--color-neon);
 }
 
 .check-icon {
-    color: var(--accent-primary);
+    color: var(--color-neon);
 }
 
 .dropdown-footer {
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--color-glass-border);
     margin-top: 4px;
     padding-top: 4px;
 }
@@ -120,16 +118,16 @@
     padding: 8px 12px;
     background: transparent;
     border: none;
-    color: var(--text-muted);
+    color: var(--color-txt-muted);
     font-size: 0.85rem;
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: 8px;
     transition: all 0.2s;
 }
 
 .add-model-btn:hover {
-    background-color: rgba(255, 255, 255, 0.05);
-    color: var(--text-primary);
+    background-color: var(--color-glass-hover);
+    color: var(--color-txt);
 }
 
 .truncate {

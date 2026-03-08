@@ -1,68 +1,73 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@import "tailwindcss";
 
-  color-scheme: dark;
-  color: #d4dce8;
-  background-color: #081726;
+/* ── Void Glass Theme ── */
+@theme {
+  --color-void-900: #08080c;
+  --color-void-800: #0e0e14;
+  --color-void-700: #15151e;
+  --color-void-600: #1c1c28;
+  --color-void-500: #2a2a3a;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  --color-glass-bg: rgba(255, 255, 255, 0.03);
+  --color-glass-border: rgba(255, 255, 255, 0.07);
+  --color-glass-hover: rgba(255, 255, 255, 0.06);
 
-a {
-  font-weight: 500;
-  color: #2dd4bf;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #5eead4;
-}
+  --color-neon: #00d4ff;
+  --color-neon-hover: #00b8e6;
+  --color-neon-subtle: rgba(0, 212, 255, 0.08);
+  --color-neon-glow: rgba(0, 212, 255, 0.25);
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
+  --color-coral: #ff6b6b;
+  --color-coral-subtle: rgba(255, 107, 107, 0.10);
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+  --color-txt: #e4e2ef;
+  --color-txt-secondary: #8a88a0;
+  --color-txt-muted: #54526a;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #0c2137;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #2dd4bf;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #d4dce8;
-    background-color: #081726;
+/* ── Base Layer ── */
+@layer base {
+  * {
+    box-sizing: border-box;
   }
-  a:hover {
-    color: #5eead4;
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--color-void-900);
+    color: var(--color-txt);
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+
+  #root {
+    height: 100%;
+    width: 100%;
+  }
+
   button {
-    background-color: #0c2137;
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: inherit;
+  }
+
+  a {
+    color: var(--color-neon);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: #66e5ff;
   }
 }

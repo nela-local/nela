@@ -63,11 +63,11 @@ const MODE_CONFIG: {
   icon: React.ElementType;
   desc: string;
 }[] = [
-  { mode: "text", label: "Chat", icon: MessageSquare, desc: "Text conversation" },
-  { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
-  { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
-  { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
-];
+    { mode: "text", label: "Chat", icon: MessageSquare, desc: "Text conversation" },
+    { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
+    { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
+    { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
+  ];
 
 function App() {
   // ── Model state ────────────────────────────────────────────────────────────
@@ -429,20 +429,20 @@ function App() {
                 if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
                 const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
                 const timeToFirstToken = firstTokenTimeMs ? Math.floor((firstTokenTimeMs - ragStartTime) / 100) / 10 : null;
-                
+
                 setGeneralGenerating(false);
                 setGeneralElapsedTime(totalTime);
                 setGeneralGenerationTime(totalTime);
-                
+
                 setRagResult((prev) =>
                   prev ? { ...prev, answer: fullAnswer } : null
                 );
                 setMessages((prev) => {
                   const updated: ChatMessage[] = [
                     ...prev,
-                    { 
-                      role: "assistant", 
-                      content: fullAnswer, 
+                    {
+                      role: "assistant",
+                      content: fullAnswer,
                       generateTime: totalTime,
                       firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
                     },
@@ -582,7 +582,7 @@ function App() {
                 if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
                 const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
                 const timeToFirstToken = firstTokenTimeMs ? Math.floor((firstTokenTimeMs - startTime) / 100) / 10 : null;
-                
+
                 setGeneralGenerating(false);
                 setGeneralElapsedTime(totalTime);
                 setGeneralGenerationTime(totalTime);
@@ -591,9 +591,9 @@ function App() {
                 if (visionResponse) {
                   setMessages((prev) => [
                     ...prev,
-                    { 
-                      role: "assistant", 
-                      content: visionResponse, 
+                    {
+                      role: "assistant",
+                      content: visionResponse,
                       generateTime: totalTime,
                       firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
                     },
@@ -665,7 +665,7 @@ function App() {
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
           const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
           const timeToFirstToken = textFirstTokenTimeMs ? Math.floor((textFirstTokenTimeMs - chatStartTime) / 100) / 10 : null;
-          
+
           setGeneralGenerating(false);
           setGeneralElapsedTime(totalTime);
           setGeneralGenerationTime(totalTime);
@@ -674,9 +674,9 @@ function App() {
           if (fullResponse) {
             setMessages((prev) => [
               ...prev,
-              { 
-                role: "assistant", 
-                content: fullResponse, 
+              {
+                role: "assistant",
+                content: fullResponse,
                 generateTime: totalTime,
                 firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
               },
@@ -733,35 +733,40 @@ function App() {
   const currentModeConfig = MODE_CONFIG.find((m) => m.mode === chatMode)!;
 
   return (
-    <div className="app-container">
+    <div className="flex h-full w-full">
       {/* ══════════ LEFT NAV SIDEBAR ══════════ */}
-      <nav className="nav-sidebar">
+      <nav className="w-[68px] bg-void-800 border-r border-glass-border flex flex-col items-center py-3 shrink-0 z-30 gap-1">
         {/* Brand */}
-        <div className="nav-brand">
-          <div className="nav-brand-icon">G</div>
+        <div className="pt-2 pb-4 mb-1">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-neon to-coral flex items-center justify-center text-lg font-extrabold text-white tracking-tight shadow-[0_4px_20px_rgba(0,212,255,0.3)]">
+            N
+          </div>
         </div>
 
         {/* Mode Buttons */}
-        <div className="nav-modes">
+        <div className="flex flex-col gap-0.5 w-full px-2">
           {MODE_CONFIG.map(({ mode, label, icon: Icon, desc }) => (
             <button
               key={mode}
-              className={`nav-mode-btn ${chatMode === mode ? "active" : ""}`}
+              className={`nav-mode-btn flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl border transition-all duration-200 relative w-full ${chatMode === mode
+                ? "active bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]"
+                : "bg-transparent border-transparent text-txt-muted hover:bg-glass-hover hover:text-txt-secondary hover:border-glass-border"
+                }`}
               onClick={() => setChatMode(mode)}
               title={desc}
             >
               <Icon size={20} strokeWidth={1.8} />
-              <span className="nav-mode-label">{label}</span>
+              <span className="text-[0.6rem] font-semibold uppercase tracking-wide leading-none">{label}</span>
             </button>
           ))}
         </div>
 
         {/* Spacer */}
-        <div className="nav-spacer" />
+        <div className="flex-1" />
 
         {/* New Chat */}
         <button
-          className="nav-new-chat"
+          className="glass-btn flex flex-col items-center gap-1 py-2.5 px-1 mx-2 mb-2 bg-transparent border border-dashed border-glass-border rounded-xl text-txt-muted cursor-pointer transition-all duration-200 w-[calc(100%-16px)] hover:border-neon hover:text-neon hover:bg-neon-subtle hover:shadow-[0_0_12px_rgba(0,212,255,0.1)]"
           onClick={() => {
             setMessages([]);
             setStreamingContent("");
@@ -771,21 +776,21 @@ function App() {
           title="New conversation"
         >
           <Plus size={18} strokeWidth={2} />
-          <span className="nav-mode-label">New Chat</span>
+          <span className="text-[0.6rem] font-semibold uppercase tracking-wide leading-none">New Chat</span>
         </button>
       </nav>
 
       {/* ══════════ MAIN CONTENT ══════════ */}
-      <main className="main-content">
+      <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
         {/* ── Top Bar ── */}
-        <header className="top-bar">
-          <div className="top-bar-left">
-            <currentModeConfig.icon size={18} strokeWidth={1.8} className="top-bar-icon" />
-            <h1 className="top-bar-title">{currentModeConfig.label}</h1>
-            <span className="top-bar-desc">{currentModeConfig.desc}</span>
+        <header className="h-14 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
+          <div className="flex items-center gap-2.5">
+            <currentModeConfig.icon size={18} strokeWidth={1.8} className="text-neon" />
+            <h1 className="text-[0.95rem] font-semibold m-0 text-txt">{currentModeConfig.label}</h1>
+            <span className="text-[0.78rem] text-txt-muted pl-2.5 border-l border-glass-border">{currentModeConfig.desc}</span>
           </div>
 
-          <div className="top-bar-right">
+          <div className="flex items-center gap-3">
             {chatMode === "text" && (
               <ModelSelector
                 models={models}
@@ -796,55 +801,46 @@ function App() {
               />
             )}
             {chatMode === "audio" && ttsEngines.length > 0 && (
-              <div className="tts-controls">
-                {/* TTS engine selector */}
-                <div className="tts-engine-select">
+              <div className="flex items-center gap-2.5">
+                <div className="relative flex items-center">
                   <select
                     value={selectedTtsEngine}
                     onChange={(e) => setSelectedTtsEngine(e.target.value)}
-                    className="model-select"
+                    className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
                     disabled={loading}
                   >
                     {ttsEngines.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
+                      <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                   </select>
-                  <ChevronDown size={14} className="select-chevron" />
+                  <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
                 </div>
 
-                {/* KittenTTS voice + speed controls */}
                 {selectedTtsEngine === "kitten-tts" && (
                   <>
-                    <div className="tts-voice-select">
+                    <div className="relative flex items-center">
                       <select
                         value={ttsVoice}
                         onChange={(e) => setTtsVoice(e.target.value as KittenTtsVoice)}
-                        className="model-select"
+                        className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[100px] hover:border-neon"
                         disabled={loading}
                       >
                         {KITTEN_TTS_VOICES.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
+                          <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
-                      <ChevronDown size={14} className="select-chevron" />
+                      <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
                     </div>
 
-                    <div className="tts-speed-control">
-                      <label className="tts-speed-label" title="Speaking speed">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[0.78rem] text-txt-secondary min-w-[32px] text-right select-none" title="Speaking speed">
                         {ttsSpeed.toFixed(1)}x
                       </label>
                       <input
-                        type="range"
-                        min="0.5"
-                        max="2.0"
-                        step="0.1"
+                        type="range" min="0.5" max="2.0" step="0.1"
                         value={ttsSpeed}
                         onChange={(e) => setTtsSpeed(parseFloat(e.target.value))}
-                        className="tts-speed-slider"
+                        className="w-[72px] h-1 accent-neon cursor-pointer"
                         disabled={loading}
                       />
                     </div>
@@ -853,20 +849,18 @@ function App() {
               </div>
             )}
             {chatMode === "vision" && visionModels.length > 0 && (
-              <div className="vision-model-select">
+              <div className="relative flex items-center">
                 <select
                   value={selectedVisionModel}
                   onChange={(e) => setSelectedVisionModel(e.target.value)}
-                  className="model-select"
+                  className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
                   disabled={loading}
                 >
                   {visionModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
+                    <option key={m.id} value={m.id}>{m.name}</option>
                   ))}
                 </select>
-                <ChevronDown size={14} className="select-chevron" />
+                <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
               </div>
             )}
           </div>
@@ -874,108 +868,84 @@ function App() {
 
         {/* ── Vision Panel ── */}
         {chatMode === "vision" && (
-          <div className="context-panel">
-            <div className="context-panel-header">
+          <div className="border-b border-glass-border bg-void-800 overflow-hidden animate-panel-slide">
+            <div className="flex items-center gap-2 py-2.5 px-6 text-[0.82rem] font-semibold text-txt-secondary border-b border-glass-border">
               <ImageIcon size={16} strokeWidth={1.8} />
               <span>Image Input</span>
             </div>
-            <div className="context-panel-body">
-              <div className="vision-controls">
-                <button
-                  onClick={selectImage}
-                  disabled={loading}
-                  className="action-btn"
-                >
-                  <ImageIcon size={14} />
-                  Select Image
+            <div className="p-3 px-6 max-h-[250px] overflow-y-auto">
+              <div className="flex gap-2.5 items-center mb-2.5">
+                <button onClick={selectImage} disabled={loading}
+                  className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-4 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
+                  <ImageIcon size={14} /> Select Image
                 </button>
                 {imagePath && (
-                  <button
-                    onClick={clearImage}
-                    disabled={loading}
-                    className="action-btn danger"
-                  >
-                    <X size={14} />
-                    Clear
+                  <button onClick={clearImage} disabled={loading}
+                    className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-4 text-[0.78rem] font-medium rounded-lg cursor-pointer text-[#fca5a5] border border-[rgba(248,113,113,0.2)] transition-all duration-200 hover:bg-[rgba(248,113,113,0.1)] hover:border-[#f87171] hover:shadow-[0_0_12px_rgba(248,113,113,0.15)] disabled:opacity-45 disabled:cursor-not-allowed">
+                    <X size={14} /> Clear
                   </button>
                 )}
                 {imagePath && (
-                  <span className="file-path-badge">
+                  <span className="inline-flex items-center py-0.5 px-2.5 bg-void-700 border border-glass-border rounded-full text-[0.72rem] text-txt-secondary max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap">
                     {imagePath.split(/[/\\]/).pop()}
                   </span>
                 )}
               </div>
               {imagePreview && (
-                <img
-                  src={imagePreview}
-                  alt="Selected"
-                  className="vision-preview"
-                />
+                <img src={imagePreview} alt="Selected" className="max-w-full max-h-[180px] rounded-xl object-contain border border-glass-border" />
               )}
             </div>
           </div>
         )}
 
-        {/* ── RAG Panel ── now in right sidebar */}
-
         {/* ── Podcast Mode ── */}
         {chatMode === "podcast" ? (
           <PodcastTab hasDocuments={ragDocs.length > 0} />
         ) : (
-        /* ── Chat Area ── */
-        <ChatWindow
-          messages={messages}
-          streamingContent={streamingContent}
-          isLoading={loading}
-          onSend={handleSend}
-          onCancel={handleCancel}
-          cancelled={cancelled}
-          audioSrc={audioOutput}
-          placeholder={getPlaceholder()}
-          mediaAssets={mediaAssets}
-          ragDocs={ragDocs}
-          ragIngesting={ragIngesting}
-          enrichmentStatus={enrichmentStatus}
-          onIngestFile={ingestFile}
-          onIngestDir={ingestDir}
-          onToggleDocPanel={() => setDocPanelOpen((v) => !v)}
-          showRagControls={chatMode === "text"}
-          docPanelOpen={docPanelOpen}
-        />
+          <ChatWindow
+            messages={messages}
+            streamingContent={streamingContent}
+            isLoading={loading}
+            onSend={handleSend}
+            onCancel={handleCancel}
+            cancelled={cancelled}
+            audioSrc={audioOutput}
+            placeholder={getPlaceholder()}
+            mediaAssets={mediaAssets}
+            ragDocs={ragDocs}
+            ragIngesting={ragIngesting}
+            enrichmentStatus={enrichmentStatus}
+            onIngestFile={ingestFile}
+            onIngestDir={ingestDir}
+            onToggleDocPanel={() => setDocPanelOpen((v) => !v)}
+            showRagControls={chatMode === "text"}
+            docPanelOpen={docPanelOpen}
+          />
         )}
 
         {/* ── PDF Viewer Overlay ── */}
         {pdfLoading && (
-          <div className="pdf-loading-overlay">
+          <div className="absolute inset-0 z-[55] bg-void-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 text-txt-muted text-sm">
             <div className="pdf-spinner" />
             <span>Loading PDF...</span>
           </div>
         )}
         {pdfViewerData && (
-          <PdfViewer
-            pdfData={pdfViewerData.data}
-            title={pdfViewerData.title}
-            onClose={closePdfViewer}
-          />
+          <PdfViewer pdfData={pdfViewerData.data} title={pdfViewerData.title} onClose={closePdfViewer} />
         )}
 
-        {/* ── Document Viewer Overlay (non-PDF) ── */}
+        {/* ── Document Viewer Overlay ── */}
         {docViewerFile && (
-          <DocumentViewer
-            key={docViewerFile.filePath}
-            filePath={docViewerFile.filePath}
-            title={docViewerFile.title}
-            onClose={closeDocViewer}
-          />
+          <DocumentViewer key={docViewerFile.filePath} filePath={docViewerFile.filePath} title={docViewerFile.title} onClose={closeDocViewer} />
         )}
       </main>
 
       {/* ══════════ RIGHT SIDEBAR — Knowledge Base ══════════ */}
-      <aside className={`kb-sidebar ${docPanelOpen ? "open" : ""}`}>
-        <div className="kb-sidebar-inner">
+      <aside className={`kb-sidebar overflow-hidden bg-void-800 flex flex-col shrink-0 ${docPanelOpen ? "w-[320px] min-w-[320px] border-l border-glass-border" : "w-0 min-w-0 border-l-0"}`}>
+        <div className={`kb-sidebar-inner flex flex-col h-full w-[320px] ${docPanelOpen ? "opacity-100" : "opacity-0"}`}>
           {/* Header */}
-          <div className="kb-sidebar-header">
-            <div className="kb-sidebar-title">
+          <div className="flex items-center justify-between py-3.5 px-4 border-b border-glass-border shrink-0">
+            <div className="flex items-center gap-2 text-[0.85rem] font-semibold text-txt">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
@@ -983,7 +953,7 @@ function App() {
               Knowledge Base
             </div>
             <button
-              className="kb-sidebar-close"
+              className="glass-btn bg-transparent! border border-transparent! text-txt-muted! cursor-pointer p-1.5! rounded-lg! flex items-center justify-center transition-all duration-200 hover:text-txt! hover:border-glass-border! hover:bg-void-700!"
               onClick={() => setDocPanelOpen(false)}
               title="Close panel"
             >
@@ -994,69 +964,65 @@ function App() {
           </div>
 
           {/* Actions */}
-          <div className="kb-sidebar-actions">
-            <button onClick={ingestFile} disabled={ragIngesting} className="action-btn">
-              <FileText size={14} />
-              Add File
+          <div className="flex gap-1.5 py-3 px-4 border-b border-glass-border shrink-0">
+            <button onClick={ingestFile} disabled={ragIngesting}
+              className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
+              <FileText size={14} /> Add File
             </button>
-            <button onClick={ingestDir} disabled={ragIngesting} className="action-btn">
-              <FolderOpen size={14} />
-              Add Folder
+            <button onClick={ingestDir} disabled={ragIngesting}
+              className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
+              <FolderOpen size={14} /> Add Folder
             </button>
           </div>
 
-          {/* Status indicators */}
+          {/* Status */}
           {(ragIngesting || enrichmentStatus) && (
-            <div className="kb-sidebar-status">
+            <div className="flex items-center gap-2 py-2 px-4 shrink-0">
               {ragIngesting && (
-                <span className="status-badge warning">
-                  <Loader2 size={12} className="spin" />
-                  Ingesting...
+                <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.72rem] font-medium bg-[rgba(251,191,36,0.1)] text-warning">
+                  <Loader2 size={12} className="spin" /> Ingesting...
                 </span>
               )}
               {enrichmentStatus && (
-                <span className="status-badge success">
-                  <CheckCircle2 size={12} />
-                  {enrichmentStatus}
+                <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.72rem] font-medium bg-[rgba(34,197,94,0.1)] text-success">
+                  <CheckCircle2 size={12} /> {enrichmentStatus}
                 </span>
               )}
             </div>
           )}
 
           {/* Document List */}
-          <div className="kb-sidebar-docs">
+          <div className="kb-sidebar-docs flex-1 overflow-y-auto p-2">
             {ragDocs.length === 0 ? (
-              <p className="rag-empty">
+              <p className="text-txt-muted text-[0.82rem] m-1">
                 No documents ingested yet. Use the buttons above to add files.
               </p>
             ) : (
-              <div className="rag-doc-list">
+              <div className="flex flex-col gap-1">
                 {ragDocs.map((doc) => {
                   const ext = doc.file_path?.split(".").pop()?.toLowerCase() || "";
                   const isViewable = ext === "pdf" || VIEWABLE_EXTS.has(ext);
                   return (
-                  <div
-                    key={doc.doc_id}
-                    className={`rag-doc-item${isViewable ? " clickable" : ""}`}
-                    onClick={() => isViewable && openDocViewer(doc)}
-                    title={isViewable ? `Click to view ${ext.toUpperCase()}` : doc.title}
-                  >
-                    <FileText size={14} className="doc-icon" />
-                    <span className="doc-title">{doc.title}</span>
-                    <span className="doc-meta">{doc.total_chunks} chunks</span>
-                    <span
-                      className={`doc-phase ${doc.phase.includes("phase2_complete") ? "complete" : ""}`}
+                    <div
+                      key={doc.doc_id}
+                      className={`flex items-center gap-2 py-2 px-2.5 bg-void-700 rounded-lg text-[0.78rem] border border-transparent transition-colors duration-150 flex-wrap hover:border-glass-border ${isViewable ? "cursor-pointer hover:bg-[rgba(0,212,255,0.06)] hover:border-[rgba(0,212,255,0.2)]" : ""}`}
+                      onClick={() => isViewable && openDocViewer(doc)}
+                      title={isViewable ? `Click to view ${ext.toUpperCase()}` : doc.title}
                     >
-                      {doc.phase.replace(/_/g, " ")}
-                    </span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); deleteRagDoc(doc.doc_id); }}
-                      className="doc-delete"
-                      title="Remove document"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
+                      <FileText size={14} className="text-txt-muted shrink-0" />
+                      <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-txt font-medium text-[0.78rem]">{doc.title}</span>
+                      <span className="text-txt-muted text-[0.7rem] whitespace-nowrap">{doc.total_chunks} chunks</span>
+                      <span className={`py-0.5 px-2 rounded-full text-[0.65rem] font-semibold whitespace-nowrap capitalize ${doc.phase.includes("phase2_complete") ? "bg-[rgba(34,197,94,0.15)] text-success" : "bg-[rgba(0,212,255,0.1)] text-[#66e5ff]"}`}>
+                        {doc.phase.replace(/_/g, " ")}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteRagDoc(doc.doc_id); }}
+                        className="p-1! bg-transparent! text-txt-muted! border-none! rounded! cursor-pointer flex items-center justify-center transition-all duration-150 hover:text-danger! hover:bg-[rgba(239,68,68,0.1)]!"
+                        title="Remove document"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1065,19 +1031,19 @@ function App() {
 
           {/* RAG Source Citations */}
           {ragResult && ragResult.sources.length > 0 && (
-            <div className="kb-sidebar-sources">
-              <div className="rag-sources-header">
+            <div className="kb-sidebar-sources border-t border-glass-border py-3 px-3 shrink-0 max-h-[250px] overflow-y-auto">
+              <div className="flex items-center gap-1.5 mb-2 text-[0.82rem] text-txt-secondary">
                 <FileText size={14} />
                 <strong>Sources ({ragResult.sources.length})</strong>
               </div>
               {ragResult.sources.map((src, i) => (
-                <details key={src.chunk_id} className="source-item">
-                  <summary>
+                <details key={src.chunk_id} className="mb-1 text-[0.78rem]">
+                  <summary className="cursor-pointer text-[#66e5ff] py-1 transition-colors duration-150 hover:text-[#99eeff]">
                     [Source {i + 1}] {src.doc_title}
                     {src.page_info ? `, ${formatPageLabel(src.page_info)}` : ""}
                     {" "}(score: {src.score.toFixed(4)})
                   </summary>
-                  <pre className="source-text">{src.text}</pre>
+                  <pre className="whitespace-pre-wrap text-[0.72rem] text-txt-secondary p-2.5 bg-void-900 border border-glass-border rounded-lg mt-1 max-h-[150px] overflow-y-auto">{src.text}</pre>
                 </details>
               ))}
             </div>

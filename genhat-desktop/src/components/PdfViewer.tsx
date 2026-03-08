@@ -211,7 +211,7 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
         <div className="pdf-toolbar-center">
           {/* Page navigation */}
           <button
-            className="pdf-tool-btn"
+            className="glass-btn pdf-tool-btn"
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage <= 1}
             title="Previous page"
@@ -236,7 +236,7 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
           </span>
 
           <button
-            className="pdf-tool-btn"
+            className="glass-btn pdf-tool-btn"
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage >= totalPages}
             title="Next page"

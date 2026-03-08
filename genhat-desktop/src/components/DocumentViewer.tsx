@@ -245,16 +245,16 @@ export default function DocumentViewer({ filePath, title, onClose }: DocumentVie
         <div className="dv-toolbar-right">
           {(kind === "code" || kind === "plaintext") && (
             <>
-              <button className="dv-btn" onClick={() => setFontSize(s => Math.max(s - 2, 8))} title="Zoom Out (Ctrl+-)">
+              <button className="glass-btn dv-btn" onClick={() => setFontSize(s => Math.max(s - 2, 8))} title="Zoom Out (Ctrl+-)">
                 <ZoomOut size={16} />
               </button>
               <span className="dv-font-size">{fontSize}px</span>
-              <button className="dv-btn" onClick={() => setFontSize(s => Math.min(s + 2, 28))} title="Zoom In (Ctrl+=)">
+              <button className="glass-btn dv-btn" onClick={() => setFontSize(s => Math.min(s + 2, 28))} title="Zoom In (Ctrl+=)">
                 <ZoomIn size={16} />
               </button>
             </>
           )}
-          <button className="dv-btn dv-close-btn" onClick={onClose} title="Close (Esc)">
+          <button className="glass-btn dv-btn dv-close-btn" onClick={onClose} title="Close (Esc)">
             <X size={18} />
           </button>
         </div>
@@ -421,7 +421,7 @@ function PptxViewer({ dataUrl }: { dataUrl: string }) {
         {slides.map((_, i) => (
           <button
             key={i}
-            className={`dv-pptx-thumb ${i === currentSlide ? "active" : ""}`}
+            className={`glass-btn dv-pptx-thumb ${i === currentSlide ? "active" : ""}`}
             onClick={() => setCurrentSlide(i)}
           >
             {i + 1}
