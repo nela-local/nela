@@ -738,9 +738,12 @@ function App() {
       <nav className="w-[68px] bg-void-800 border-r border-glass-border flex flex-col items-center py-3 shrink-0 z-30 gap-1">
         {/* Brand */}
         <div className="pt-2 pb-4 mb-1">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-neon to-coral flex items-center justify-center text-lg font-extrabold text-white tracking-tight shadow-[0_4px_20px_rgba(0,212,255,0.3)]">
-            N
-          </div>
+          <img
+            src="/logo-dark.png"
+            alt="NELA"
+            className="w-10 h-10 rounded-xl object-contain shadow-[0_4px_20px_rgba(0,212,255,0.3)]"
+            draggable={false}
+          />
         </div>
 
         {/* Mode Buttons */}

@@ -202,9 +202,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
         {/* Brand & Greeting */}
         <div className="relative z-10 flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-neon to-coral flex items-center justify-center text-2xl font-extrabold text-white shadow-[0_4px_30px_rgba(0,212,255,0.3)] mb-4">
-            N
-          </div>
+          <img
+            src="/logo-dark.png"
+            alt="NELA"
+            className="w-14 h-14 rounded-2xl object-contain shadow-[0_4px_30px_rgba(0,212,255,0.3)] mb-4"
+            draggable={false}
+          />
           <h2 className="text-2xl font-bold text-txt m-0 mb-1">What can I help with?</h2>
           <p className="text-sm text-txt-muted m-0">Ask anything — chat, analyze images, or explore your documents</p>
         </div>
@@ -323,9 +326,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
               </>
             ) : (
               <>
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-neon to-coral flex items-center justify-center text-[0.72rem] font-bold text-white shrink-0 shadow-[0_2px_12px_rgba(0,212,255,0.25)] border border-white/10">
-                  AI
-                </div>
+                <img
+                  src="/logo-dark.png"
+                  alt="NELA"
+                  className="w-8 h-8 rounded-xl object-contain shrink-0 shadow-[0_2px_12px_rgba(0,212,255,0.25)]"
+                  draggable={false}
+                />
                 <div className="flex-1 min-w-0">
                   <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4 shadow-[0_4px_20px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.03)]">
                     <MarkdownRenderer content={msg.content} />
@@ -347,9 +353,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
         {isLoading && (
           <div className="animate-msg-fade flex gap-3 mb-5 max-w-3xl mx-auto">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-neon to-coral flex items-center justify-center text-[0.72rem] font-bold text-white shrink-0 shadow-[0_2px_10px_rgba(0,212,255,0.2)]">
-              AI
-            </div>
+            <img
+              src="/logo-dark.png"
+              alt="NELA"
+              className="w-8 h-8 rounded-xl object-contain shrink-0 shadow-[0_2px_10px_rgba(0,212,255,0.2)]"
+              draggable={false}
+            />
             <div className="flex-1 min-w-0 text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
               {streamingContent ? (
                 <MarkdownRenderer content={streamingContent} />

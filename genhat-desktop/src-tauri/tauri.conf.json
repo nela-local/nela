@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "GenHat",
+  "productName": "NELA",
   "version": "0.1.0",
   "identifier": "com.genhat.dev",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "GenHat",
+        "title": "NELA",
         "width": 800,
         "height": 600,
         "resizable": true,
