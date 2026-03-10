@@ -39,13 +39,16 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch }}
 
-      - name: Get latest tag
-        id: tag
+      - name: Download version artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-version
+
+      - name: Read version
         shell: bash
         run: |
-          git fetch --tags
-          TAG=$(git describe --tags --abbrev=0)
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          VERSION=$(cat version.txt)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       # Setup Node
       - name: Setup Node
@@ -106,7 +109,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
+          tag_name: ${{ env.VERSION }}
           files: ${{ env.ARTIFACT_PATHS }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
