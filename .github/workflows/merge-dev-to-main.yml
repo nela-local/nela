@@ -50,8 +50,16 @@ jobs:
 
   trigger-build:
     needs: promote
-    uses: ./.github/workflows/tauri-multi-build.yml
-    with:
-      version: ${{ github.event.inputs.version }}
-      release_name: ${{ github.event.inputs.release_name }}
-    secrets: inherit
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Trigger Tauri Multi-Platform Build
+        run: |
+          gh workflow run "tauri-multi-build.yml" \
+            --ref main \
+            -f version="${{ github.event.inputs.version }}" \
+            -f release_name="${{ github.event.inputs.release_name }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

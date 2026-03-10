@@ -1,15 +1,6 @@
 name: Tauri Multi-Platform Build & Release
 
 on:
-  workflow_call:
-    inputs:
-      version:
-        type: string
-        required: true
-      release_name:
-        type: string
-        required: false
-        default: "NELA Release"
   workflow_dispatch:
     inputs:
       version:
