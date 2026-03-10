@@ -81,9 +81,14 @@ impl TaskRouter {
         }
 
         // Find the highest-priority model from the static registry
+        // that is actually available (its files exist — i.e. it was
+        // registered in the ProcessManager).
         let candidates = self.registry.find_for_task(&request.task_type);
-        if !candidates.is_empty() {
-            return Ok(candidates[0].id.clone());
+        for candidate in &candidates {
+            // model_status returns None for models not in ProcessManager
+            if self.process_manager.model_status(&candidate.id).await.is_some() {
+                return Ok(candidate.id.clone());
+            }
         }
 
         // Fall back to dynamically registered models
@@ -111,10 +116,12 @@ impl TaskRouter {
     /// Checks the static registry first, then falls back to dynamically
     /// registered models in the ProcessManager.
     pub async fn get_model_def_for_task(&self, task: &TaskType) -> Option<ModelDef> {
-        // Try static registry first
+        // Try static registry — only pick models actually registered in ProcessManager
         let candidates = self.registry.find_for_task(task);
-        if let Some(def) = candidates.first() {
-            return Some((*def).clone());
+        for def in &candidates {
+            if self.process_manager.model_status(&def.id).await.is_some() {
+                return Some((*def).clone());
+            }
         }
         // Fall back to dynamic models
         let model_id = self.process_manager.find_model_for_task(task).await?;

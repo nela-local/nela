@@ -35,13 +35,15 @@ impl ModelRegistry {
     }
 
     /// Find all models that can handle a given task type, sorted by priority (highest first).
+    /// Uses per-task priority overrides when available, otherwise falls back
+    /// to the model's default priority.
     pub fn find_for_task(&self, task: &TaskType) -> Vec<&ModelDef> {
         let mut matches: Vec<&ModelDef> = self
             .models
             .iter()
             .filter(|m| m.supports_task(task))
             .collect();
-        matches.sort_by(|a, b| b.priority.cmp(&a.priority));
+        matches.sort_by(|a, b| b.priority_for_task(task).cmp(&a.priority_for_task(task)));
         matches
     }
 

@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::Arc;
 use std::time::Instant;
@@ -44,6 +44,8 @@ pub enum TaskType {
     Tts,
     Transcribe,
     Stt,
+    // Podcast
+    PodcastScript,
     // RAG-internal
     Embed,
     Classify,
@@ -62,6 +64,7 @@ impl std::fmt::Display for TaskType {
             TaskType::Summarize => write!(f, "summarize"),
             TaskType::Mindmap => write!(f, "mindmap"),
             TaskType::Tts => write!(f, "tts"),
+            TaskType::PodcastScript => write!(f, "podcast_script"),
             TaskType::Transcribe => write!(f, "transcribe"),
             TaskType::Stt => write!(f, "stt"),
             TaskType::Embed => write!(f, "embed"),
@@ -115,6 +118,9 @@ pub struct ModelDef {
     pub memory_mb: u32,
     /// Backend-specific parameters (all as strings, parsed by each backend).
     pub params: HashMap<String, String>,
+    /// Optional per-task priority overrides. If a task is not listed here,
+    /// the model's default `priority` field is used.
+    pub task_priorities: HashMap<TaskType, u32>,
 }
 
 impl ModelDef {
@@ -126,6 +132,48 @@ impl ModelDef {
     /// Check if this model can handle a given task type.
     pub fn supports_task(&self, task: &TaskType) -> bool {
         self.tasks.contains(task)
+    }
+
+    /// Get the effective priority for a specific task.
+    /// Uses the task-specific override if present, otherwise falls back
+    /// to the model's default `priority`.
+    pub fn priority_for_task(&self, task: &TaskType) -> u32 {
+        self.task_priorities.get(task).copied().unwrap_or(self.priority)
+    }
+
+    /// Check whether all required model files exist under `models_dir`.
+    ///
+    /// Checks the primary `model_file` (as file **or** directory, since some
+    /// models like KittenTTS and Parakeet use a directory) and every param
+    /// whose key ends with `_file` (e.g. `mmproj_file`, `config_file`,
+    /// `tokenizer_file`).
+    ///
+    /// Returns a list of missing paths (empty = all present).
+    pub fn missing_files(&self, models_dir: &Path) -> Vec<String> {
+        let mut missing = Vec::new();
+
+        // Primary model file / directory
+        let primary = models_dir.join(&self.model_file);
+        if !primary.exists() {
+            missing.push(self.model_file.clone());
+        }
+
+        // Companion files declared in params (convention: key ends with "_file")
+        for (key, val) in &self.params {
+            if key.ends_with("_file") {
+                let p = models_dir.join(val);
+                if !p.exists() {
+                    missing.push(val.clone());
+                }
+            }
+        }
+
+        missing
+    }
+
+    /// Convenience: returns `true` when every required file is present.
+    pub fn files_exist(&self, models_dir: &Path) -> bool {
+        self.missing_files(models_dir).is_empty()
     }
 }
 
@@ -270,4 +318,5 @@ pub struct ModelInfo {
     pub status: ModelStatus,
     pub instance_count: u32,
     pub memory_mb: u32,
+    pub priority: u32,
 }

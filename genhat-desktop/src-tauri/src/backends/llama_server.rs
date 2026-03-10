@@ -110,6 +110,31 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         args.push(batch_size);
     }
 
+    // Enable Flash Attention if configured (requires value: on/off/auto)
+    if def.param_or("flash_attn", "false") == "true" {
+        args.push("--flash-attn".to_string());
+        args.push("on".to_string());
+    }
+
+    // Enable mlock (lock model in RAM, prevent swap) if configured
+    if def.param_or("mlock", "false") == "true" {
+        args.push("--mlock".to_string());
+    }
+
+    // Set KV cache quantization type if configured (e.g. "q8_0")
+    let cache_type = def.param_or("cache_type", "");
+    if !cache_type.is_empty() {
+        args.push("--cache-type".to_string());
+        args.push(cache_type);
+    }
+
+    // Chat template kwargs (e.g. '{"enable_thinking": false}' for Qwen)
+    let chat_template_kwargs = def.param_or("chat_template_kwargs", "");
+    if !chat_template_kwargs.is_empty() {
+        args.push("--chat-template-kwargs".to_string());
+        args.push(chat_template_kwargs);
+    }
+
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     let mut child = Command::new(&exe)
@@ -143,12 +168,22 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         });
     }
 
-    log::info!("llama-server spawned: pid={pid}, port={port}, model={model_str}");
+    let full_cmd = format!("{} {}",
+        exe.display(),
+        args.iter().map(|a| if a.contains(' ') || a.contains('{') {
+            format!("'{}'", a)
+        } else {
+            a.clone()
+        }).collect::<Vec<_>>().join(" ")
+    );
+    log::info!("llama-server spawned: pid={pid}, port={port}");
+    log::info!("llama-server cmd: {full_cmd}");
     Ok(child)
 }
 
 /// Wait for llama-server to become ready by polling its /health endpoint.
-async fn wait_for_ready(port: u16, timeout_secs: u64) -> Result<(), String> {
+/// Also monitors whether the process is still alive — exits early if it crashes.
+async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{port}/health");
     let client = reqwest::Client::new();
     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -159,6 +194,25 @@ async fn wait_for_ready(port: u16, timeout_secs: u64) -> Result<(), String> {
                 "llama-server on port {port} did not become ready within {timeout_secs}s"
             ));
         }
+
+        // Check if the process has exited (crashed on startup)
+        #[cfg(unix)]
+        {
+            // kill(pid, 0) checks if process exists without sending a signal
+            let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+            if !alive {
+                let log_path = std::env::temp_dir().join(format!("genhat-llama-server-{port}.log"));
+                let hint = if log_path.exists() {
+                    format!(" Check log: {}", log_path.display())
+                } else {
+                    String::new()
+                };
+                return Err(format!(
+                    "llama-server (pid={pid}) crashed before becoming ready.{hint}"
+                ));
+            }
+        }
+
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 log::info!("llama-server on port {port} is ready");
@@ -200,8 +254,8 @@ impl ModelBackend for LlamaServerBackend {
             work_dir,
         });
 
-        // Wait for the server to be ready (up to 60s for large models)
-        wait_for_ready(port, 60).await?;
+        // Wait for the server to be ready (up to 120s for large models with big ctx)
+        wait_for_ready(port, pid, 120).await?;
 
         Ok(handle)
     }
@@ -262,6 +316,9 @@ impl ModelBackend for LlamaServerBackend {
             }
             crate::registry::types::TaskType::Hyde => {
                 "You are a helpful assistant. Generate a hypothetical answer to the following question that could appear in a document."
+            }
+            crate::registry::types::TaskType::PodcastScript => {
+                "You are a creative podcast scriptwriter. Generate engaging, natural-sounding dialogue based on the provided content."
             }
             crate::registry::types::TaskType::VisionChat => {
                 "You are a helpful vision assistant that can describe and analyze images."

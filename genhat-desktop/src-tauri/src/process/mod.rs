@@ -42,11 +42,24 @@ impl std::fmt::Debug for ProcessManager {
 
 impl ProcessManager {
     /// Create a new ProcessManager from a registry and models directory.
+    /// Models whose required files are missing from the models directory
+    /// are silently excluded (not registered, not listed, not routable).
     pub fn new(registry: &ModelRegistry, models_dir: PathBuf) -> Self {
         let mut managed = HashMap::new();
         let mut backend_map = HashMap::new();
 
         for def in registry.all() {
+            // Skip models whose files are not present on disk
+            let missing = def.missing_files(&models_dir);
+            if !missing.is_empty() {
+                log::warn!(
+                    "ProcessManager: skipping model '{}' — missing files: [{}]",
+                    def.id,
+                    missing.join(", ")
+                );
+                continue;
+            }
+
             let backend: Arc<dyn ModelBackend> = Arc::from(backends::create_backend(def));
             backend_map.insert(def.id.clone(), backend);
             managed.insert(
@@ -58,12 +71,20 @@ impl ProcessManager {
             );
         }
 
+        // Pick the highest-priority chat model from *registered* models
+        let default_llm_id = managed
+            .values()
+            .filter(|m| m.def.tasks.contains(&TaskType::Chat))
+            .max_by_key(|m| m.def.priority)
+            .map(|m| m.def.id.clone())
+            .unwrap_or_else(|| "lfm-1_2b".to_string());
+
         Self {
             models: Arc::new(RwLock::new(managed)),
             backends: Arc::new(RwLock::new(backend_map)),
             models_dir,
             memory_budget_mb: 0, // 0 = unlimited, set via config later
-            active_llm_id: Arc::new(RwLock::new("lfm-1_2b".to_string())),
+            active_llm_id: Arc::new(RwLock::new(default_llm_id)),
         }
     }
 
@@ -398,6 +419,7 @@ impl ProcessManager {
                     status,
                     instance_count: m.instances.len() as u32,
                     memory_mb: m.def.memory_mb,
+                    priority: m.def.priority,
                 }
             })
             .collect()

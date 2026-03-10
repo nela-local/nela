@@ -14,6 +14,10 @@ export interface RegisteredModel {
   id: string;
   name: string;
   tasks: string[];
+  status: string;
+  instance_count: number;
+  memory_mb: number;
+  priority: number;
 }
 
 export interface IngestionStatus {

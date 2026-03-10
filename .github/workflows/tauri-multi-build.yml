@@ -1,16 +1,9 @@
 name: Tauri Multi-Platform Build & Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version tag (e.g. v0.1.0)"
-        required: true
-        default: "v0.1.0"
-      release_name:
-        description: "Release title"
-        required: false
-        default: "GenHat Release"
+  push:
+    tags:
+      - "v*
 
 jobs:
   build:

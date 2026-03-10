@@ -277,20 +277,25 @@ function App() {
   // ── Model helpers ──────────────────────────────────────────────────────────
 
   const refreshModels = () => {
-    Api.listModels()
-      .then((list) => {
-        setModels(list);
-        if (list.length > 0 && !selectedModel) {
-          setSelectedModel(list[0].path);
-        }
-      })
-      .catch(console.error);
-
     Api.listRegisteredModels()
       .then((list) => {
+        // Vision models
         const vision = list.filter((m) => m.tasks.includes("vision_chat"));
         setVisionModels(vision);
         if (vision.length > 0) setSelectedVisionModel(vision[0].id);
+
+        // Text models
+        const chatModels = list
+          .filter((m) => m.tasks.includes("chat"))
+          .sort((a, b) => b.priority - a.priority)
+          .map((m) => ({ name: m.name, path: m.id }));
+        
+        setModels(chatModels);
+        if (chatModels.length > 0 && !selectedModel) {
+          setSelectedModel(chatModels[0].path);
+          // No need to call switchModel here — the backend already defaults
+          // to the highest-priority chat model from models.toml on startup.
+        }
 
         // TTS engines from the registry
         const tts = list.filter((m) => m.tasks.includes("tts"));

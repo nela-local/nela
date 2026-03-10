@@ -20,9 +20,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── LLM: Liquid Foundation Model (llama-server) ──────────────────────────────
-# Dedicated enrichment model (small, fast). Also available for chat/RAG but at
-# lower priority than Famino — the user can still select it from the model
-# picker if desired.
+# Mid-priority fallback for both chat and podcast. Handles enrichment.
 
 [[models]]
 id = "lfm-1_2b"
@@ -30,7 +28,7 @@ name = "LFM 1.2B INT8"
 backend = "llama_server"
 kind = "child_process"
 model_file = "LLM/LFM-1.2B-INT8.gguf"
-tasks = ["chat", "summarize", "mindmap", "enrich", "hyde"]
+tasks = ["chat", "summarize", "mindmap", "enrich", "hyde", "podcast_script"]
 auto_start = false
 max_instances = 2
 idle_timeout_s = 300
@@ -46,13 +44,77 @@ top_p = "0.9"
 top_k = "40"
 repeat_penalty = "1.1"
 
+# ── LLM: Qwen3.5-0.8B (llama-server) ────────────────────────────────────────
+# Primary model for chat / LLM tasks (highest priority). Thinking disabled for
+# faster, direct answers.  Lowest priority for podcast script generation.
+
+[[models]]
+id = "qwen3.5-0_8b"
+name = "Qwen3.5 0.8B Q4"
+backend = "llama_server"
+kind = "child_process"
+model_file = "LLM/Qwen3.5-0.8B-UD-Q4_K_XL.gguf"
+tasks = ["chat", "summarize", "mindmap", "enrich", "hyde", "podcast_script"]
+auto_start = false
+max_instances = 2
+idle_timeout_s = 300
+priority = 30
+memory_mb = 900
+
+[models.params]
+ctx_size = "4096"
+port = "0"
+max_tokens = "2048"
+temp = "0.7"
+top_p = "0.9"
+top_k = "40"
+repeat_penalty = "1.1"
+flash_attn = "true"
+mlock = "true"
+chat_template_kwargs = '{"enable_thinking": false}'
+
+[models.task_priorities]
+podcast_script = 10
+
+# ── LLM: Qwen3.5-2B (llama-server) ──────────────────────────────────────────
+# Primary model for podcast script generation (highest priority). Thinking
+# disabled for faster, direct answers. Lowest priority for general chat.
+
+[[models]]
+id = "qwen3.5-2b"
+name = "Qwen3.5 2B Q4"
+backend = "llama_server"
+kind = "child_process"
+model_file = "LLM/Qwen3.5-2B-Q4_K_M.gguf"
+tasks = ["chat", "summarize", "mindmap", "hyde", "podcast_script"]
+auto_start = false
+max_instances = 2
+idle_timeout_s = 300
+priority = 15
+memory_mb = 2200
+
+[models.params]
+ctx_size = "8192"
+port = "0"
+max_tokens = "2048"
+temp = "0.7"
+top_p = "0.9"
+top_k = "40"
+repeat_penalty = "1.1"
+flash_attn = "true"
+mlock = "true"
+chat_template_kwargs = '{"enable_thinking": false}'
+
+[models.task_priorities]
+podcast_script = 30
+
 # ── LLM: Qwen3.5-4B (llama-server) ───────────────────────────────────────────
 # Primary chat/RAG model (larger, higher quality). Does NOT handle enrichment
 # (which runs in background and would block the large model).
 
 [[models]]
 id = "qwen3.5-4-b"
-name = "Qwen3.5 12B INT4"
+name = "Qwen3.5 4B INT4"
 backend = "llama_server"
 kind = "child_process"
 model_file = "LLM/Qwen3.5-4B-Q4_K_M.gguf"
@@ -60,13 +122,13 @@ tasks = ["chat", "summarize", "mindmap", "hyde"]
 auto_start = false
 max_instances = 2
 idle_timeout_s = 300
-priority = 10
+priority = 25
 memory_mb = 5200
 
 [models.params]
-ctx_size = "4096"
+ctx_size = "16384"
 port = "0"
-max_tokens = "256"
+max_tokens = "2048"
 temp = "0.7"
 top_p = "0.9"
 top_k = "40"

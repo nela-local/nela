@@ -66,7 +66,8 @@ pub async fn generate_podcast(
         request.max_turns,
     );
 
-    // Send as a Chat task — the backend wraps it in system/user messages
+    // Send as a PodcastScript task — routes to the highest-priority model
+    // for podcast generation (separate from general chat priority).
     // Set high max_tokens so the LLM can produce all requested dialogue turns.
     // ~60 tokens per turn × max_turns, plus JSON overhead. Minimum 1024.
     let needed_tokens = (request.max_turns * 80).max(1024);
@@ -76,7 +77,7 @@ pub async fn generate_podcast(
 
     let chat_request = TaskRequest {
         request_id: uuid::Uuid::new_v4().to_string(),
-        task_type: TaskType::Chat,
+        task_type: TaskType::PodcastScript,
         input: prompt,
         model_override: None,
         extra,

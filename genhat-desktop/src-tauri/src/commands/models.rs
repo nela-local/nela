@@ -116,16 +116,29 @@ pub async fn stop_model(
     state.0.stop_model(&model_id).await
 }
 
-/// Switch to a different LLM model by file path.
-/// Dynamically registers the model, stops the previous active LLM, and starts the new one.
+/// Switch to a different LLM model by file path or registry ID.
+/// If it's a registered ID, it uses the config from models.toml.
+/// Otherwise, it falls back to dynamically registering the model from the file path.
 #[tauri::command]
 pub async fn switch_model(
-    model_path: String,
+    model_identifier: String,
     state: State<'_, ProcessManagerState>,
 ) -> Result<String, String> {
-    let path = PathBuf::from(&model_path);
+    // Stop the currently-active LLM
+    let prev_id = state.0.active_llm_id().await;
+    let _ = state.0.stop_model(&prev_id).await;
+
+    // First check if the identifier is a registered model ID
+    if let Some(def) = state.0.get_model_def(&model_identifier).await {
+        let instance_id = state.0.ensure_running(&def.id, false).await?;
+        state.0.set_active_llm(&def.id).await;
+        return Ok(format!("server started (instance: {})", &instance_id[..8]));
+    }
+
+    // Fallback: assume it's a file path for dynamic registration
+    let path = PathBuf::from(&model_identifier);
     if !path.exists() {
-        return Err(format!("Model file not found: {model_path}"));
+        return Err(format!("Model file or ID not found: {model_identifier}"));
     }
 
     // Derive a model ID from the filename (e.g. "MyModel-Q4_0.gguf" → "mymodel-q4_0")
@@ -139,10 +152,6 @@ pub async fn switch_model(
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '-' })
         .collect::<String>();
 
-    // Stop the currently-active LLM
-    let prev_id = state.0.active_llm_id().await;
-    let _ = state.0.stop_model(&prev_id).await;
-
     // Build a ModelDef for the new model.
     // Use the absolute path as model_file — Path::join with an absolute path
     // ignores the base, so the backend will use it directly.
@@ -153,7 +162,7 @@ pub async fn switch_model(
         name: file_name.clone(),
         backend: BackendKind::LlamaServer,
         kind: ModelKind::ChildProcess,
-        model_file: model_path.clone(),
+        model_file: model_identifier.clone(),
         tasks: vec![
             TaskType::Chat,
             TaskType::Summarize,
@@ -167,6 +176,7 @@ pub async fn switch_model(
         priority: 10,
         memory_mb: 1400,
         params: HashMap::new(),
+        task_priorities: HashMap::new(),
     };
 
     // Register and start the new model

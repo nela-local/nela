@@ -29,9 +29,9 @@ export const Api = {
     return invoke<RegisteredModel[]>("list_registered_models");
   },
 
-  /** Switch to a different LLM model by file path. */
-  async switchModel(modelPath: string): Promise<void> {
-    await invoke("switch_model", { modelPath });
+  /** Switch to a different LLM model by registry ID or file path. */
+  async switchModel(modelIdentifier: string): Promise<void> {
+    await invoke("switch_model", { modelIdentifier });
   },
 
   /** Stop the currently active LLM server. */

@@ -33,6 +33,8 @@ struct RawModelDef {
     memory_mb: u32,
     #[serde(default)]
     params: HashMap<String, String>,
+    #[serde(default)]
+    task_priorities: HashMap<String, u32>,
 }
 
 fn default_max_instances() -> u32 {
@@ -58,6 +60,12 @@ pub fn load_model_definitions() -> Result<Vec<ModelDef>, String> {
             let tasks: Result<Vec<TaskType>, String> =
                 r.tasks.iter().map(|t| parse_task(t)).collect();
 
+            let task_priorities: HashMap<TaskType, u32> = r
+                .task_priorities
+                .iter()
+                .filter_map(|(k, v)| parse_task(k).ok().map(|t| (t, *v)))
+                .collect();
+
             Ok(ModelDef {
                 id: r.id,
                 name: r.name,
@@ -71,6 +79,7 @@ pub fn load_model_definitions() -> Result<Vec<ModelDef>, String> {
                 priority: r.priority,
                 memory_mb: r.memory_mb,
                 params: r.params,
+                task_priorities,
             })
         })
         .collect()
@@ -103,6 +112,7 @@ fn parse_task(s: &str) -> Result<TaskType, String> {
         "summarize" => Ok(TaskType::Summarize),
         "mindmap" => Ok(TaskType::Mindmap),
         "tts" => Ok(TaskType::Tts),
+        "podcast_script" => Ok(TaskType::PodcastScript),
         "transcribe" => Ok(TaskType::Transcribe),
         "stt" => Ok(TaskType::Stt),
         "embed" => Ok(TaskType::Embed),

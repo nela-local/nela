@@ -233,11 +233,12 @@ On app launch (`setup` hook):
 
 On app exit: blocks on `ProcessManager::stop_all()` to kill all child processes.
 
-### 4.2 `config/` — Configuration (135 lines + models.toml)
+### 4.2 `config/` — Configuration (145 lines + models.toml)
 
 - `models.toml` is **embedded at compile time** via `include_str!`
 - Parsed into `Vec<ModelDef>` with typed enums for `BackendKind`, `ModelKind`, `TaskType`
 - Backend-specific params via `[models.params]` key-value map
+- **Per-task priority overrides** via optional `[models.task_priorities]` map (task name → priority u32). Falls back to default `priority` field when not specified for a task.
 
 ### 4.3 `registry/` — Model Registry (344 lines)
 
@@ -247,8 +248,8 @@ Core type definitions shared across the whole system:
 |---|---|
 | `BackendKind` | Enum: `LlamaServer`, `LlamaCli`, `WhisperCpp`, `TtsInference`, `OnnxClassifier`, `CrossEncoder` |
 | `ModelKind` | Enum: `ChildProcess`, `InProcess` |
-| `TaskType` | Enum: `Chat`, `VisionChat`, `Summarize`, `Mindmap`, `Tts`, `PodcastAudio`, `PodcastScript`, `Transcribe`, `Stt`, `Embed`, `Classify`, `Enrich`, `Grade`, `Hyde`, `Custom(String)` |
-| `ModelDef` | Full model definition (id, name, backend, tasks, params, limits, etc.) |
+| `TaskType` | Enum: `Chat`, `VisionChat`, `Summarize`, `Mindmap`, `Tts`, `PodcastScript`, `Transcribe`, `Stt`, `Embed`, `Classify`, `Enrich`, `Grade`, `Hyde`, `Custom(String)` |
+| `ModelDef` | Full model definition (id, name, backend, tasks, params, limits, task_priorities, etc.). Has `priority_for_task(&TaskType) -> u32` method that checks `task_priorities` map first, falls back to default `priority`. |
 | `ModelHandle` | Enum: `ChildProcess { pid, port, child }` or `InMemory { model: Arc<dyn Any> }` |
 | `TaskRequest` | Input: `{ task_type, input, params }` |
 | `TaskResponse` | Output: `{ Chat, Embedding, Classification, Transcription, AudioFile, Score, Raw }` |
@@ -269,7 +270,7 @@ fn estimated_memory_mb(&self, def: &ModelDef) -> u32;
 
 | Backend | File | Type | Description |
 |---|---|---|---|
-| `LlamaServer` | `llama_server.rs` (517 lines) | ChildProcess | Spawns `llama-server` with random port. Supports chat, embeddings, summarize, enrich, hyde. Health-checked via `/health`. |
+| `LlamaServer` | `llama_server.rs` (530+ lines) | ChildProcess | Spawns `llama-server` with random port. Supports chat, embeddings, summarize, enrich, hyde, podcast_script. Health-checked via `/health`. Reads all params from `models.toml` including `flash_attn`, `mlock`, `cache_type`, `chat_template_kwargs` (e.g. for disabling Qwen thinking mode). |
 | `LlamaCli` | `llama_cli.rs` (423 lines) | ChildProcess | Runs `llama-mtmd-cli` per-request for vision-language queries. Passes base64 images via `--image` flag. |
 | `WhisperCpp` | `whisper_cpp.rs` (410 lines) | ChildProcess | Runs whisper.cpp per-request for audio transcription. Outputs JSON, parses segments. |
 | `TtsInference` | `tts_inference.rs` (295 lines) | ChildProcess | Spawns PyInstaller-bundled TTS binary. Input text → output .wav file. |
@@ -279,6 +280,7 @@ fn estimated_memory_mb(&self, def: &ModelDef) -> u32;
 ### 4.5 `process/` — Process Manager (623 lines)
 
 Central orchestrator for all model instances:
+- **File-presence filtering**: At construction time, models whose required files are missing from the models directory are excluded — not registered, not listed, not routable. Uses `ModelDef::files_exist()` which checks the primary `model_file` and every param whose key ends with `_file`.
 - **Lazy spawn**: Models start on first matching request
 - **Instance pooling**: Up to `max_instances` per model (configurable)
 - **Health checks**: Background thread every 30s via `lifecycle.rs`
@@ -290,7 +292,7 @@ Central orchestrator for all model instances:
 ### 4.6 `router/` — Task Router (311 lines)
 
 Single entry point for all inference:
-1. Resolves which model handles a task (by `TaskType` + priority)
+1. Resolves which model handles a task (by `TaskType` + priority), skipping models not registered in ProcessManager (i.e. files missing)
 2. Ensures model is running (delegates to ProcessManager)
 3. Executes request against the backend
 4. Handles compound tasks (e.g., PodcastScript = LLM script → TTS audio)
@@ -386,18 +388,27 @@ Fully local, on-device Retrieval-Augmented Generation:
 
 ## 5. Model Registry (models.toml)
 
-Eight models registered:
+Eleven models registered:
 
-| ID | Name | Backend | Tasks | Kind | Auto-Start |
-|---|---|---|---|---|---|
-| `lfm-1_2b` | LFM 1.2B INT8 | llama_server | chat, summarize, mindmap, enrich, hyde | child_process | No |
-| `lfm-2_5-vl-q4` | LFM 2.5 VL INT4 | llama_cli | vision_chat | child_process | No |
-| `lfm-2_5-vl-q8` | LFM 2.5 VL INT8 | llama_cli | vision_chat | child_process | No |
-| `bge-small-embed` | BGE-small-en-v1.5 Q8 | llama_server | embed | child_process | No |
-| `query-router` | GenHat Query Router (DistilBERT ONNX) | onnx_classifier | classify | in_process | No |
-| `ms-marco-grader` | MS MARCO MiniLM L6 v2 INT8 | cross_encoder | grade | in_process | No |
-| `chatterbox-tts` | ChatterboxTTS Q4-K-M | tts_inference | tts, podcast_audio | child_process | No |
-| `whisper-base` | Whisper Q4_K | whisper_cpp | transcribe, stt | child_process | No |
+| ID | Name | Backend | Tasks | Kind | Priority | Auto-Start |
+|---|---|---|---|---|---|---|
+| `lfm-1_2b` | LFM 1.2B INT8 | llama_server | chat, summarize, mindmap, enrich, hyde, podcast_script | child_process | 20 (default) | No |
+| `qwen3.5-0_8b` | Qwen3.5 0.8B Q4 | llama_server | chat, summarize, mindmap, enrich, hyde, podcast_script | child_process | 30 (podcast_script: 10) | No |
+| `qwen3.5-2b` | Qwen3.5 2B Q4 | llama_server | chat, summarize, mindmap, hyde, podcast_script | child_process | 15 (podcast_script: 30) | No |
+| `qwen3.5-4-b` | Qwen3.5 4B Q4 | llama_server | chat, summarize, mindmap, hyde | child_process | 25 | No |
+| `lfm-2_5-vl-q4` | LFM 2.5 VL INT4 | llama_cli | vision_chat | child_process | 10 | No |
+| `lfm-2_5-vl-q8` | LFM 2.5 VL INT8 | llama_cli | vision_chat | child_process | 5 | No |
+| `bge-small-embed` | BGE-small-en-v1.5 Q8 | llama_server | embed | child_process | 10 | No |
+| `bge-base-embed` | BGE-base-en-v1.5 Q8 | llama_server | embed | child_process | 15 | No |
+| `query-router` | GenHat Query Router (DistilBERT ONNX) | onnx_classifier | classify | in_process | 10 | No |
+| `ms-marco-grader` | MS MARCO MiniLM L6 v2 INT8 | cross_encoder | grade | in_process | 20 | No |
+| `kitten-tts` | KittenTTS Mini v0.8 | kitten_tts | tts | in_process | 15 | No |
+| `parakeet-tdt` | Parakeet TDT 0.6B INT8 | parakeet | transcribe, stt | in_process | 10 | No |
+
+**Per-task priority routing** (effective priority for each task, sorted highest-first):
+- **Chat/Summarize/Mindmap/Hyde**: Qwen 0.8B (30) > Qwen 4B (25) > LFM (20) > Qwen 2B (15)
+- **PodcastScript**: Qwen 2B (30) > LFM (20) > Qwen 0.8B (10)
+- **Enrich**: Qwen 0.8B (30) > LFM (20)
 
 All models are **lazily loaded on first request**. Set `auto_start = true` to pre-load at app launch.
 
@@ -463,13 +474,17 @@ The backends set `current_dir` to the binary folder so the OS linker finds sibli
 ## 8. Models
 
 - Stored in `<repo>/models/` (gitignored)
-- **LLM**: GGUF format via llama.cpp. Default: `LiquidAI-LLM/LFM-1.2B-INT8.gguf`
+- **LLM**: GGUF format via llama.cpp.
+  - `LLM/LFM-1.2B-INT8.gguf` — Liquid Foundation Model 1.2B (enrichment fallback)
+  - `LLM/Qwen3.5-0.8B-UD-Q4_K_XL.gguf` — Primary chat model (thinking disabled, flash-attn + mlock + Q8 KV cache)
+  - `LLM/Qwen3.5-2B-Q4_K_M.gguf` — Primary podcast script model (thinking disabled, flash-attn + mlock + Q8 KV cache)
+  - `LLM/Qwen3.5-4B-Q4_K_M.gguf` — High-quality chat fallback
 - **VLM**: GGUF format. `LiquidAI-VLM/` with model + multimodal projector
-- **Embeddings**: GGUF format. `bge-small-1.5-Q8/bge-small-en-v1.5-q8_0.gguf` (384-dim)
+- **Embeddings**: GGUF format. `bge-1.5-embed/` (both small 384-dim and base 768-dim variants)
 - **Query Router**: ONNX format. `distilBert-query-router/onnx_model/model.onnx` (4-class DistilBERT)
 - **Grader**: ONNX format. `grader/ms-marco-MiniLM-L6-v2-onnx-int8/model_quantized.onnx` (cross-encoder for relevance scoring, INT8 quantized, ~80 MB)
-- **TTS**: GGUF format. `tts-chatterbox-q4-k-m/` (3 model files)
-- **STT**: GGUF format. `whisper/model_q4_k.gguf`
+- **TTS**: ONNX format. `kittenTTS/mini/` (KittenTTS Mini v0.8)
+- **STT**: ONNX format. `parakeet/` (Parakeet TDT 0.6B INT8, encoder + decoder + joiner)
 - Custom path: set `GENHAT_MODEL_PATH` env var
 
 ---
@@ -610,4 +625,8 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 12. **Context window expansion**: After cross-encoder grading, `build_expanded_context()` fetches neighboring chunks (`chunk_index±1`) from `db.get_adjacent_chunks()` in a single DB call. Neighbors already selected as top-k sources are skipped (deduplicated via a `HashSet`). This applies to both `query()` (non-streaming) and `query_retrieve()` (streaming) paths, including their RAG Fusion retry branches. The RAPTOR path (`query_with_raptor`) does NOT use this — RAPTOR summaries already provide hierarchical context expansion.
 13. **RAPTOR worker**: The enrichment worker tracks `idle_cycles` (increments each 30s poll with no pending chunks) and `failed_cycles` (consecutive enrichment errors). RAPTOR auto-build triggers at `idle_cycles >= 2` (reset to 0 afterwards) OR `failed_cycles >= 3` (LLM unavailable fallback). Previously, a bug caused `idle_cycles` to never be reset, so repeated triggers would occur. Fixed.
 14. **Frontend architecture**: Modular structure with types.ts (type definitions), api.ts (centralized API), components/ (reusable UI). App.tsx uses 4 chat modes with tabbed navigation.
-15. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
+15. **Per-task priority**: Models can override their default priority for specific tasks via `[models.task_priorities]` in `models.toml` and the `task_priorities: HashMap<TaskType, u32>` field in `ModelDef`. The registry's `find_for_task()` uses `priority_for_task()` which checks task-specific overrides first. This enables different priority ordering for chat vs podcast_script without duplicating model entries.
+16. **Podcast script routing**: The podcast engine (`podcast/engine.rs`) routes script generation via `TaskType::PodcastScript` (not `Chat`), so it respects the separate podcast priority chain (Qwen 2B > LFM > Qwen 0.8B).
+17. **llama-server params from TOML**: All llama-server CLI flags are driven from `[models.params]` in `models.toml`. Supported params: `ctx_size`, `max_tokens`, `temp`, `top_p`, `top_k`, `repeat_penalty`, `embedding`, `batch_size`, `flash_attn`, `mlock`, `cache_type`, `chat_template_kwargs`. No hardcoded values — defaults are in `param_or()` calls.
+18. **Model file-presence filtering**: `ModelDef::files_exist(models_dir)` / `missing_files(models_dir)` checks the primary `model_file` (file or directory) and every param key ending with `_file`. `ProcessManager::new()` skips models with missing files (logged at `warn` level). The `TaskRouter` iterates registry candidates and only picks models that are present in ProcessManager. This means models simply disappear from listings and routing when their files are absent — no error at runtime.
+19. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
