@@ -64,6 +64,32 @@ export interface MediaAsset {
 
 export type ChatMode = "text" | "vision" | "audio" | "rag" | "podcast";
 
+// ── Multi-Chat Session ────────────────────────────────────────────────────────
+
+/** Represents a single, independent chat session (tab). */
+export interface ChatSession {
+  /** Unique session identifier (UUID). */
+  id: string;
+  /** Display title for the tab — derived from the first user message. */
+  title: string;
+  /** All messages in this session. */
+  messages: ChatMessage[];
+  /** Partial content currently being streamed for this session. */
+  streamingContent: string;
+  /** Whether this session is waiting for an LLM response. */
+  loading: boolean;
+  /** Audio data URL for the last TTS output in this session. */
+  audioOutput: string;
+  /** Set to true when user manually cancels generation. */
+  cancelled: boolean;
+  /** Latest RAG result (sources + answer) for this session. */
+  ragResult: RagResult | null;
+  /** Media assets keyed by message index. */
+  mediaAssets: Record<number, MediaAsset[]>;
+  /** Unix timestamp when this session was created (ms). */
+  createdAt: number;
+}
+
 /** Available KittenTTS voice names. */
 export const KITTEN_TTS_VOICES = [
   "Bella",

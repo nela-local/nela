@@ -338,6 +338,63 @@
 
 
 /* ══════════════════════════════════════════════════════════════════════════════
+   CHAT TAB BAR
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Hide scrollbar inside the tab strip — scroll with wheel / arrows / drag */
+.chat-tab-scroll {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE / Edge legacy */
+}
+
+.chat-tab-scroll::-webkit-scrollbar {
+  display: none;                  /* Chrome / Safari / Tauri WebView */
+}
+
+/* Subtle entrance animation when a new tab is created */
+@keyframes tabAppear {
+  from {
+    opacity: 0;
+    transform: scaleX(0.85) translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1) translateY(0);
+  }
+}
+
+.chat-tab {
+  animation: tabAppear 0.18s ease-out;
+}
+
+/* Neon glow pulse for the active-tab accent bar */
+.chat-tab .absolute {
+  animation: tabAccentGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes tabAccentGlow {
+  from {
+    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+  }
+  to {
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
+  }
+}
+
+/* Floating clone while dragging a tab */
+.dragging-clone {
+  background: var(--color-void-800, #12121a);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  backdrop-filter: blur(12px);
+}
+
+/* Grip handle cursor feedback */
+.drag-grip:active {
+  cursor: grabbing;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
    TYPING DOTS
    ══════════════════════════════════════════════════════════════════════════════ */
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -20,15 +20,15 @@ import { Api } from "./api";
 import type {
   ChatMessage,
   ChatMode,
+  ChatSession,
   ModelFile,
   RegisteredModel,
   IngestionStatus,
-  RagResult,
-  MediaAsset,
   KittenTtsVoice,
 } from "./types";
 import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
+import ChatTabBar from "./components/ChatTabBar";
 import ModelSelector from "./components/ModelSelector";
 import PdfViewer from "./components/PdfViewer";
 import DocumentViewer from "./components/DocumentViewer";
@@ -69,6 +69,30 @@ const MODE_CONFIG: {
     { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
   ];
 
+// ── Session helpers (pure functions, no hooks) ──────────────────────────────
+
+/** Create a fresh, empty ChatSession with a unique ID. */
+function createEmptySession(): ChatSession {
+  return {
+    id: crypto.randomUUID(),
+    title: "New Chat",
+    messages: [],
+    streamingContent: "",
+    loading: false,
+    audioOutput: "",
+    cancelled: false,
+    ragResult: null,
+    mediaAssets: {},
+    createdAt: Date.now(),
+  };
+}
+
+/** Derive a short title from the first user message in a session. */
+function deriveTitleFromMessage(text: string): string {
+  const trimmed = text.trim().replace(/\n+/g, " ");
+  return trimmed.length > 32 ? trimmed.slice(0, 32) + "…" : trimmed || "New Chat";
+}
+
 function App() {
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
@@ -93,14 +117,12 @@ function App() {
   const [_generalGenerating, setGeneralGenerating] = useState(false);
   const generalIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // ── Chat state ─────────────────────────────────────────────────────────────
+  // ── Multi-session chat state ───────────────────────────────────────────────
   const [chatMode, setChatMode] = useState<ChatMode>("text");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [audioOutput, setAudioOutput] = useState("");
-  const [cancelled, setCancelled] = useState(false);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>(() => [createEmptySession()]);
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0]?.id ?? "");
+  /** AbortControllers keyed by session ID — persists across renders. */
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
   // ── Vision state ───────────────────────────────────────────────────────────
   const [imagePath, setImagePath] = useState<string | null>(null);
@@ -109,14 +131,77 @@ function App() {
 
   // ── RAG state ──────────────────────────────────────────────────────────────
   const [ragDocs, setRagDocs] = useState<IngestionStatus[]>([]);
-  const [ragResult, setRagResult] = useState<RagResult | null>(null);
   const [ragIngesting, setRagIngesting] = useState(false);
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null);
-  /** Media assets (images/tables) keyed by message index in the messages array. */
-  const [mediaAssets, setMediaAssets] = useState<Record<number, MediaAsset[]>>({});
 
   // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
   const [docPanelOpen, setDocPanelOpen] = useState(false);
+
+  // ── Session accessor helpers ───────────────────────────────────────────────
+
+  /** Get the currently active session object (read-only snapshot). */
+  const activeSession: ChatSession = sessions.find((s) => s.id === activeSessionId) ?? sessions[0];
+
+  /** Immutably update a specific session by ID. */
+  const updateSession = useCallback(
+    (sessionId: string, patch: Partial<ChatSession> | ((prev: ChatSession) => Partial<ChatSession>)) => {
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== sessionId) return s;
+          const changes = typeof patch === "function" ? patch(s) : patch;
+          return { ...s, ...changes };
+        })
+      );
+    },
+    []
+  );
+
+  /** Update only the active session (convenience wrapper). */
+  const updateActiveSession = useCallback(
+    (patch: Partial<ChatSession> | ((prev: ChatSession) => Partial<ChatSession>)) => {
+      updateSession(activeSessionId, patch);
+    },
+    [activeSessionId, updateSession]
+  );
+
+  /** Create a new session, add it to the list, and activate it. */
+  const addNewSession = useCallback(() => {
+    const newSession = createEmptySession();
+    setSessions((prev) => [...prev, newSession]);
+    setActiveSessionId(newSession.id);
+  }, []);
+
+  /** Close a session by ID. If it's the last one, create a fresh session. */
+  const closeSession = useCallback(
+    (sessionId: string) => {
+      // Abort any in-flight request for this session
+      abortControllersRef.current.get(sessionId)?.abort();
+      abortControllersRef.current.delete(sessionId);
+
+      setSessions((prev) => {
+        const remaining = prev.filter((s) => s.id !== sessionId);
+        if (remaining.length === 0) {
+          // Last tab closed — create a fresh one
+          const fresh = createEmptySession();
+          setActiveSessionId(fresh.id);
+          return [fresh];
+        }
+        // If the closed tab was active, activate the nearest neighbor
+        if (sessionId === activeSessionId) {
+          const closedIdx = prev.findIndex((s) => s.id === sessionId);
+          const nextIdx = Math.min(closedIdx, remaining.length - 1);
+          setActiveSessionId(remaining[nextIdx].id);
+        }
+        return remaining;
+      });
+    },
+    [activeSessionId]
+  );
+
+  /** Reorder sessions (called from drag-and-drop in the tab bar). */
+  const reorderSessions = useCallback((reordered: ChatSession[]) => {
+    setSessions(reordered);
+  }, []);
 
   // ── PDF Viewer state ───────────────────────────────────────────────────────
   const [pdfViewerData, setPdfViewerData] = useState<{
@@ -130,6 +215,18 @@ function App() {
     filePath: string;
     title: string;
   } | null>(null);
+
+  // ── Keyboard shortcut: Ctrl+T to open a new tab ──────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "t") {
+        e.preventDefault();
+        addNewSession();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [addNewSession]);
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -209,7 +306,8 @@ function App() {
     try {
       setSelectedModel(path);
       await Api.switchModel(path);
-      setMessages([]);
+      // Clear messages in the active session only when switching models
+      updateActiveSession({ messages: [], streamingContent: "", ragResult: null, mediaAssets: {} });
     } catch (err) {
       console.error(err);
       alert("Failed to switch model");
@@ -355,34 +453,51 @@ function App() {
   // ── Cancel handler ────────────────────────────────────────────────────────
 
   const handleCancel = () => {
+    const sid = activeSessionId;
     // Abort the SSE fetch (text / RAG modes)
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+    abortControllersRef.current.get(sid)?.abort();
+    abortControllersRef.current.delete(sid);
     // Stop vision event listener
     visionUnlistenRef.current?.();
     visionUnlistenRef.current = null;
     // Commit whatever partial response was received
-    setMessages((prev) =>
-      streamingContent ? [...prev, { role: "assistant", content: streamingContent }] : prev
-    );
-    setStreamingContent("");
-    setLoading(false);
-    setCancelled(true);
+    updateSession(sid, (prev) => ({
+      messages: prev.streamingContent
+        ? [...prev.messages, { role: "assistant" as const, content: prev.streamingContent }]
+        : prev.messages,
+      streamingContent: "",
+      loading: false,
+      cancelled: true,
+    }));
   };
 
   // ── Main send handler ─────────────────────────────────────────────────────
 
   const handleSend = async (text: string) => {
-    if (loading) return; // Prevent concurrent requests
+    // Snapshot the session ID at the time of send — this ensures all async
+    // callbacks write to the correct session even if the user switches tabs.
+    const sid = activeSessionId;
+    const session = sessions.find((s) => s.id === sid);
+    if (!session || session.loading) return; // Prevent concurrent requests in the same session
+
     const newMsg: ChatMessage = { role: "user", content: text };
-    setMessages((prev) => [...prev, newMsg]);
-    setLoading(true);
-    setStreamingContent("");
-    setAudioOutput("");
-    setCancelled(false);
-    // Create a fresh AbortController for this request
+
+    // Derive title from first user message
+    const isFirstMessage = session.messages.length === 0;
+    const titlePatch = isFirstMessage ? { title: deriveTitleFromMessage(text) } : {};
+
+    updateSession(sid, (prev) => ({
+      messages: [...prev.messages, newMsg],
+      loading: true,
+      streamingContent: "",
+      audioOutput: "",
+      cancelled: false,
+      ...titlePatch,
+    }));
+
+    // Create a fresh AbortController for this session's request
     const ctrl = new AbortController();
-    abortControllerRef.current = ctrl;
+    abortControllersRef.current.set(sid, ctrl);
 
     try {
       // ── RAG-enhanced Chat (auto-activates when documents are ingested) ──
@@ -403,7 +518,7 @@ function App() {
 
           // Phase 1: Retrieval — sources come back immediately
           const setup = await Api.queryRagStream(text);
-          setRagResult({ answer: "", sources: setup.sources });
+          updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });
 
           // If no relevant docs found, fall through to normal text chat
           if (!setup.prompt || setup.sources.length === 0) {
@@ -422,7 +537,7 @@ function App() {
                   firstTokenTimeMs = Date.now();
                 }
                 fullAnswer += chunk;
-                setStreamingContent((prev) => prev + chunk);
+                updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + chunk }));
               },
               () => {
                 // Stop timer
@@ -434,12 +549,9 @@ function App() {
                 setGeneralElapsedTime(totalTime);
                 setGeneralGenerationTime(totalTime);
 
-                setRagResult((prev) =>
-                  prev ? { ...prev, answer: fullAnswer } : null
-                );
-                setMessages((prev) => {
+                updateSession(sid, (prev) => {
                   const updated: ChatMessage[] = [
-                    ...prev,
+                    ...prev.messages,
                     {
                       role: "assistant",
                       content: fullAnswer,
@@ -452,27 +564,34 @@ function App() {
                     .then((assets) => {
                       console.log(`Media retrieval: found ${assets.length} assets`);
                       if (assets.length > 0) {
-                        setMediaAssets((prev) => ({
-                          ...prev,
-                          [assistantIdx]: assets,
+                        updateSession(sid, (prev2) => ({
+                          mediaAssets: {
+                            ...prev2.mediaAssets,
+                            [assistantIdx]: assets,
+                          },
                         }));
                       }
                     })
                     .catch((e) =>
                       console.error("Media retrieval failed:", e)
                     );
-                  return updated;
+                  return {
+                    messages: updated,
+                    ragResult: prev.ragResult ? { ...prev.ragResult, answer: fullAnswer } : null,
+                    streamingContent: "",
+                    loading: false,
+                  };
                 });
-                setStreamingContent("");
-                setLoading(false);
               },
               (err) => {
                 console.error("RAG stream error:", err);
-                setMessages((prev) => [
-                  ...prev,
-                  { role: "assistant", content: `RAG query error: ${err}` },
-                ]);
-                setLoading(false);
+                updateSession(sid, (prev) => ({
+                  messages: [
+                    ...prev.messages,
+                    { role: "assistant" as const, content: `RAG query error: ${err}` },
+                  ],
+                  loading: false,
+                }));
               },
               setup.llama_port,
               ctrl.signal
@@ -519,37 +638,43 @@ function App() {
           setTtsElapsedTime(totalTime);
           setTtsGenerationTime(totalTime);
 
-          setAudioOutput(audioUrl);
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: `🔊 Audio generated (${ttsVoice}, ${ttsSpeed}x speed).`,
-              generateTime: totalTime
-            },
-          ]);
+          updateSession(sid, (prev) => ({
+            audioOutput: audioUrl,
+            messages: [
+              ...prev.messages,
+              {
+                role: "assistant" as const,
+                content: `🔊 Audio generated (${ttsVoice}, ${ttsSpeed}x speed).`,
+                generateTime: totalTime
+              },
+            ],
+          }));
         } catch (e) {
           console.error(e);
           // Stop timer on error
           if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
           setTtsGenerating(false);
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: `Error generating audio: ${e}` },
-          ]);
+          updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              { role: "assistant" as const, content: `Error generating audio: ${e}` },
+            ],
+          }));
         }
-        setLoading(false);
+        updateSession(sid, { loading: false });
         return;
       }
 
       // ── Vision Mode (streaming via Tauri events) ────────────────────────
       if (chatMode === "vision") {
         if (!imagePath) {
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: "Please select an image first." },
-          ]);
-          setLoading(false);
+          updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              { role: "assistant" as const, content: "Please select an image first." },
+            ],
+            loading: false,
+          }));
           return;
         }
 
@@ -587,18 +712,22 @@ function App() {
                 setGeneralElapsedTime(totalTime);
                 setGeneralGenerationTime(totalTime);
 
-                setLoading(false);
                 if (visionResponse) {
-                  setMessages((prev) => [
-                    ...prev,
-                    {
-                      role: "assistant",
-                      content: visionResponse,
-                      generateTime: totalTime,
-                      firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
-                    },
-                  ]);
-                  setStreamingContent("");
+                  updateSession(sid, (prev) => ({
+                    messages: [
+                      ...prev.messages,
+                      {
+                        role: "assistant" as const,
+                        content: visionResponse,
+                        generateTime: totalTime,
+                        firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
+                      },
+                    ],
+                    streamingContent: "",
+                    loading: false,
+                  }));
+                } else {
+                  updateSession(sid, { loading: false });
                 }
                 visionUnlistenRef.current?.();
                 visionUnlistenRef.current = null;
@@ -607,7 +736,7 @@ function App() {
                   firstTokenTimeMs = Date.now();
                 }
                 visionResponse += event.payload.chunk;
-                setStreamingContent((prev) => prev + event.payload.chunk);
+                updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + event.payload.chunk }));
               }
             }
           );
@@ -624,11 +753,13 @@ function App() {
           // Stop timer on error
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
           setGeneralGenerating(false);
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: `Vision error: ${e}` },
-          ]);
-          setLoading(false);
+          updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              { role: "assistant" as const, content: `Vision error: ${e}` },
+            ],
+            loading: false,
+          }));
           visionUnlistenRef.current?.();
           visionUnlistenRef.current = null;
         }
@@ -651,13 +782,16 @@ function App() {
 
       let fullResponse = "";
       let textFirstTokenTimeMs: number | null = null;
+
+      // Build the messages array from the session's messages (including the new user msg)
+      const sessionMessages = session.messages;
       Api.streamChat(
-        [...messages, newMsg],
+        [...sessionMessages, newMsg],
         (chunk) => {
           if (textFirstTokenTimeMs === null) {
             textFirstTokenTimeMs = Date.now();
           }
-          setStreamingContent((prev) => prev + chunk);
+          updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + chunk }));
           fullResponse += chunk;
         },
         () => {
@@ -670,18 +804,22 @@ function App() {
           setGeneralElapsedTime(totalTime);
           setGeneralGenerationTime(totalTime);
 
-          setLoading(false);
           if (fullResponse) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                content: fullResponse,
-                generateTime: totalTime,
-                firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
-              },
-            ]);
-            setStreamingContent("");
+            updateSession(sid, (prev) => ({
+              messages: [
+                ...prev.messages,
+                {
+                  role: "assistant" as const,
+                  content: fullResponse,
+                  generateTime: totalTime,
+                  firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
+                },
+              ],
+              streamingContent: "",
+              loading: false,
+            }));
+          } else {
+            updateSession(sid, { loading: false });
           }
         },
         (err) => {
@@ -689,11 +827,13 @@ function App() {
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
           setGeneralGenerating(false);
           console.error("Stream error", err);
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: `Error: ${err}` },
-          ]);
-          setLoading(false);
+          updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              { role: "assistant" as const, content: `Error: ${err}` },
+            ],
+            loading: false,
+          }));
         },
         undefined,
         ctrl.signal
@@ -703,11 +843,13 @@ function App() {
       if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
       setGeneralGenerating(false);
       console.error(err);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "An unexpected error occurred." },
-      ]);
-      setLoading(false);
+      updateSession(sid, (prev) => ({
+        messages: [
+          ...prev.messages,
+          { role: "assistant" as const, content: "An unexpected error occurred." },
+        ],
+        loading: false,
+      }));
     }
   };
 
@@ -770,13 +912,8 @@ function App() {
         {/* New Chat */}
         <button
           className="glass-btn flex flex-col items-center gap-1 py-2.5 px-1 mx-2 mb-2 bg-transparent border border-dashed border-glass-border rounded-xl text-txt-muted cursor-pointer transition-all duration-200 w-[calc(100%-16px)] hover:border-neon hover:text-neon hover:bg-neon-subtle hover:shadow-[0_0_12px_rgba(0,212,255,0.1)]"
-          onClick={() => {
-            setMessages([]);
-            setStreamingContent("");
-            setAudioOutput("");
-            setRagResult(null);
-          }}
-          title="New conversation"
+          onClick={addNewSession}
+          title="New conversation (Ctrl+T)"
         >
           <Plus size={18} strokeWidth={2} />
           <span className="text-[0.6rem] font-semibold uppercase tracking-wide leading-none">New Chat</span>
@@ -785,6 +922,18 @@ function App() {
 
       {/* ══════════ MAIN CONTENT ══════════ */}
       <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
+        {/* ── Tab Bar (multi-session) ── */}
+        {chatMode !== "podcast" && (
+          <ChatTabBar
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={setActiveSessionId}
+            onNewSession={addNewSession}
+            onCloseSession={closeSession}
+            onReorderSessions={reorderSessions}
+          />
+        )}
+
         {/* ── Top Bar ── */}
         <header className="h-14 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
           <div className="flex items-center gap-2.5">
@@ -810,7 +959,7 @@ function App() {
                     value={selectedTtsEngine}
                     onChange={(e) => setSelectedTtsEngine(e.target.value)}
                     className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
-                    disabled={loading}
+                    disabled={activeSession.loading}
                   >
                     {ttsEngines.map((m) => (
                       <option key={m.id} value={m.id}>{m.name}</option>
@@ -826,7 +975,7 @@ function App() {
                         value={ttsVoice}
                         onChange={(e) => setTtsVoice(e.target.value as KittenTtsVoice)}
                         className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[100px] hover:border-neon"
-                        disabled={loading}
+                        disabled={activeSession.loading}
                       >
                         {KITTEN_TTS_VOICES.map((v) => (
                           <option key={v} value={v}>{v}</option>
@@ -844,7 +993,7 @@ function App() {
                         value={ttsSpeed}
                         onChange={(e) => setTtsSpeed(parseFloat(e.target.value))}
                         className="w-[72px] h-1 accent-neon cursor-pointer"
-                        disabled={loading}
+                        disabled={activeSession.loading}
                       />
                     </div>
                   </>
@@ -857,7 +1006,7 @@ function App() {
                   value={selectedVisionModel}
                   onChange={(e) => setSelectedVisionModel(e.target.value)}
                   className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
-                  disabled={loading}
+                  disabled={activeSession.loading}
                 >
                   {visionModels.map((m) => (
                     <option key={m.id} value={m.id}>{m.name}</option>
@@ -878,12 +1027,12 @@ function App() {
             </div>
             <div className="p-3 px-6 max-h-[250px] overflow-y-auto">
               <div className="flex gap-2.5 items-center mb-2.5">
-                <button onClick={selectImage} disabled={loading}
+                <button onClick={selectImage} disabled={activeSession.loading}
                   className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-4 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
                   <ImageIcon size={14} /> Select Image
                 </button>
                 {imagePath && (
-                  <button onClick={clearImage} disabled={loading}
+                  <button onClick={clearImage} disabled={activeSession.loading}
                     className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-4 text-[0.78rem] font-medium rounded-lg cursor-pointer text-[#fca5a5] border border-[rgba(248,113,113,0.2)] transition-all duration-200 hover:bg-[rgba(248,113,113,0.1)] hover:border-[#f87171] hover:shadow-[0_0_12px_rgba(248,113,113,0.15)] disabled:opacity-45 disabled:cursor-not-allowed">
                     <X size={14} /> Clear
                   </button>
@@ -906,15 +1055,16 @@ function App() {
           <PodcastTab hasDocuments={ragDocs.length > 0} />
         ) : (
           <ChatWindow
-            messages={messages}
-            streamingContent={streamingContent}
-            isLoading={loading}
+            key={activeSession.id}
+            messages={activeSession.messages}
+            streamingContent={activeSession.streamingContent}
+            isLoading={activeSession.loading}
             onSend={handleSend}
             onCancel={handleCancel}
-            cancelled={cancelled}
-            audioSrc={audioOutput}
+            cancelled={activeSession.cancelled}
+            audioSrc={activeSession.audioOutput}
             placeholder={getPlaceholder()}
-            mediaAssets={mediaAssets}
+            mediaAssets={activeSession.mediaAssets}
             ragDocs={ragDocs}
             ragIngesting={ragIngesting}
             enrichmentStatus={enrichmentStatus}
@@ -1033,13 +1183,13 @@ function App() {
           </div>
 
           {/* RAG Source Citations */}
-          {ragResult && ragResult.sources.length > 0 && (
+          {activeSession.ragResult && activeSession.ragResult.sources.length > 0 && (
             <div className="kb-sidebar-sources border-t border-glass-border py-3 px-3 shrink-0 max-h-[250px] overflow-y-auto">
               <div className="flex items-center gap-1.5 mb-2 text-[0.82rem] text-txt-secondary">
                 <FileText size={14} />
-                <strong>Sources ({ragResult.sources.length})</strong>
+                <strong>Sources ({activeSession.ragResult.sources.length})</strong>
               </div>
-              {ragResult.sources.map((src, i) => (
+              {activeSession.ragResult.sources.map((src, i) => (
                 <details key={src.chunk_id} className="mb-1 text-[0.78rem]">
                   <summary className="cursor-pointer text-[#66e5ff] py-1 transition-colors duration-150 hover:text-[#99eeff]">
                     [Source {i + 1}] {src.doc_title}

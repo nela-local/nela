@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, memo } from "react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { Api } from "../api";
 import type { ChatMessage, MediaAsset, IngestionStatus } from "../types";
@@ -130,7 +130,7 @@ const MediaGallery: React.FC<{ assets: MediaAsset[] }> = ({ assets }) => {
   );
 };
 
-const ChatWindow: React.FC<ChatWindowProps> = ({
+const ChatWindow: React.FC<ChatWindowProps> = memo(({
   messages,
   streamingContent,
   isLoading,
@@ -160,6 +160,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  /** Tracks the number of messages that have already been rendered and animated.
+   *  Only messages at index >= this value get the entrance animation. */
+  const prevMsgCountRef = useRef(0);
+  useEffect(() => {
+    prevMsgCountRef.current = messages.length;
+  }, [messages.length]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -308,8 +315,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="messages-area flex-1 overflow-y-auto px-6 py-4">
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`animate-msg-fade flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+        {messages.map((msg, idx) => {
+          const isNew = idx >= prevMsgCountRef.current;
+          return (
+          <div key={idx} className={`${isNew ? "animate-msg-fade" : ""} flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
             {msg.role === "user" ? (
               <>
                 <div className="flex flex-col items-end flex-1 min-w-0">
@@ -349,7 +358,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
               </>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {isLoading && (
           <div className="animate-msg-fade flex gap-3 mb-5 max-w-3xl mx-auto">
@@ -518,6 +528,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       </div>
     </div>
   );
-};
+});
+
+ChatWindow.displayName = "ChatWindow";
 
 export default ChatWindow;
