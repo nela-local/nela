@@ -571,15 +571,8 @@ function SpreadsheetViewer({ dataUrl }: { dataUrl: string }) {
   // For spreadsheets, we read back as text from the backend
   // Since we have base64, and xlsx is binary, we display a message
   // and suggest using the RAG ingestion for full content
-  const [content, setContent] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // We can't parse xlsx in the browser without a full library
-    // Instead, show a styled placeholder
-    setContent("Spreadsheet preview is available through RAG ingestion. The file has been loaded successfully.");
-    setLoading(false);
-  }, [dataUrl]);
+  const content = "Spreadsheet preview is available through RAG ingestion. The file has been loaded successfully.";
+  const loading = !dataUrl;
 
   if (loading) return <div className="dv-loading"><span>Loading spreadsheet...</span></div>;
 

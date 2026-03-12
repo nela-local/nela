@@ -122,6 +122,7 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
   useEffect(() => {
     if (!pdfDoc) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: reset when doc/scale changes
     setRenderedPages(new Set());
 
     // Render all pages
@@ -129,10 +130,11 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
       renderPage(i);
     }
 
+    const tasks = renderTasksRef.current;
     return () => {
       // Cancel all in-progress renders
-      renderTasksRef.current.forEach((task) => task.cancel());
-      renderTasksRef.current.clear();
+      tasks.forEach((task) => task.cancel());
+      tasks.clear();
     };
   }, [pdfDoc, scale, renderPage]);
 
@@ -174,14 +176,14 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
   };
 
   // Page navigation
-  const goToPage = (page: number) => {
+  const goToPage = useCallback((page: number) => {
     const clamped = Math.max(1, Math.min(page, totalPages));
     setCurrentPage(clamped);
     const canvas = canvasRefs.current.get(clamped);
     if (canvas) {
       canvas.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  };
+  }, [totalPages]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -196,7 +198,7 @@ export default function PdfViewer({ pdfData, title, onClose }: PdfViewerProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [currentPage, totalPages, onClose]);
+  }, [currentPage, totalPages, onClose, goToPage]);
 
   return (
     <div className="pdf-viewer">

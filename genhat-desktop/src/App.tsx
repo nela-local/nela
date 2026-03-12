@@ -103,8 +103,11 @@ function App() {
   const [selectedTtsEngine, setSelectedTtsEngine] = useState("");
   const [ttsVoice, setTtsVoice] = useState<KittenTtsVoice>("Leo");
   const [ttsSpeed, setTtsSpeed] = useState(1.0);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_ttsGenerating, setTtsGenerating] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_ttsElapsedTime, setTtsElapsedTime] = useState(0);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_ttsGenerationTime, setTtsGenerationTime] = useState<number | null>(null);
   const ttsIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -112,8 +115,11 @@ function App() {
   const [selectedVisionModel, setSelectedVisionModel] = useState("");
 
   // ── Response time tracking for all modes ────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_generalElapsedTime, setGeneralElapsedTime] = useState(0);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_generalGenerationTime, setGeneralGenerationTime] = useState<number | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_generalGenerating, setGeneralGenerating] = useState(false);
   const generalIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -237,6 +243,7 @@ function App() {
       visionUnlistenRef.current?.();
       visionUnlistenRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reload RAG docs periodically when in text mode
