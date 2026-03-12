@@ -276,7 +276,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" />
                       </svg>
                       <div className="flex flex-col items-start">
-                        <span className="font-medium">Add File</span>
+                        <span className="font-medium">Add Files</span>
                         <span className="text-[0.68rem] text-txt-muted">PDF, DOCX, TXT, code...</span>
                       </div>
                     </button>
@@ -489,7 +489,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                       <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" />
                     </svg>
                     <div className="flex flex-col items-start">
-                      <span className="font-medium">Add File</span>
+                      <span className="font-medium">Add Files</span>
                       <span className="text-[0.68rem] text-txt-muted">PDF, DOCX, TXT, code...</span>
                     </div>
                   </button>

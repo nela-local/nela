@@ -374,7 +374,7 @@ function App() {
   const ingestFile = async () => {
     try {
       const selected = await open({
-        multiple: false,
+        multiple: true,
         filters: [
           {
             name: "Documents",
@@ -389,12 +389,15 @@ function App() {
           },
         ],
       });
-      if (selected && typeof selected === "string") {
-        setRagIngesting(true);
-        await Api.ingestDocument(selected);
-        await loadRagDocs();
-        setRagIngesting(false);
+      if (!selected) return;
+      const files = Array.isArray(selected) ? selected : [selected];
+      if (files.length === 0) return;
+      setRagIngesting(true);
+      for (let i = 0; i < files.length; i++) {
+        await Api.ingestDocument(files[i]);
       }
+      await loadRagDocs();
+      setRagIngesting(false);
     } catch (e) {
       console.error(e);
       setRagIngesting(false);
@@ -1132,7 +1135,7 @@ function App() {
           <div className="flex gap-1.5 py-3 px-4 border-b border-glass-border shrink-0">
             <button onClick={ingestFile} disabled={ragIngesting}
               className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
-              <FileText size={14} /> Add File
+              <FileText size={14} /> Add Files
             </button>
             <button onClick={ingestDir} disabled={ragIngesting}
               className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">

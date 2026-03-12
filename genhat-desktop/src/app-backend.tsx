@@ -492,7 +492,7 @@ function App() {
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: 10 }}>
             <strong>Knowledge Base</strong>
             <button onClick={ingestFile} disabled={ragIngesting} style={{ padding: '6px 12px', cursor: 'pointer' }}>
-              📄 Add File
+              📄 Add Files
             </button>
             <button onClick={ingestDir} disabled={ragIngesting} style={{ padding: '6px 12px', cursor: 'pointer' }}>
               📁 Add Folder
