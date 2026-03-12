@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Rust backend tests ──────────────────────────────────────────────────────
+  rust-tests:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            genhat-desktop/src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('genhat-desktop/src-tauri/Cargo.lock') }}
+          restore-keys: rust-${{ runner.os }}-
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Run cargo test
+        working-directory: genhat-desktop/src-tauri
+        run: cargo test --lib
+
+      - name: Check Rust formatting
+        working-directory: genhat-desktop/src-tauri
+        run: cargo fmt -- --check
+
+      - name: Run clippy lints
+        working-directory: genhat-desktop/src-tauri
+        run: cargo clippy --lib -- -D warnings
+
+  # ── Frontend checks ─────────────────────────────────────────────────────────
+  frontend-checks:
+    name: Frontend Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: genhat-desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: genhat-desktop
+        run: npm ci
+
+      - name: TypeScript type check
+        working-directory: genhat-desktop
+        run: npx tsc -b --noEmit
+
+      - name: ESLint
+        working-directory: genhat-desktop
+        run: npx eslint .
+
+  # ── Gate job (single required status check) ─────────────────────────────────
+  ci:
+    name: CI ✅
+    if: always()
+    needs: [rust-tests, frontend-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.rust-tests.result }}" != "success" ]]; then
+            echo "❌ rust-tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.frontend-checks.result }}" != "success" ]]; then
+            echo "❌ frontend-checks failed"
+            exit 1
+          fi
+          echo "✅ All checks passed"
