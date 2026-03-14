@@ -29,6 +29,7 @@ const MindMapWindow: React.FC<MindMapWindowProps> = ({ onClose }) => {
           background: "#181c20",
           borderRadius: 18,
           boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          border: "3px solid rgba(0, 213, 255, 0.89)",
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
