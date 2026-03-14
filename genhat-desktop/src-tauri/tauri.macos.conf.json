@@ -1,7 +1,7 @@
 {
   "bundle": {
     "resources": {
-      "../../models/.placeholder": "models/.placeholder",
+      
       "bin/llama-mac/*": "bin/llama-mac/",
       "bin/espeak-ng-mac/*": "bin/espeak-ng-mac/",
       "bin/espeak-ng-mac/espeak-ng-data/*": "bin/espeak-ng-mac/espeak-ng-data/",

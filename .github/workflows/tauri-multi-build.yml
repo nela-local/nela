@@ -55,6 +55,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Ensure models placeholder exists for CI builds (tauri expects this file path)
+      - name: Ensure models placeholder
+        run: |
+          mkdir -p models
+          touch models/.placeholder
+
       # Linux System Dependencies
       - name: Install Linux Dependencies
         if: matrix.os == 'ubuntu-latest'
