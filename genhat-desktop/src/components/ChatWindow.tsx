@@ -238,7 +238,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onSelectMode,
   modeSwitchNotice = null,
   saveAudioToSidebar = () => {},
-  session,
 }) => {
   const [inputObj, setInputObj] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);

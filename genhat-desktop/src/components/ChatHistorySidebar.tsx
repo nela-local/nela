@@ -1,5 +1,5 @@
 import React from "react";
-import { MessageSquare, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import type { ChatSession } from "../types";
 
 interface ChatHistorySidebarProps {

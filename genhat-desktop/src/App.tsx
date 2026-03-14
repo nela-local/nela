@@ -1140,11 +1140,11 @@ function App() {
     .filter((s): s is ChatSession => !!s);
 
   // Sidebar section state with toggle logic
-  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps" | null>("chats");
+  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps">("chats");
 
   // Toggle handler for sidebar
   const handleSidebarNav = (section: "chats" | "audio" | "mindmaps") => {
-    setSidebarSection((prev) => (prev === section ? null : section));
+    setSidebarSection(section);
   };
 
   // Placeholder: audioFiles and mindmaps (replace with real data as needed)
@@ -1211,21 +1211,22 @@ function App() {
                         })
                         .filter(Boolean)
                     );
-                    return allAudio.length > 0 ? (
+                    const filteredAudio = allAudio.filter(Boolean);
+                    return filteredAudio.length > 0 ? (
                       <ul className="flex flex-col gap-2">
-                        {allAudio.map((item, idx) => (
-                          <li key={item.audioUrl} className="flex flex-col gap-1 group relative">
+                        {filteredAudio.map((item) => (
+                          <li key={item!.audioUrl} className="flex flex-col gap-1 group relative">
                             <span className="text-[0.82rem] font-medium truncate">
-                              {item.userQuery}
+                              {item!.userQuery}
                             </span>
-                            <span className="text-[0.75rem] text-txt-muted truncate">{item.sessionTitle}</span>
-                            <AudioPlayer src={item.audioUrl} barCount={20} />
+                            <span className="text-[0.75rem] text-txt-muted truncate">{item!.sessionTitle}</span>
+                            <AudioPlayer src={item!.audioUrl} barCount={20} />
                             <button
                               className="absolute top-1 right-1 opacity-60 group-hover:opacity-100 transition-opacity text-danger hover:text-danger/80"
                               title="Delete audio"
                               onClick={() => {
-                                updateSession(item.sessionId, (prev) => ({
-                                  messages: prev.messages.map((m, i) => i === item.msgIdx ? { ...m, audioSaved: false } : m)
+                                updateSession(item!.sessionId, (prev) => ({
+                                  messages: prev.messages.map((m, i) => i === item!.msgIdx ? { ...m, audioSaved: false } : m)
                                 }));
                               }}
                             >

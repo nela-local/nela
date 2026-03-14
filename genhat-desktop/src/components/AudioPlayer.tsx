@@ -48,16 +48,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = function AudioPlayer({ src, auto
   /** Random mapping of bar index to frequency bin index */
   const barMapRef = useRef<number[]>([]);
 
-  // Generate a random, smooth mapping (neighboring bars get neighboring bins, but start is random)
-  function makeRandomBarMap() {
-    const bins = Array.from({ length: BAR_COUNT }, (_, i) => i);
-    // Pick a random start offset
-    const offset = Math.floor(Math.random() * BAR_COUNT);
-    // Optionally reverse
-    const reverse = Math.random() > 0.5;
-    const arr = bins.slice(offset).concat(bins.slice(0, offset));
-    return reverse ? arr.reverse() : arr;
-  }
+  // ...existing code...
 
 
   const [playing, setPlaying] = useState(false);
@@ -69,9 +60,19 @@ const AudioPlayer: React.FC<AudioPlayerProps> = function AudioPlayer({ src, auto
   // Shuffle mapping on each playback
   useEffect(() => {
     if (playing) {
+      // Generate a random, smooth mapping (neighboring bars get neighboring bins, but start is random)
+      const makeRandomBarMap = () => {
+        const bins = Array.from({ length: BAR_COUNT }, (_, i) => i);
+        // Pick a random start offset
+        const offset = Math.floor(Math.random() * BAR_COUNT);
+        // Optionally reverse
+        const reverse = Math.random() > 0.5;
+        const arr = bins.slice(offset).concat(bins.slice(0, offset));
+        return reverse ? arr.reverse() : arr;
+      };
       barMapRef.current = makeRandomBarMap();
     }
-  }, [playing]);
+  }, [playing, BAR_COUNT]);
 
   /* ── Connect Web Audio analyser (once per <audio> element) ─────────────── */
   const ensureAnalyser = useCallback(() => {
@@ -195,7 +196,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = function AudioPlayer({ src, auto
     }
 
     animRef.current = requestAnimationFrame(drawBars);
-  }, []);
+  }, [BAR_COUNT, CANVAS_W]);
   /** Idle bar heights — randomised once, referenced in drawIdleBars */
   const idleHeightsRef = useRef<number[]>(
     Array.from({ length: BAR_COUNT }, (_, i) => {
@@ -233,7 +234,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = function AudioPlayer({ src, auto
       ctx.roundRect(x, y, BAR_WIDTH, barH, [BAR_RADIUS, BAR_RADIUS, 0, 0]);
       ctx.fill();
     }
-  }, []);
+  }, [BAR_COUNT, CANVAS_W]);
 
   /* ── Play / Pause ──────────────────────────────────────────────────────── */
   const togglePlay = useCallback(async () => {
