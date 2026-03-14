@@ -19,15 +19,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            os_label: Windows
-            bundles: msi,nsis
-          - os: ubuntu-latest
-            os_label: Linux
-            bundles: deb
-          # - os: macos-latest
-          #   os_label: macOS
-          #   bundles: dmg
+          # - os: windows-latest
+          #   os_label: Windows
+          #   bundles: msi,nsis
+          # - os: ubuntu-latest
+          #   os_label: Linux
+          #   bundles: deb
+          - os: macos-latest
+            os_label: macOS
+            bundles: dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -54,6 +54,12 @@ jobs:
       # Setup Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      # Ensure models placeholder exists for CI builds (tauri expects this file path)
+      - name: Ensure models placeholder
+        run: |
+          mkdir -p models
+          touch models/.placeholder
 
       # Linux System Dependencies
       - name: Install Linux Dependencies
@@ -96,15 +102,42 @@ jobs:
           echo "$FILES" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      # - name: Locate Build Artifacts (macOS)
-      #   if: matrix.os == 'macos-latest'
-      #   run: |
-      #     BUNDLE_DIR="genhat-desktop/src-tauri/target/release/bundle"
-      #     FILES=$(find "$BUNDLE_DIR" -type f -name "*.dmg")
-      #     if [ -z "$FILES" ]; then echo "No macOS installer found in $BUNDLE_DIR"; exit 1; fi
-      #     echo "ARTIFACT_PATHS<<EOF" >> $GITHUB_ENV
-      #     echo "$FILES" >> $GITHUB_ENV
-      #     echo "EOF" >> $GITHUB_ENV
+      - name: Locate Build Artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          BUNDLE_DIR="genhat-desktop/src-tauri/target/release/bundle"
+
+          # Collect .dmg files
+          DMG_FILES=$(find "$BUNDLE_DIR" -type f -name "*.dmg" -print)
+
+          # Find .app bundles and zip them so they can be uploaded as files
+          APP_DIRS=$(find "$BUNDLE_DIR" -type d -name "*.app" -print)
+          ZIP_FILES=""
+          for app in $APP_DIRS; do
+            ZIP="${app}.zip"
+            rm -f "$ZIP"
+            ditto -c -k --keepParent "$app" "$ZIP"
+            if [ -z "$ZIP_FILES" ]; then
+              ZIP_FILES="$ZIP"
+            else
+              ZIP_FILES="$ZIP_FILES"$'\n'"$ZIP"
+            fi
+          done
+
+          FILES=""
+          if [ -n "$DMG_FILES" ]; then FILES="$DMG_FILES"; fi
+          if [ -n "$ZIP_FILES" ]; then
+            if [ -z "$FILES" ]; then FILES="$ZIP_FILES"; else FILES="$FILES"$'\n'"$ZIP_FILES"; fi
+          fi
+
+          if [ -z "$FILES" ]; then
+            echo "No macOS installers found in $BUNDLE_DIR"
+            exit 1
+          fi
+
+          echo "ARTIFACT_PATHS<<EOF" >> $GITHUB_ENV
+          echo "$FILES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       # Upload to a per-OS GitHub Release
       - name: Upload to GitHub Release

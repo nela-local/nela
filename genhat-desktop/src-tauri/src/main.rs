@@ -33,6 +33,17 @@ fn main() {
             let models_dir = app_lib::commands::models::get_models_dir();
             log::info!("Models directory: {}", models_dir.display());
 
+            // Ensure the models directory exists at runtime. We create the directory
+            // inside the app resources (or next to the executable) so users can
+            // drop downloaded models there later.
+            if let Err(e) = std::fs::create_dir_all(&models_dir) {
+                log::warn!(
+                    "Failed to create models directory {}: {}",
+                    models_dir.display(),
+                    e
+                );
+            }
+
             // 3. Initialize the process manager
             let process_manager = Arc::new(ProcessManager::new(&registry, models_dir));
 

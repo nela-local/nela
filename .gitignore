@@ -1,22 +1,6 @@
 ## Only models directories with .gitkeep files will be tracked by git
 
-models/kittenTTS/
-!models/kittenTTS/.gitkeep
-models/grader/
-!models/grader/.gitkeep
-models/distilBert-query-router/
-!models/distilBert-query-router/.gitkeep
-models/bge-1.5-embed/
-!models/bge-1.5-embed/.gitkeep
-models/LLM/
-!models/LLM/.gitkeep
-models/LiquidAI-VLM/
-!models/LiquidAI-VLM/.gitkeep
-models/parakeet/
-!models/parakeet/.gitkeep
-models/parakeet.zip
-models/Famino-12B
-!models/Famino-12B/.gitkeep
+models/
 
 # App's binary files and build/dist directories
 build/
