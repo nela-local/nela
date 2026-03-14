@@ -1,3 +1,4 @@
+import MindMapWindow from "./components/MindMapWindow";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -122,6 +123,7 @@ function normalizeSession(raw: Partial<ChatSession>): ChatSession {
 }
 
 function App() {
+  const [showMindMap, setShowMindMap] = useState(false);
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
@@ -1160,6 +1162,28 @@ function App() {
 
   return (
     <div className="flex h-full w-full">
+      {/* TEMP: Button to show MindMapWindow */}
+      <button
+        style={{
+          position: "fixed",
+          top: 16,
+          right: 16,
+          zIndex: 2000,
+          background: "#222",
+          color: "#ff8c00",
+          border: "1px solid #ff8c00",
+          borderRadius: 8,
+          padding: "8px 16px",
+          fontWeight: 600,
+          fontSize: 15,
+          cursor: "pointer",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+        }}
+        onClick={() => setShowMindMap(true)}
+      >
+        Show Mind Map
+      </button>
+      {showMindMap && <MindMapWindow onClose={() => setShowMindMap(false)} />}
       <SidebarNav selected={sidebarSection} onSelect={handleSidebarNav} />
       {/* Vertical blue line when sidebar is minimized */}
           {sidebarSection === null && (
