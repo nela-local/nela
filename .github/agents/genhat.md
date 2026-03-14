@@ -77,6 +77,13 @@ GenHat-The-Local-Intelligence-Engine/
 │   └── DistilBERT-fine-tune/     ← Query router training notebook
 │       └── train.ipynb           ← Dataset generation, fine-tuning, ONNX export, benchmarks
 │
+├── benchmark/                    ← Benchmark suite (runtime metrics + plots)
+│   ├── run_benchmark.py          ← Main benchmark runner (launch/attach modes)
+│   ├── plot_results.py           ← Graph generator from benchmark outputs
+│   ├── requirements.txt          ← Benchmark Python deps (psutil, matplotlib)
+│   ├── README.md                 ← Setup and run instructions
+│   └── results/                  ← Timestamped benchmark outputs (JSON/CSV/PNG)
+│
 └── genhat-desktop/               ← THE MAIN APPLICATION (Tauri + React)
     ├── package.json              ← npm deps (React 19, Tauri API, Vite 7)
     ├── vite.config.ts            ← Vite config (React plugin only)
@@ -531,6 +538,30 @@ cd The-Bare/DistilBERT-fine-tune
 # Cell 6: Benchmark ONNX inference
 ```
 
+### Benchmark Suite (system/runtime metrics + graphs)
+```bash
+# From repository root
+python3 -m venv .venv-benchmark
+source .venv-benchmark/bin/activate
+pip install -r benchmark/requirements.txt
+
+# Launch-mode benchmark (captures cold start + optional shutdown time)
+python3 benchmark/run_benchmark.py \
+  --repo-root . \
+  --mode launch \
+  --launch-cmd "cd genhat-desktop && npx tauri dev" \
+  --interactive \
+  --shutdown-after-benchmark
+```
+
+Outputs are written to `benchmark/results/<timestamp>/` with:
+- `metrics.json` (all core metrics)
+- `samples.csv` (RSS/CPU/process count time series)
+- `model_metrics.csv` (per-model load time + memory deltas)
+- `plots/*.png` (visual graphs)
+
+Git tracking policy: benchmark source files (`benchmark/*.py`, `benchmark/README.md`, `benchmark/requirements.txt`) are tracked; generated artifacts (`benchmark/results/`, `benchmark/__pycache__/`) are ignored via `.gitignore`.
+
 ---
 
 ## 10. Configuration Reference
@@ -629,4 +660,7 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 16. **Podcast script routing**: The podcast engine (`podcast/engine.rs`) routes script generation via `TaskType::PodcastScript` (not `Chat`), so it respects the separate podcast priority chain (Qwen 2B > LFM > Qwen 0.8B).
 17. **llama-server params from TOML**: All llama-server CLI flags are driven from `[models.params]` in `models.toml`. Supported params: `ctx_size`, `max_tokens`, `temp`, `top_p`, `top_k`, `repeat_penalty`, `embedding`, `batch_size`, `flash_attn`, `mlock`, `cache_type`, `chat_template_kwargs`. No hardcoded values — defaults are in `param_or()` calls.
 18. **Model file-presence filtering**: `ModelDef::files_exist(models_dir)` / `missing_files(models_dir)` checks the primary `model_file` (file or directory) and every param key ending with `_file`. `ProcessManager::new()` skips models with missing files (logged at `warn` level). The `TaskRouter` iterates registry candidates and only picks models that are present in ProcessManager. This means models simply disappear from listings and routing when their files are absent — no error at runtime.
-19. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
+19. **Benchmark suite available**: Use `benchmark/run_benchmark.py` for launch/attach benchmarking and `benchmark/plot_results.py` for graph generation. The benchmark collects cold start, memory, CPU, process count, model load times, disk footprint, shutdown time, and lifecycle overhead metrics.
+20. **Benchmark launch command context**: `benchmark/run_benchmark.py` executes `--launch-cmd` from repo root (`--repo-root`), so launch commands should include `cd genhat-desktop && ...` when invoking Tauri dev/build commands.
+21. **Benchmark gitignore policy**: Track benchmark source files in git, but ignore generated outputs (`benchmark/results/`) and Python bytecode cache (`benchmark/__pycache__/`).
+22. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
