@@ -19,12 +19,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - os: windows-latest
-          #   os_label: Windows
-          #   bundles: msi,nsis
-          # - os: ubuntu-latest
-          #   os_label: Linux
-          #   bundles: deb
+          - os: windows-latest
+            os_label: Windows
+            bundles: msi,nsis
+          - os: ubuntu-latest
+            os_label: Linux
+            bundles: deb
           - os: macos-latest
             os_label: macOS
             bundles: dmg
@@ -32,7 +32,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     env:
-      NODE_VERSION: 20
+      NODE_VERSION: 24
 
     permissions:
       contents: write
