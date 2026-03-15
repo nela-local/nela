@@ -91,13 +91,15 @@ GenHat-The-Local-Intelligence-Engine/
     ├── index.html                ← Main HTML shell (full UI layout)
     ├── src/                      ← Frontend source (TypeScript/React)
     │   ├── main.tsx              ← React entry point (10 lines)
-    │   ├── App.tsx               ← Main app with 4 chat modes (850+ lines)
+    │   ├── App.tsx               ← Main app with 5 chat modes incl. Mindmap (850+ lines)
     │   ├── App.css               ← Component styles (180+ lines)
     │   ├── index.css             ← Global styles (68 lines)
     │   ├── types.ts              ← TypeScript type definitions (180+ lines)
     │   ├── api.ts                ← Centralized API layer (420+ lines)
     │   └── components/
-    │       ├── ChatWindow.tsx    ← Chat UI component (130+ lines)
+    │       ├── ChatWindow.tsx    ← Chat UI component + mode switch (mindmap no longer inline)
+    │       ├── MindMapCanvas.tsx ← Interactive SVG mindmap canvas (node drag + whole-map pan + zoom-aware transforms)
+    │       ├── MindMapOverlay.tsx ← Draggable overlay wrapper with dotted background + zoom (`+/-`) + minimize/maximize
     │       ├── ModelSelector.tsx ← Model selection UI (80+ lines)
     │       ├── ModelSelector.css ← ModelSelector styles
     │       └── Sidebar.tsx       ← Sidebar navigation
@@ -426,7 +428,7 @@ All models are **lazily loaded on first request**. Set `auto_start = true` to pr
 ### 6.1 React App (`App.tsx` — 850+ lines)
 
 The React app mounted into `#root` provides:
-- **4 Chat Modes**: Text, Vision, Audio, RAG with tabbed UI
+- **5 Chat Modes**: Text, Vision, Audio, Podcast, Mindmap with tabbed UI
 - Model selection dropdowns (LLM, Vision, Audio)
 - Start/stop model controls
 - Chat interface with streaming responses
@@ -434,6 +436,8 @@ The React app mounted into `#root` provides:
 - Image upload for vision queries
 - Document ingestion for RAG (single file + folder)
 - RAG query interface with source citations
+- Mindmap mode that generates JSON mindmaps via LLM and opens them in a dedicated overlay
+- Session-scoped mindmap history persisted in localStorage and accessible from left sidebar
 
 ### 6.2 Modular Frontend Structure
 
@@ -449,6 +453,8 @@ The React app mounted into `#root` provides:
 
 **components/**
 - `ChatWindow.tsx` — Message display + input with mode-aware placeholders
+- `MindMapCanvas.tsx` — Centered interactive mindmap visualization with parent expand/collapse and node dragging
+- `MindMapOverlay.tsx` — Modal/overlay presentation of a selected mindmap over the chat workspace
 - `ModelSelector.tsx` — Model selection UI component
 - `Sidebar.tsx` — Navigation sidebar
 
@@ -655,12 +661,17 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 11. **Cross-encoder grading**: RAG chunk grading now uses ms-marco cross-encoder (100-300x faster than LLM). Converts 0-1 scores to 1-5 scale: score < 0.2 → 1, 0.2-0.4 → 2, 0.4-0.6 → 3, 0.6-0.8 → 4, > 0.8 → 5.
 12. **Context window expansion**: After cross-encoder grading, `build_expanded_context()` fetches neighboring chunks (`chunk_index±1`) from `db.get_adjacent_chunks()` in a single DB call. Neighbors already selected as top-k sources are skipped (deduplicated via a `HashSet`). This applies to both `query()` (non-streaming) and `query_retrieve()` (streaming) paths, including their RAG Fusion retry branches. The RAPTOR path (`query_with_raptor`) does NOT use this — RAPTOR summaries already provide hierarchical context expansion.
 13. **RAPTOR worker**: The enrichment worker tracks `idle_cycles` (increments each 30s poll with no pending chunks) and `failed_cycles` (consecutive enrichment errors). RAPTOR auto-build triggers at `idle_cycles >= 2` (reset to 0 afterwards) OR `failed_cycles >= 3` (LLM unavailable fallback). Previously, a bug caused `idle_cycles` to never be reset, so repeated triggers would occur. Fixed.
-14. **Frontend architecture**: Modular structure with types.ts (type definitions), api.ts (centralized API), components/ (reusable UI). App.tsx uses 4 chat modes with tabbed navigation.
-15. **Per-task priority**: Models can override their default priority for specific tasks via `[models.task_priorities]` in `models.toml` and the `task_priorities: HashMap<TaskType, u32>` field in `ModelDef`. The registry's `find_for_task()` uses `priority_for_task()` which checks task-specific overrides first. This enables different priority ordering for chat vs podcast_script without duplicating model entries.
-16. **Podcast script routing**: The podcast engine (`podcast/engine.rs`) routes script generation via `TaskType::PodcastScript` (not `Chat`), so it respects the separate podcast priority chain (Qwen 2B > LFM > Qwen 0.8B).
-17. **llama-server params from TOML**: All llama-server CLI flags are driven from `[models.params]` in `models.toml`. Supported params: `ctx_size`, `max_tokens`, `temp`, `top_p`, `top_k`, `repeat_penalty`, `embedding`, `batch_size`, `flash_attn`, `mlock`, `cache_type`, `chat_template_kwargs`. No hardcoded values — defaults are in `param_or()` calls.
-18. **Model file-presence filtering**: `ModelDef::files_exist(models_dir)` / `missing_files(models_dir)` checks the primary `model_file` (file or directory) and every param key ending with `_file`. `ProcessManager::new()` skips models with missing files (logged at `warn` level). The `TaskRouter` iterates registry candidates and only picks models that are present in ProcessManager. This means models simply disappear from listings and routing when their files are absent — no error at runtime.
-19. **Benchmark suite available**: Use `benchmark/run_benchmark.py` for launch/attach benchmarking and `benchmark/plot_results.py` for graph generation. The benchmark collects cold start, memory, CPU, process count, model load times, disk footprint, shutdown time, and lifecycle overhead metrics.
-20. **Benchmark launch command context**: `benchmark/run_benchmark.py` executes `--launch-cmd` from repo root (`--repo-root`), so launch commands should include `cd genhat-desktop && ...` when invoking Tauri dev/build commands.
-21. **Benchmark gitignore policy**: Track benchmark source files in git, but ignore generated outputs (`benchmark/results/`) and Python bytecode cache (`benchmark/__pycache__/`).
-22. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
+14. **Frontend architecture**: Modular structure with types.ts (type definitions), api.ts (centralized API), components/ (reusable UI). App.tsx uses 5 chat modes with tabbed navigation, including a dedicated mindmap mode.
+15. **Mindmap persistence model**: Mindmaps are stored per chat session as arrays (`Record<sessionId, MindMapGraph[]>`), each map has a unique `id`, and this store is serialized in workspace-scoped localStorage alongside chat sessions.
+16. **Mindmap overlay UX**: Mindmaps render in `MindMapOverlay` (not inline in `ChatWindow`). Generating a new mindmap auto-opens the overlay in a loading state; selecting a saved map from the sidebar reopens it for future reference.
+17. **Mindmap window controls**: The overlay window is draggable by header in normal mode (pointer-captured drag for reliability), ignores drag starts from header control buttons, supports dedicated minimize/restore and maximize/restore icon buttons, uses `-` / `+` controls for zoom out/in, and keeps the previous neon dotted `MindMapBackground` confined to the mindmap canvas area (including generating state).
+18. **Mindmap canvas panning and zoom**: Users can drag individual nodes and also drag the overall map viewport by dragging empty space on the SVG canvas; zoom is applied via SVG scale transform while panning is applied as a separate viewport offset so both interactions stay reliable together.
+19. **Mindmap node opacity and layer ordering**: Mindmap node rectangles are fully opaque and the SVG graph layer is explicitly above the dotted background layer (`z-10` vs `z-0`), so dots remain visible only around nodes and never on top of node bodies.
+20. **Per-task priority**: Models can override their default priority for specific tasks via `[models.task_priorities]` in `models.toml` and the `task_priorities: HashMap<TaskType, u32>` field in `ModelDef`. The registry's `find_for_task()` uses `priority_for_task()` which checks task-specific overrides first. This enables different priority ordering for chat vs podcast_script without duplicating model entries.
+21. **Podcast script routing**: The podcast engine (`podcast/engine.rs`) routes script generation via `TaskType::PodcastScript` (not `Chat`), so it respects the separate podcast priority chain (Qwen 2B > LFM > Qwen 0.8B).
+22. **llama-server params from TOML**: All llama-server CLI flags are driven from `[models.params]` in `models.toml`. Supported params: `ctx_size`, `max_tokens`, `temp`, `top_p`, `top_k`, `repeat_penalty`, `embedding`, `batch_size`, `flash_attn`, `mlock`, `cache_type`, `chat_template_kwargs`. No hardcoded values — defaults are in `param_or()` calls.
+23. **Model file-presence filtering**: `ModelDef::files_exist(models_dir)` / `missing_files(models_dir)` checks the primary `model_file` (file or directory) and every param key ending with `_file`. `ProcessManager::new()` skips models with missing files (logged at `warn` level). The `TaskRouter` iterates registry candidates and only picks models that are present in ProcessManager. This means models simply disappear from listings and routing when their files are absent — no error at runtime.
+24. **Benchmark suite available**: Use `benchmark/run_benchmark.py` for launch/attach benchmarking and `benchmark/plot_results.py` for graph generation. The benchmark collects cold start, memory, CPU, process count, model load times, disk footprint, shutdown time, and lifecycle overhead metrics.
+25. **Benchmark launch command context**: `benchmark/run_benchmark.py` executes `--launch-cmd` from repo root (`--repo-root`), so launch commands should include `cd genhat-desktop && ...` when invoking Tauri dev/build commands.
+26. **Benchmark gitignore policy**: Track benchmark source files in git, but ignore generated outputs (`benchmark/results/`) and Python bytecode cache (`benchmark/__pycache__/`).
+27. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.

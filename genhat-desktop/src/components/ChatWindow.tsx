@@ -14,7 +14,7 @@ interface ChatWindowProps {
   saveAudioToSidebar?: SaveAudioHandler;
   session?: ChatSession;
 }
-import { MessageSquare, Eye, Volume2, Mic, FileText } from "lucide-react";
+import { MessageSquare, Eye, Volume2, Mic, FileText, Share2 } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
 import { Api } from "../api";
@@ -26,6 +26,7 @@ const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   audio: Volume2,
   rag: FileText,
   podcast: Mic,
+  mindmap: Share2,
 };
 
 /** Copy button for a full assistant response */
@@ -663,6 +664,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               {chatMode === "vision" && "Analyzing image... "}
               {chatMode === "rag" && "Processing query... "}
               {chatMode === "text" && "Generating response... "}
+              {chatMode === "mindmap" && "Building mindmap... "}
               <span className="text-neon font-semibold tabular-nums">{generalElapsedTime.toFixed(1)}s</span>
             </span>
           </div>
@@ -678,6 +680,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               {chatMode === "vision" && `Analyzed in ${generalGenerationTime.toFixed(1)}s`}
               {chatMode === "rag" && `Processed in ${generalGenerationTime.toFixed(1)}s`}
               {chatMode === "text" && `Generated in ${generalGenerationTime.toFixed(1)}s`}
+              {chatMode === "mindmap" && `Mindmap built in ${generalGenerationTime.toFixed(1)}s`}
             </span>
           </div>
         )}

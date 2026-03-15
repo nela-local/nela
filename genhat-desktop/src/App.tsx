@@ -1,4 +1,3 @@
-import MindMapWindow from "./components/MindMapWindow";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -13,6 +12,7 @@ import {
   Loader2,
   CheckCircle2,
   ChevronDown,
+  Share2,
 } from "lucide-react";
 import { Api } from "./api";
 import type {
@@ -23,6 +23,8 @@ import type {
   RegisteredModel,
   IngestionStatus,
   KittenTtsVoice,
+  MindMapGraph,
+  MindMapNode,
 } from "./types";
 import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
@@ -34,6 +36,7 @@ import ModelSelector from "./components/ModelSelector";
 import PdfViewer from "./components/PdfViewer";
 import DocumentViewer from "./components/DocumentViewer";
 import PodcastTab from "./components/PodcastTab";
+import MindMapOverlay from "./components/MindMapOverlay";
 import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
@@ -70,7 +73,112 @@ const MODE_CONFIG: {
     { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
     { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
     { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
+    { mode: "mindmap", label: "Mindmap", icon: Share2, desc: "Visual idea map" },
   ];
+
+function extractTaskText(response: unknown): string {
+  if (typeof response === "string") return response;
+  if (response && typeof response === "object") {
+    const record = response as Record<string, unknown>;
+    if (typeof record.Text === "string") return record.Text;
+    if (typeof record.Error === "string") throw new Error(record.Error);
+  }
+  return JSON.stringify(response ?? "");
+}
+
+function extractJsonObject(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) return trimmed;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
+
+  return null;
+}
+
+function normalizeMindMapNode(input: unknown): MindMapNode {
+  const node = (input ?? {}) as Record<string, unknown>;
+  const label = typeof node.label === "string" && node.label.trim().length > 0
+    ? node.label.trim()
+    : "Untitled";
+
+  const childrenRaw = Array.isArray(node.children) ? node.children : [];
+  return {
+    id: crypto.randomUUID(),
+    label,
+    children: childrenRaw.map((child) => normalizeMindMapNode(child)),
+  };
+}
+
+function parseMindMapGraph(
+  raw: string,
+  query: string,
+  generatedFrom: "documents" | "model",
+  sourceCount: number
+): MindMapGraph {
+  const jsonText = extractJsonObject(raw);
+  if (!jsonText) {
+    throw new Error("Model did not return JSON mindmap output.");
+  }
+
+  const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  const title = typeof parsed.title === "string" && parsed.title.trim().length > 0
+    ? parsed.title.trim()
+    : query;
+  const rootRaw = parsed.root as unknown;
+  const root = normalizeMindMapNode(rootRaw ?? { label: title, children: [] });
+
+  return {
+    id: crypto.randomUUID(),
+    title,
+    query,
+    generatedFrom,
+    sourceCount,
+    root,
+    createdAt: Date.now(),
+  };
+}
+
+function normalizeMindMapGraph(raw: unknown): MindMapGraph | null {
+  if (!raw || typeof raw !== "object") return null;
+  const graph = raw as Partial<MindMapGraph>;
+  if (!graph.root || typeof graph.root !== "object") return null;
+
+  return {
+    id: typeof graph.id === "string" && graph.id ? graph.id : crypto.randomUUID(),
+    title: typeof graph.title === "string" && graph.title ? graph.title : "Mindmap",
+    query: typeof graph.query === "string" ? graph.query : "",
+    generatedFrom: graph.generatedFrom === "documents" ? "documents" : "model",
+    sourceCount: typeof graph.sourceCount === "number" ? graph.sourceCount : 0,
+    root: normalizeMindMapNode(graph.root),
+    createdAt: typeof graph.createdAt === "number" ? graph.createdAt : Date.now(),
+  };
+}
+
+function normalizeMindmapsStore(raw: unknown): Record<string, MindMapGraph[]> {
+  if (!raw || typeof raw !== "object") return {};
+  const store = raw as Record<string, unknown>;
+  const normalized: Record<string, MindMapGraph[]> = {};
+
+  Object.entries(store).forEach(([sessionId, value]) => {
+    if (Array.isArray(value)) {
+      const items = value
+        .map((entry) => normalizeMindMapGraph(entry))
+        .filter((entry): entry is MindMapGraph => !!entry);
+      if (items.length > 0) normalized[sessionId] = items;
+      return;
+    }
+
+    const single = normalizeMindMapGraph(value);
+    if (single) normalized[sessionId] = [single];
+  });
+
+  return normalized;
+}
 
 // ── Session helpers (pure functions, no hooks) ──────────────────────────────
 
@@ -123,7 +231,6 @@ function normalizeSession(raw: Partial<ChatSession>): ChatSession {
 }
 
 function App() {
-  const [showMindMap, setShowMindMap] = useState(false);
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
@@ -172,6 +279,13 @@ function App() {
   const [ragDocs, setRagDocs] = useState<IngestionStatus[]>([]);
   const [ragIngesting, setRagIngesting] = useState(false);
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null);
+  const [mindmapsBySession, setMindmapsBySession] = useState<Record<string, MindMapGraph[]>>({});
+  const [activeMindmapOverlay, setActiveMindmapOverlay] = useState<{
+    sessionId: string;
+    mindmapId: string | null;
+    isGenerating?: boolean;
+    query?: string;
+  } | null>(null);
 
   // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
   const [docPanelOpen, setDocPanelOpen] = useState(false);
@@ -219,6 +333,11 @@ function App() {
     setActiveSessionId(sessionId);
   }, []);
 
+  const openMindmapOverlay = useCallback((sessionId: string, mindmapId: string) => {
+    openSessionInViewer(sessionId);
+    setActiveMindmapOverlay({ sessionId, mindmapId, isGenerating: false });
+  }, [openSessionInViewer]);
+
   /** Close only the viewer tab (does not delete chat history). */
   const closeViewerTab = useCallback(
     (sessionId: string) => {
@@ -248,6 +367,12 @@ function App() {
       // Abort any in-flight request for this session
       abortControllersRef.current.get(sessionId)?.abort();
       abortControllersRef.current.delete(sessionId);
+      setMindmapsBySession((prev) => {
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+      setActiveMindmapOverlay((prev) => (prev?.sessionId === sessionId ? null : prev));
 
       setSessions((prev) => {
         const remaining = prev.filter((s) => s.id !== sessionId);
@@ -345,6 +470,8 @@ function App() {
         setSessions([fresh]);
         setOpenSessionIds([fresh.id]);
         setActiveSessionId(fresh.id);
+        setMindmapsBySession({});
+        setActiveMindmapOverlay(null);
         setSessionStoreReady(true);
         return;
       }
@@ -353,16 +480,19 @@ function App() {
         sessions?: Partial<ChatSession>[];
         activeSessionId?: string;
         openSessionIds?: string[];
+        mindmapsBySession?: Record<string, unknown>;
       };
       const loaded = Array.isArray(parsed.sessions)
         ? parsed.sessions.map(normalizeSession)
         : [];
+      const restoredMindmaps = normalizeMindmapsStore(parsed.mindmapsBySession);
 
       if (loaded.length === 0) {
         const fresh = createEmptySession();
         setSessions([fresh]);
         setOpenSessionIds([fresh.id]);
         setActiveSessionId(fresh.id);
+        setMindmapsBySession({});
       } else {
         setSessions(loaded);
         const nextActive =
@@ -374,12 +504,16 @@ function App() {
           : [];
         setOpenSessionIds(restoredOpen.length > 0 ? restoredOpen : [nextActive]);
         setActiveSessionId(nextActive);
+        setMindmapsBySession(restoredMindmaps);
+        setActiveMindmapOverlay(null);
       }
     } catch (err) {
       console.error("Failed to restore workspace sessions:", err);
       const fresh = createEmptySession();
       setSessions([fresh]);
       setActiveSessionId(fresh.id);
+      setMindmapsBySession({});
+      setActiveMindmapOverlay(null);
     } finally {
       setSessionStoreReady(true);
     }
@@ -400,9 +534,10 @@ function App() {
         sessions,
         activeSessionId: safeActive,
         openSessionIds,
+        mindmapsBySession,
       })
     );
-  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds]);
+  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession]);
 
   // Keep active session aligned with currently open viewer tabs.
   useEffect(() => {
@@ -426,6 +561,30 @@ function App() {
     });
   }, [sessions]);
 
+  useEffect(() => {
+    const validSessionIds = new Set(sessions.map((session) => session.id));
+    setMindmapsBySession((prev) => {
+      const next: Record<string, MindMapGraph[]> = {};
+      let changed = false;
+      Object.entries(prev).forEach(([sessionId, maps]) => {
+        if (validSessionIds.has(sessionId) && maps.length > 0) {
+          next[sessionId] = maps;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    setActiveMindmapOverlay((prev) => {
+      if (!prev) return prev;
+      if (!validSessionIds.has(prev.sessionId)) return null;
+      if (!prev.mindmapId) return prev;
+      const list = mindmapsBySession[prev.sessionId] ?? [];
+      return list.some((map) => map.id === prev.mindmapId) ? prev : null;
+    });
+  }, [sessions, mindmapsBySession]);
+
   // Clear one-time mode notice after a short duration.
   useEffect(() => {
     if (!modeSwitchNotice) return;
@@ -446,9 +605,9 @@ function App() {
     setModeSwitchNotice(null);
   }, [activeSessionId]);
 
-  // Reload RAG docs periodically when in text mode
+  // Reload RAG docs periodically when in text/mindmap modes
   useEffect(() => {
-    if (chatMode === "text") loadRagDocs();
+    if (chatMode === "text" || chatMode === "mindmap") loadRagDocs();
   }, [chatMode]);
 
   // Listen for background enrichment progress events
@@ -736,6 +895,123 @@ function App() {
     abortControllersRef.current.set(sid, ctrl);
 
     try {
+      // ── Mindmap Mode (RAG-grounded when relevant) ──────────────────────
+      if (chatMode === "mindmap") {
+        try {
+          setActiveMindmapOverlay({ sessionId: sid, mindmapId: null, isGenerating: true, query: text });
+          setGeneralGenerating(true);
+          setGeneralElapsedTime(0);
+          setGeneralGenerationTime(null);
+          const startTime = Date.now();
+
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          generalIntervalRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
+            setGeneralElapsedTime(elapsed);
+          }, 100);
+
+          let generatedFrom: "documents" | "model" = "model";
+          let sourceCount = 0;
+          let sourceContext = "";
+
+          if (ragDocs.length > 0) {
+            try {
+              const setup = await Api.queryRagStream(text);
+              updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });
+              if (!setup.no_retrieval && setup.sources.length > 0) {
+                generatedFrom = "documents";
+                sourceCount = setup.sources.length;
+                sourceContext = setup.sources
+                  .map((source, index) => `Source ${index + 1} (${source.doc_title}):\n${source.text}`)
+                  .join("\n\n");
+              }
+            } catch (e) {
+              console.warn("Mindmap RAG grounding failed; using model knowledge.", e);
+            }
+          }
+
+          const prompt = generatedFrom === "documents"
+            ? [
+                `User query: ${text}`,
+                "Build a concise mindmap grounded ONLY in the provided sources.",
+                "Return ONLY valid JSON and no markdown/code fences.",
+                "Schema:",
+                '{"title":"string","root":{"label":"string","children":[{"label":"string","children":[...]}]}}',
+                "Rules:",
+                "- 3 to 6 first-level branches.",
+                "- Keep labels short (2 to 8 words).",
+                "- Depth max 3.",
+                "- Do not invent unsupported facts.",
+                "Sources:",
+                sourceContext,
+              ].join("\n")
+            : [
+                `User query: ${text}`,
+                "Create a concise conceptual mindmap from your own knowledge.",
+                "Return ONLY valid JSON and no markdown/code fences.",
+                "Schema:",
+                '{"title":"string","root":{"label":"string","children":[{"label":"string","children":[...]}]}}',
+                "Rules:",
+                "- 3 to 6 first-level branches.",
+                "- Keep labels short (2 to 8 words).",
+                "- Depth max 3.",
+              ].join("\n");
+
+          const raw = await Api.routeRequest("mindmap", prompt, selectedModel || undefined);
+          const modelText = extractTaskText(raw);
+          const graph = parseMindMapGraph(modelText, text, generatedFrom, sourceCount);
+
+          setMindmapsBySession((prev) => ({
+            ...prev,
+            [sid]: [...(prev[sid] ?? []), graph],
+          }));
+          setActiveMindmapOverlay({
+            sessionId: sid,
+            mindmapId: graph.id,
+            isGenerating: false,
+            query: text,
+          });
+
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
+          setGeneralGenerating(false);
+          setGeneralElapsedTime(totalTime);
+          setGeneralGenerationTime(totalTime);
+
+          updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              {
+                role: "assistant" as const,
+                content:
+                  generatedFrom === "documents"
+                    ? `Mindmap generated from ${sourceCount} retrieved document source${sourceCount === 1 ? "" : "s"}.`
+                    : "Mindmap generated from model knowledge.",
+                generateTime: totalTime,
+              },
+            ],
+            streamingContent: "",
+            loading: false,
+          }));
+        } catch (e) {
+          setActiveMindmapOverlay(null);
+          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+          setGeneralGenerating(false);
+          console.error("Mindmap generation failed:", e);
+          updateSession(sid, (prev) => ({
+            messages: [
+              ...prev.messages,
+              {
+                role: "assistant" as const,
+                content: `Mindmap generation failed: ${e}`,
+              },
+            ],
+            loading: false,
+          }));
+        }
+        return;
+      }
+
       // ── RAG-enhanced Chat (auto-activates when documents are ingested) ──
       if (chatMode === "text" && ragDocs.length > 0) {
         try {
@@ -1112,7 +1388,7 @@ function App() {
       setImagePath(null);
       setImagePreview(null);
     }
-    if (mode !== "text") {
+    if (mode !== "text" && mode !== "mindmap") {
       setDocPanelOpen(false);
     }
 
@@ -1127,6 +1403,10 @@ function App() {
         return "Type text to generate speech...";
       case "podcast":
         return "What topic should the podcast cover?";
+      case "mindmap":
+        return ragDocs.length > 0
+          ? "Ask for a mindmap (auto-grounds on relevant documents)..."
+          : "Describe a topic to generate a mindmap...";
       default:
         return ragDocs.length > 0
           ? "Ask about your documents or chat freely..."
@@ -1149,8 +1429,23 @@ function App() {
     setSidebarSection(section);
   };
 
-  // Placeholder: audioFiles and mindmaps (replace with real data as needed)
-  const mindmaps: { id: string; name: string }[] = [];
+  const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
+  const mindmaps = activeSessionMindmaps
+    .map((map) => ({
+      id: map.id,
+      sessionId: activeSession?.id ?? "",
+      name: map.title,
+      query: map.query,
+      generatedFrom: map.generatedFrom,
+      createdAt: map.createdAt,
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  const activeMindmapGraph = activeMindmapOverlay
+    ? (mindmapsBySession[activeMindmapOverlay.sessionId] ?? []).find(
+        (map) => map.id === activeMindmapOverlay.mindmapId
+      ) ?? null
+    : null;
 
   // Handler to save audio to sidebar (set audioSaved=true)
   const handleSaveAudioToSidebar = (msgIdx: number) => {
@@ -1162,28 +1457,6 @@ function App() {
 
   return (
     <div className="flex h-full w-full">
-      {/* TEMP: Button to show MindMapWindow */}
-      <button
-        style={{
-          position: "fixed",
-          top: 16,
-          right: 16,
-          zIndex: 2000,
-          background: "#222",
-          color: "#ff8c00",
-          border: "1px solid #ff8c00",
-          borderRadius: 8,
-          padding: "8px 16px",
-          fontWeight: 600,
-          fontSize: 15,
-          cursor: "pointer",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-        }}
-        onClick={() => setShowMindMap(true)}
-      >
-        Show Mind Map
-      </button>
-      {showMindMap && <MindMapWindow onClose={() => setShowMindMap(false)} />}
       <SidebarNav selected={sidebarSection} onSelect={handleSidebarNav} />
       {/* Vertical blue line when sidebar is minimized */}
           {sidebarSection === null && (
@@ -1268,18 +1541,53 @@ function App() {
             </aside>
           )}
           {sidebarSection === "mindmaps" && (
-            <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col items-center justify-center text-txt-secondary">
-              <div className="w-full px-4 py-6">
-                <h2 className="text-lg font-semibold mb-2">Mindmaps</h2>
-                {mindmaps.length === 0 ? (
-                  <div className="text-[0.9rem] text-txt-muted">No mindmaps generated yet.</div>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {mindmaps.map((mm) => (
-                      <li key={mm.id} className="truncate text-neon">{mm.name}</li>
-                    ))}
-                  </ul>
-                )}
+            <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col">
+              <div className="h-10 px-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2 text-txt">
+                  <span className="text-2xl font-semibold mt-2">Mindmaps</span>
+                </div>
+              </div>
+
+              <div className="flex-1 p-2 flex flex-col">
+                <div className="flex-1 bg-void-900 border border-glass-border rounded-xl p-2 flex flex-col gap-1.5 shadow-md overflow-y-auto">
+                  {mindmaps.length === 0 ? (
+                    <div className="text-[0.9rem] text-txt-muted p-2">No mindmaps generated yet.</div>
+                  ) : (
+                    mindmaps.map((mm) => {
+                      const isOpen =
+                        activeMindmapOverlay?.mindmapId === mm.id &&
+                        activeMindmapOverlay?.sessionId === mm.sessionId;
+
+                      return (
+                        <button
+                          key={mm.id}
+                          className={`group relative w-full text-left rounded-xl border px-3 py-2.5 transition-all duration-150 ${
+                            isOpen
+                              ? "bg-neon-subtle border-neon/30 text-txt shadow-[0_0_14px_rgba(0,212,255,0.08)]"
+                              : "bg-void-700/65 border-glass-border text-txt-secondary hover:border-neon/20 hover:text-txt"
+                          }`}
+                          onClick={() => openMindmapOverlay(mm.sessionId, mm.id)}
+                          title={mm.name}
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[0.82rem] font-medium truncate">{mm.name}</span>
+                              <span className="text-[0.68rem] text-txt-muted shrink-0">
+                                {new Date(mm.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[0.72rem] text-txt-muted leading-snug max-h-[2.4em] overflow-hidden">
+                              {mm.query || "No query"}
+                            </p>
+                            <div className="mt-1.5 text-[0.68rem] text-txt-muted">
+                              {mm.generatedFrom === "documents" ? "Document-grounded" : "Model knowledge"}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </aside>
           )}
@@ -1310,7 +1618,7 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {chatMode === "text" && (
+            {(chatMode === "text" || chatMode === "mindmap") && (
               <ModelSelector
                 models={models}
                 selectedModel={selectedModel}
@@ -1421,7 +1729,7 @@ function App() {
             onClearVisionImage={clearImage}
             onToggleDocPanel={() => setDocPanelOpen((v) => !v)}
             chatMode={chatMode}
-            showRagControls={chatMode === "text"}
+            showRagControls={chatMode === "text" || chatMode === "mindmap"}
             docPanelOpen={docPanelOpen}
             modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
             currentMode={chatMode}
@@ -1429,6 +1737,15 @@ function App() {
             modeSwitchNotice={modeSwitchNotice}
             saveAudioToSidebar={handleSaveAudioToSidebar}
             session={activeSession}
+          />
+        )}
+
+        {activeMindmapOverlay && (activeMindmapGraph || activeMindmapOverlay.isGenerating) && (
+          <MindMapOverlay
+            graph={activeMindmapGraph}
+            isGenerating={!!activeMindmapOverlay.isGenerating}
+            query={activeMindmapOverlay.query}
+            onClose={() => setActiveMindmapOverlay(null)}
           />
         )}
 

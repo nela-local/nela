@@ -75,7 +75,23 @@ export interface MediaAsset {
   caption_hash: string | null;
 }
 
-export type ChatMode = "text" | "vision" | "audio" | "rag" | "podcast";
+export interface MindMapNode {
+  id: string;
+  label: string;
+  children: MindMapNode[];
+}
+
+export interface MindMapGraph {
+  id: string;
+  title: string;
+  query: string;
+  generatedFrom: "documents" | "model";
+  sourceCount: number;
+  root: MindMapNode;
+  createdAt: number;
+}
+
+export type ChatMode = "text" | "vision" | "audio" | "rag" | "podcast" | "mindmap";
 
 // ── Multi-Chat Session ────────────────────────────────────────────────────────
 
