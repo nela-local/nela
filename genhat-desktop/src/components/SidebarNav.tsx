@@ -2,7 +2,7 @@ import React from "react";
 import { MessageSquare, Volume2, Share2 } from "lucide-react";
 
 interface SidebarNavProps {
-  selected: "chats" | "audio" | "mindmaps";
+  selected: "chats" | "audio" | "mindmaps" | null;
   onSelect: (section: "chats" | "audio" | "mindmaps") => void;
 }
 

@@ -311,14 +311,6 @@ function App() {
     []
   );
 
-  /** Update only the active session (convenience wrapper). */
-  const updateActiveSession = useCallback(
-    (patch: Partial<ChatSession> | ((prev: ChatSession) => Partial<ChatSession>)) => {
-      updateSession(activeSessionId, patch);
-    },
-    [activeSessionId, updateSession]
-  );
-
   /** Create a new session, add it to the list, and activate it. */
   const addNewSession = useCallback(() => {
     const newSession = createEmptySession();
@@ -677,8 +669,6 @@ function App() {
     try {
       setSelectedModel(path);
       await Api.switchModel(path);
-      // Clear messages in the active session only when switching models
-      updateActiveSession({ messages: [], streamingContent: "", ragResult: null, mediaAssets: {} });
     } catch (err) {
       console.error(err);
       alert("Failed to switch model");
@@ -1422,11 +1412,11 @@ function App() {
     .filter((s): s is ChatSession => !!s);
 
   // Sidebar section state with toggle logic
-  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps">("chats");
+  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps" | null>("chats");
 
   // Toggle handler for sidebar
   const handleSidebarNav = (section: "chats" | "audio" | "mindmaps") => {
-    setSidebarSection(section);
+    setSidebarSection((prev) => (prev === section ? null : section));
   };
 
   const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
