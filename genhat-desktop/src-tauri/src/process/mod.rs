@@ -29,6 +29,8 @@ pub struct ProcessManager {
     memory_budget_mb: u32,
     /// Currently-active LLM model id (for legacy commands)
     active_llm_id: Arc<RwLock<String>>,
+    /// Previously-active LLM model id (kept warm; at most one)
+    previous_llm_id: Arc<RwLock<Option<String>>>,
 }
 
 impl std::fmt::Debug for ProcessManager {
@@ -85,6 +87,7 @@ impl ProcessManager {
             models_dir,
             memory_budget_mb: 0, // 0 = unlimited, set via config later
             active_llm_id: Arc::new(RwLock::new(default_llm_id)),
+            previous_llm_id: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -103,9 +106,91 @@ impl ProcessManager {
         self.active_llm_id.read().await.clone()
     }
 
+    /// Get the previously-active LLM model id, if any (kept warm).
+    pub async fn previous_llm_id(&self) -> Option<String> {
+        self.previous_llm_id.read().await.clone()
+    }
+
     /// Set the currently-active LLM model id.
     pub async fn set_active_llm(&self, id: &str) {
         *self.active_llm_id.write().await = id.to_string();
+    }
+
+    /// Rotate the active LLM, keeping the previous model warm.
+    /// Returns an optional model id that should be stopped (to cap warm models to 2).
+    pub async fn rotate_active_llm_keep_previous(&self, new_active: &str) -> Option<String> {
+        let mut active = self.active_llm_id.write().await;
+        if active.as_str() == new_active {
+            return None;
+        }
+
+        let old_active = active.clone();
+        *active = new_active.to_string();
+        drop(active);
+
+        let mut prev = self.previous_llm_id.write().await;
+        let evict = prev
+            .as_ref()
+            .filter(|id| id.as_str() != old_active.as_str() && id.as_str() != new_active)
+            .cloned();
+        *prev = Some(old_active);
+        evict
+    }
+
+    async fn wait_for_instance_ready(
+        &self,
+        model_id: &str,
+        instance_id: &str,
+        timeout_secs: u64,
+    ) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        loop {
+            if std::time::Instant::now() > deadline {
+                return Err(format!(
+                    "Timed out waiting for instance '{}' of '{}' to become ready",
+                    &instance_id[..8],
+                    model_id
+                ));
+            }
+
+            let (status, has_handle) = {
+                let models = self.models.read().await;
+                let managed = models
+                    .get(model_id)
+                    .ok_or_else(|| format!("Model '{model_id}' not found"))?;
+                let inst = managed
+                    .instances
+                    .iter()
+                    .find(|i| i.instance_id == instance_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "Instance '{}' of '{}' disappeared while starting",
+                            &instance_id[..8],
+                            model_id
+                        )
+                    })?;
+                (inst.status.clone(), inst.handle.is_some())
+            };
+
+            match status {
+                ModelStatus::Ready if has_handle => return Ok(()),
+                ModelStatus::Error(e) => {
+                    return Err(format!(
+                        "Instance '{}' of '{}' failed to start: {e}",
+                        &instance_id[..8],
+                        model_id
+                    ))
+                }
+                ModelStatus::ShuttingDown => {
+                    return Err(format!(
+                        "Instance '{}' of '{}' is shutting down",
+                        &instance_id[..8],
+                        model_id
+                    ))
+                }
+                _ => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+            }
+        }
     }
 
     /// Dynamically register a new model at runtime.
@@ -164,8 +249,42 @@ impl ProcessManager {
             .ok_or_else(|| format!("No backend registered for model '{model_id}'"))?
             .clone();
 
+        // Fast path (read-only): reuse Ready or wait on an in-flight Loading instance.
+        {
+            let models = self.models.read().await;
+            let managed = models
+                .get(model_id)
+                .ok_or_else(|| format!("Model '{model_id}' not found in registry"))?;
+
+            if let Some(inst) = managed
+                .instances
+                .iter()
+                .find(|i| i.status == ModelStatus::Ready && i.active_requests == 0)
+            {
+                log::debug!(
+                    "Reusing existing instance '{}' for model '{model_id}'",
+                    inst.instance_id
+                );
+                return Ok(inst.instance_id.clone());
+            }
+
+            if let Some(inst) = managed
+                .instances
+                .iter()
+                .find(|i| i.status == ModelStatus::Loading)
+            {
+                let loading_id = inst.instance_id.clone();
+                drop(models);
+                self.wait_for_instance_ready(model_id, &loading_id, 180)
+                    .await
+                    .map_err(|e| format!("{e}"))?;
+                return Ok(loading_id);
+            }
+        }
+
+        // Slow path (write): we may need to spawn a new instance or route under contention.
         let mut models = self.models.write().await;
-        
+
         // Pre-check: extract needed info and compute memory usage before mutable borrow
         let (needed_mb, max_instances) = {
             let managed = models
@@ -185,20 +304,30 @@ impl ProcessManager {
             }
         }
 
-        // Now get mutable reference
         let managed = models
             .get_mut(model_id)
             .ok_or_else(|| format!("Model '{model_id}' not found in registry"))?;
 
-        // 1. Check for an existing Ready instance that is not busy
-        for inst in &managed.instances {
-            if inst.status == ModelStatus::Ready && inst.active_requests == 0 {
-                log::debug!(
-                    "Reusing existing instance '{}' for model '{model_id}'",
-                    inst.instance_id
-                );
-                return Ok(inst.instance_id.clone());
-            }
+        // Re-check under the write lock (another task may have started one).
+        if let Some(inst) = managed
+            .instances
+            .iter()
+            .find(|i| i.status == ModelStatus::Ready && i.active_requests == 0)
+        {
+            return Ok(inst.instance_id.clone());
+        }
+
+        let loading_id_opt = managed
+            .instances
+            .iter()
+            .find(|i| i.status == ModelStatus::Loading)
+            .map(|i| i.instance_id.clone());
+        if let Some(loading_id) = loading_id_opt {
+            drop(models);
+            self.wait_for_instance_ready(model_id, &loading_id, 180)
+                .await
+                .map_err(|e| format!("{e}"))?;
+            return Ok(loading_id);
         }
 
         // 2. Check concurrency limit
@@ -209,12 +338,14 @@ impl ProcessManager {
             .count() as u32;
 
         if active_count >= max_instances {
-            // All slots taken — pick the instance with the fewest in-flight requests
-            // so the backend (e.g. llama-server HTTP API) can handle the concurrency.
+            // All slots taken — route only to instances that are actually runnable.
+            // Never route to Loading instances (no handle yet).
             if let Some(inst) = managed
                 .instances
                 .iter()
                 .filter(|i| i.status != ModelStatus::ShuttingDown)
+                .filter(|i| i.status != ModelStatus::Loading)
+                .filter(|i| i.handle.is_some())
                 .min_by_key(|i| i.active_requests)
             {
                 log::debug!(
@@ -225,7 +356,7 @@ impl ProcessManager {
                 return Ok(inst.instance_id.clone());
             }
             return Err(format!(
-                "Model '{model_id}' at max instances ({max_instances}) and all are shutting down",
+                "Model '{model_id}' at max instances ({max_instances}) but no runnable instances are ready",
             ));
         }
 
@@ -254,22 +385,49 @@ impl ProcessManager {
         // Actually start the model
         match backend.start(&def, &models_dir).await {
             Ok(handle) => {
-                let mut models = self.models.write().await;
-                if let Some(managed) = models.get_mut(model_id) {
-                    if let Some(inst) = managed
-                        .instances
-                        .iter_mut()
-                        .find(|i| i.instance_id == instance_id)
-                    {
-                        inst.handle = Some(Arc::new(handle));
-                        inst.status = ModelStatus::Ready;
-                        inst.last_activity = std::time::Instant::now();
-                        log::info!(
-                            "Instance '{}' for model '{model_id}' is ready",
+                let arc_handle = Arc::new(handle);
+                let mut should_stop = false;
+                {
+                    let mut models = self.models.write().await;
+                    if let Some(managed) = models.get_mut(model_id) {
+                        if let Some(inst) = managed
+                            .instances
+                            .iter_mut()
+                            .find(|i| i.instance_id == instance_id)
+                        {
+                            if inst.status == ModelStatus::ShuttingDown {
+                                should_stop = true;
+                            } else {
+                                inst.handle = Some(arc_handle.clone());
+                                inst.status = ModelStatus::Ready;
+                                inst.last_activity = std::time::Instant::now();
+                                log::info!(
+                                    "Instance '{}' for model '{model_id}' is ready",
+                                    &instance_id[..8]
+                                );
+                            }
+                        } else {
+                            // Instance removed while starting (e.g. stop_model drained instances).
+                            should_stop = true;
+                        }
+                    } else {
+                        should_stop = true;
+                    }
+                }
+
+                if should_stop {
+                    if let Err(e) = backend.stop(arc_handle.as_ref()).await {
+                        log::warn!(
+                            "Started instance '{}' for '{model_id}' but it was already removed; stop failed: {e}",
                             &instance_id[..8]
                         );
                     }
+                    return Err(format!(
+                        "Instance '{}' for '{model_id}' was stopped while starting",
+                        &instance_id[..8]
+                    ));
                 }
+
                 Ok(instance_id)
             }
             Err(e) => {
@@ -315,18 +473,6 @@ impl ProcessManager {
             }
         }
 
-        // Mark instance as busy
-        {
-            let mut models = self.models.write().await;
-            if let Some(managed) = models.get_mut(model_id) {
-                if let Some(inst) = managed.instances.iter_mut().find(|i| i.instance_id == *instance_id) {
-                    inst.active_requests += 1;
-                    inst.status = ModelStatus::Busy;
-                }
-            }
-        }
-
-
         // Extract the handle while briefly holding the read lock, then drop it
         // before the potentially long-running backend.execute() call so writers
         // (ensure_running, stop_model, reap_idle) are not starved.
@@ -339,8 +485,30 @@ impl ProcessManager {
                 .find(|i| i.instance_id == *instance_id)
                 .ok_or("Instance not found")?;
 
+            if inst.status == ModelStatus::ShuttingDown {
+                return Err("Instance is shutting down".into());
+            }
+
             inst.handle.as_ref().cloned().ok_or("Instance handle not ready")?
         };
+
+        // Mark instance as busy *after* we know the handle exists.
+        {
+            let mut models = self.models.write().await;
+            let managed = models.get_mut(model_id).ok_or("Model not found")?;
+            let inst = managed
+                .instances
+                .iter_mut()
+                .find(|i| i.instance_id == *instance_id)
+                .ok_or("Instance not found")?;
+
+            if inst.status == ModelStatus::ShuttingDown {
+                return Err("Instance is shutting down".into());
+            }
+
+            inst.active_requests += 1;
+            inst.status = ModelStatus::Busy;
+        }
 
         let result = backend
             .execute(&handle, &enriched_request, &self.models_dir)
@@ -366,14 +534,20 @@ impl ProcessManager {
     /// Stop a specific model (all instances).
     pub async fn stop_model(&self, model_id: &str) -> Result<(), String> {
         let backend = self.backends.read().await.get(model_id).cloned();
-        let mut models = self.models.write().await;
-
-        if let Some(managed) = models.get_mut(model_id) {
-            for inst in managed.instances.drain(..) {
-                inst_stop(&backend, inst).await;
+        let drained: Vec<ManagedInstance> = {
+            let mut models = self.models.write().await;
+            if let Some(managed) = models.get_mut(model_id) {
+                managed.instances.drain(..).collect()
+            } else {
+                Vec::new()
             }
-            log::info!("All instances of '{model_id}' stopped");
+        };
+
+        for inst in drained {
+            inst_stop(&backend, inst).await;
         }
+
+        log::info!("All instances of '{model_id}' stopped");
         Ok(())
     }
 
@@ -381,10 +555,21 @@ impl ProcessManager {
     pub async fn stop_all(&self) {
         log::info!("ProcessManager: stopping all models...");
         let backends = self.backends.read().await;
-        let mut models = self.models.write().await;
-        for (model_id, managed) in models.iter_mut() {
-            let backend = backends.get(model_id).cloned();
-            for inst in managed.instances.drain(..) {
+        let drained: Vec<(Option<Arc<dyn ModelBackend>>, Vec<ManagedInstance>)> = {
+            let mut models = self.models.write().await;
+            models
+                .iter_mut()
+                .map(|(model_id, managed)| {
+                    let backend = backends.get(model_id).cloned();
+                    let insts = managed.instances.drain(..).collect::<Vec<_>>();
+                    (backend, insts)
+                })
+                .collect()
+        };
+        drop(backends);
+
+        for (backend, insts) in drained {
+            for inst in insts {
                 inst_stop(&backend, inst).await;
             }
         }
@@ -515,34 +700,42 @@ impl ProcessManager {
 
     /// Reap idle ephemeral instances that have exceeded their idle timeout.
     pub async fn reap_idle(&self) {
-        let mut models = self.models.write().await;
-        for (model_id, managed) in models.iter_mut() {
-            let timeout_s = managed.def.idle_timeout_s;
-            if timeout_s == 0 {
-                continue; // 0 means fire-and-forget backends handle their own cleanup
-            }
+        let backends = self.backends.read().await;
+        let mut stop_actions: Vec<(Option<Arc<dyn ModelBackend>>, ManagedInstance)> = Vec::new();
 
-            let backend = self.backends.read().await.get(model_id).cloned();
-            let mut to_remove = Vec::new();
+        {
+            let mut models = self.models.write().await;
+            for (model_id, managed) in models.iter_mut() {
+                let timeout_s = managed.def.idle_timeout_s;
+                // 0 = immediate reap for eligible ephemeral instances.
 
-            for (idx, inst) in managed.instances.iter().enumerate() {
-                if inst.ephemeral
-                    && inst.active_requests == 0
-                    && inst.last_activity.elapsed().as_secs() > timeout_s
-                {
-                    log::info!(
-                        "Reaping idle ephemeral instance '{}' of '{model_id}'",
-                        &inst.instance_id[..8]
-                    );
-                    to_remove.push(idx);
+                let backend = backends.get(model_id).cloned();
+                let mut to_remove = Vec::new();
+
+                for (idx, inst) in managed.instances.iter().enumerate() {
+                    if inst.ephemeral
+                        && inst.active_requests == 0
+                        && inst.last_activity.elapsed().as_secs() >= timeout_s
+                    {
+                        log::info!(
+                            "Reaping idle ephemeral instance '{}' of '{model_id}'",
+                            &inst.instance_id[..8]
+                        );
+                        to_remove.push(idx);
+                    }
+                }
+
+                // Remove in reverse order to preserve indices
+                for idx in to_remove.into_iter().rev() {
+                    let inst = managed.instances.remove(idx);
+                    stop_actions.push((backend.clone(), inst));
                 }
             }
+        }
+        drop(backends);
 
-            // Remove in reverse order to preserve indices
-            for idx in to_remove.into_iter().rev() {
-                let inst = managed.instances.remove(idx);
-                inst_stop(&backend, inst).await;
-            }
+        for (backend, inst) in stop_actions {
+            inst_stop(&backend, inst).await;
         }
     }
 }

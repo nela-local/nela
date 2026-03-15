@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import psutil
 
@@ -21,6 +21,16 @@ import psutil
 SPAWN_RE = re.compile(r"Spawning new instance '([^']+)' for model '([^']+)'")
 READY_RE = re.compile(r"Instance '([^']+)' for model '([^']+)' is ready")
 LIFECYCLE_RE = re.compile(r"Lifecycle manager started \(interval=(\d+)s\)")
+
+# Optional: explicit BENCH markers emitted by the app (Rust log output).
+# This benchmark suite works without these markers.
+BENCH_PID_RE = re.compile(r"\[BENCH\]\s+APP_PID\s+(\d+)")
+BENCH_START_MS_RE = re.compile(r"\[BENCH\]\s+APP_START_MS\s+(\d+)")
+BENCH_MARK_RE = re.compile(r"\[BENCH\]\s+MARK\s+([a-zA-Z0-9_\-\.]+)\s+(\d+)")
+BENCH_SHUTDOWN_BEGIN_RE = re.compile(r"\[BENCH\]\s+SHUTDOWN_BEGIN\s+(\d+)")
+BENCH_SHUTDOWN_END_RE = re.compile(r"\[BENCH\]\s+SHUTDOWN_END\s+(\d+)\s+elapsed_ms=(\d+)")
+BENCH_MODEL_BEGIN_RE = re.compile(r"\[BENCH\]\s+MODEL_START_BEGIN\s+model_id=([^\s]+)\s+ts_ms=(\d+)")
+BENCH_MODEL_READY_RE = re.compile(r"\[BENCH\]\s+MODEL_START_READY\s+model_id=([^\s]+)\s+ts_ms=(\d+)\s+elapsed_ms=(\d+)")
 
 
 @dataclass
@@ -30,6 +40,32 @@ class Sample:
     rss_mb: float
     cpu_percent: float
     process_count: int
+
+
+@dataclass
+class ExtendedSample:
+    ts: float
+    elapsed_s: float
+    rss_mb: float
+    vms_mb: float
+    pss_mb: Optional[float]
+    uss_mb: Optional[float]
+    shared_mb: Optional[float]
+    cpu_percent: float
+    process_count: int
+    threads: int
+    open_fds: Optional[int]
+    read_bytes: int
+    write_bytes: int
+    read_rate_bps: Optional[float]
+    write_rate_bps: Optional[float]
+    minor_faults: int
+    major_faults: int
+    minor_faults_rate: Optional[float]
+    major_faults_rate: Optional[float]
+    ctx_switches_voluntary: Optional[int]
+    ctx_switches_involuntary: Optional[int]
+    llama_server_count: int
 
 
 class BenchmarkRunner:
@@ -46,19 +82,35 @@ class BenchmarkRunner:
 
         self.root_process: Optional[subprocess.Popen] = None
         self.root_pid: Optional[int] = None
+        self.app_pid: Optional[int] = None
+        self.measure_pid: Optional[int] = None
         self.monitoring_active = False
         self.start_time: Optional[float] = None
         self.ready_time: Optional[float] = None
         self.lifecycle_interval_s = 30
 
+        self.app_start_ms: Optional[int] = None
+        self.ui_ready_ms: Optional[int] = None
+        self.shutdown_begin_ms: Optional[int] = None
+        self.shutdown_end_ms: Optional[int] = None
+
         self.samples: List[Sample] = []
+        self.extended_samples: List[ExtendedSample] = []
         self.spawn_events: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
         self.ready_events: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
         self.model_load_rows: List[dict] = []
 
+        self.events: List[dict] = []
+
+        self._pid_discovery_lock = threading.Lock()
+        self._last_extended_ts: Optional[float] = None
+        self._last_io: Optional[Tuple[float, int, int]] = None
+        self._last_faults: Optional[Tuple[float, int, int]] = None
+
         self._log_lock = threading.Lock()
 
     def run(self):
+        metrics: Optional[dict] = None
         try:
             if self.args.mode == "launch":
                 self._launch_app()
@@ -67,15 +119,22 @@ class BenchmarkRunner:
 
             self._start_monitoring_thread()
             self._wait_for_ready_if_needed()
-            self._capture_idle_metrics_phase()
-            self._capture_model_loading_phase()
+            if getattr(self.args, "run_until_exit", False):
+                self._wait_until_exit()
+            else:
+                self._capture_idle_metrics_phase()
+                self._capture_model_loading_phase()
             self._capture_disk_and_binary_metrics()
             metrics = self._finalize_metrics()
             self._write_outputs(metrics)
             self._run_plotter()
             self._print_summary(metrics)
         finally:
-            if self.args.mode == "launch" and self.args.shutdown_after_benchmark:
+            if (
+                self.args.mode == "launch"
+                and self.args.shutdown_after_benchmark
+                and not getattr(self.args, "run_until_exit", False)
+            ):
                 shutdown_time = self._graceful_shutdown()
                 if shutdown_time is not None:
                     metrics_path = self.results_dir / "metrics.json"
@@ -86,6 +145,42 @@ class BenchmarkRunner:
                         self._run_plotter()
             self.monitoring_active = False
 
+    def _wait_until_exit(self):
+        """Keep sampling until the app exits (user closes window / process ends)."""
+        print("\n=== Run-Until-Exit Mode ===")
+        print("Use the app normally. Close it when finished.")
+        print("Benchmark will stop automatically and write results/plots.\n")
+
+        missing_target_count = 0
+        # Prefer the discovered app PID; fall back to the current measure/root PID.
+        while True:
+            # If launch wrapper exits, we are done.
+            if self.args.mode == "launch" and self.root_process and self.root_process.poll() is not None:
+                break
+
+            target_pid = self.app_pid or self.measure_pid or self.root_pid
+            if target_pid and not psutil.pid_exists(int(target_pid)):
+                missing_target_count += 1
+            else:
+                missing_target_count = 0
+
+            # Require a few consecutive misses to avoid races during PID switching.
+            if missing_target_count >= 6:
+                break
+
+            time.sleep(0.5)
+
+        # In launch mode, ensure we do not leave the dev wrapper (npx tauri dev) running.
+        if self.args.mode == "launch" and self.root_process and self.root_process.poll() is None:
+            try:
+                self.root_process.terminate()
+                self.root_process.wait(timeout=8)
+            except Exception:
+                try:
+                    self.root_process.kill()
+                except Exception:
+                    pass
+
     def _launch_app(self):
         launch_cmd = self.args.launch_cmd
         if not launch_cmd:
@@ -94,6 +189,8 @@ class BenchmarkRunner:
         self.start_time = time.time()
         env = os.environ.copy()
         env.setdefault("RUST_LOG", "info")
+        if getattr(self.args, "sanitize_launch_env", False):
+            env = self._sanitize_launch_env(env)
 
         self.root_process = subprocess.Popen(
             ["bash", "-lc", launch_cmd],
@@ -105,13 +202,44 @@ class BenchmarkRunner:
             env=env,
         )
         self.root_pid = self.root_process.pid
+        self.measure_pid = self.root_pid
+
+        # Start a background PID discovery loop to identify the actual Tauri app PID
+        # (and not the wrapper bash/node/cargo process tree root).
+        threading.Thread(target=self._pid_discovery_loop, daemon=True).start()
 
         threading.Thread(target=self._consume_stdout, daemon=True).start()
+
+    def _sanitize_launch_env(self, env: dict) -> dict:
+        """Best-effort env cleanup to avoid Snap runtime library injection.
+
+        Some Linux setups (especially Snap) may add `/snap/...` libc paths that break
+        locally built Rust binaries with symbol lookup errors.
+        """
+        cleaned = dict(env)
+
+        # Remove SNAP-related variables that can influence runtime loader behavior.
+        for key in list(cleaned.keys()):
+            if key.startswith("SNAP"):
+                cleaned.pop(key, None)
+
+        ld = cleaned.get("LD_LIBRARY_PATH")
+        if ld:
+            parts = [p for p in ld.split(":") if "/snap/" not in p]
+            if parts:
+                cleaned["LD_LIBRARY_PATH"] = ":".join(parts)
+            else:
+                cleaned.pop("LD_LIBRARY_PATH", None)
+
+        # If a preload is set (rare), drop it to reduce surprise.
+        cleaned.pop("LD_PRELOAD", None)
+        return cleaned
 
     def _attach_to_app(self):
         self.start_time = time.time()
         if self.args.attach_pid:
             self.root_pid = self.args.attach_pid
+            self.measure_pid = self.root_pid
             return
 
         if not self.args.attach_name:
@@ -123,6 +251,7 @@ class BenchmarkRunner:
             cmdline = " ".join(proc.info.get("cmdline") or []).lower()
             if target_name in name or target_name in cmdline:
                 self.root_pid = proc.info["pid"]
+                self.measure_pid = self.root_pid
                 break
 
         if not self.root_pid:
@@ -163,6 +292,86 @@ class BenchmarkRunner:
     def _parse_log_line(self, line: str, ts: float):
         line = line.rstrip("\n")
 
+        pid_match = BENCH_PID_RE.search(line)
+        if pid_match:
+            try:
+                self.app_pid = int(pid_match.group(1))
+                self.measure_pid = self.app_pid
+                self._record_event("app_pid", ts, {"app_pid": self.app_pid})
+            except ValueError:
+                pass
+
+        # Even without BENCH markers, try to discover the real app PID.
+        self._maybe_discover_app_pid()
+
+        start_ms_match = BENCH_START_MS_RE.search(line)
+        if start_ms_match:
+            try:
+                self.app_start_ms = int(start_ms_match.group(1))
+                self._record_event("app_start_ms", ts, {"app_start_ms": self.app_start_ms})
+            except ValueError:
+                pass
+
+        mark_match = BENCH_MARK_RE.search(line)
+        if mark_match:
+            name, ts_ms = mark_match.groups()
+            ts_ms_i: Optional[int]
+            try:
+                ts_ms_i = int(ts_ms)
+            except ValueError:
+                ts_ms_i = None
+            self._record_event("mark", ts, {"name": name, "ts_ms": ts_ms_i})
+            if name in {"ui_ready", "interactive_ready"} and ts_ms_i is not None:
+                # Prefer explicit app-provided timestamp for cold-start timing.
+                self.ui_ready_ms = ts_ms_i
+            if name in {"ui_ready", "interactive_ready"} and self.start_time and self.ready_time is None:
+                self.ready_time = ts
+
+        shutdown_begin_match = BENCH_SHUTDOWN_BEGIN_RE.search(line)
+        if shutdown_begin_match:
+            try:
+                self.shutdown_begin_ms = int(shutdown_begin_match.group(1))
+                self._record_event("shutdown_begin", ts, {"ts_ms": self.shutdown_begin_ms})
+            except ValueError:
+                pass
+
+        shutdown_end_match = BENCH_SHUTDOWN_END_RE.search(line)
+        if shutdown_end_match:
+            end_ms, elapsed_ms = shutdown_end_match.groups()
+            try:
+                self.shutdown_end_ms = int(end_ms)
+                self._record_event(
+                    "shutdown_end",
+                    ts,
+                    {"ts_ms": self.shutdown_end_ms, "elapsed_ms": int(elapsed_ms)},
+                )
+            except ValueError:
+                pass
+
+        model_begin_match = BENCH_MODEL_BEGIN_RE.search(line)
+        if model_begin_match:
+            model_id, ts_ms = model_begin_match.groups()
+            try:
+                self._record_event(
+                    "model_start_begin",
+                    ts,
+                    {"model_id": model_id, "ts_ms": int(ts_ms)},
+                )
+            except ValueError:
+                pass
+
+        model_ready_match = BENCH_MODEL_READY_RE.search(line)
+        if model_ready_match:
+            model_id, ts_ms, elapsed_ms = model_ready_match.groups()
+            try:
+                self._record_event(
+                    "model_start_ready",
+                    ts,
+                    {"model_id": model_id, "ts_ms": int(ts_ms), "elapsed_ms": int(elapsed_ms)},
+                )
+            except ValueError:
+                pass
+
         lifecycle_match = LIFECYCLE_RE.search(line)
         if lifecycle_match:
             self.lifecycle_interval_s = int(lifecycle_match.group(1))
@@ -178,6 +387,7 @@ class BenchmarkRunner:
             _instance, model_id = spawn_match.groups()
             rss_now = self._rss_mb_tree()
             self.spawn_events[model_id].append((ts, rss_now))
+            self._record_event("model_spawn", ts, {"model_id": model_id, "rss_mb": rss_now})
 
         ready_match = READY_RE.search(line)
         if ready_match:
@@ -185,6 +395,18 @@ class BenchmarkRunner:
             rss_now = self._rss_mb_tree()
             self.ready_events[model_id].append((ts, rss_now))
             self._resolve_model_row(model_id)
+            self._record_event("model_ready", ts, {"model_id": model_id, "rss_mb": rss_now})
+
+    def _record_event(self, event_type: str, ts: float, data: dict):
+        elapsed = ts - (self.start_time or ts)
+        row = {
+            "ts": round(ts, 6),
+            "elapsed_s": round(elapsed, 4),
+            "type": event_type,
+            "data": data,
+        }
+        with self._log_lock:
+            self.events.append(row)
 
     def _resolve_model_row(self, model_id: str):
         if not self.spawn_events[model_id] or not self.ready_events[model_id]:
@@ -219,6 +441,7 @@ class BenchmarkRunner:
                 return
             if self.root_process and self.root_process.poll() is not None:
                 raise RuntimeError("Launch process exited before app became ready")
+            self._maybe_discover_app_pid()
             time.sleep(0.25)
 
         self.ready_time = time.time()
@@ -230,10 +453,14 @@ class BenchmarkRunner:
             while self.monitoring_active:
                 ts = time.time()
                 elapsed = ts - (self.start_time or ts)
+                self._maybe_discover_app_pid()
+
                 rss_mb = self._rss_mb_tree()
                 cpu_pct = self._cpu_percent_tree()
                 process_count = self._process_count_tree()
                 self.samples.append(Sample(ts, elapsed, rss_mb, cpu_pct, process_count))
+
+                self._maybe_collect_extended_sample(ts, elapsed, rss_mb, cpu_pct, process_count)
                 time.sleep(self.args.sample_interval_s)
 
         threading.Thread(target=monitor_loop, daemon=True).start()
@@ -270,17 +497,425 @@ class BenchmarkRunner:
     def _capture_disk_and_binary_metrics(self):
         return
 
+    def _pid_discovery_loop(self):
+        # Run for a bounded time; if attach mode is used, this is not called.
+        start = time.time()
+        timeout_s = max(10.0, float(getattr(self.args, "ready_timeout_s", 180)))
+        while self.monitoring_active and time.time() - start < timeout_s:
+            if self.app_pid and self.measure_pid == self.app_pid:
+                return
+            self._maybe_discover_app_pid()
+            time.sleep(0.5)
+
+    def _maybe_discover_app_pid(self):
+        if self.args.mode != "launch":
+            return
+        if not self.root_pid or not psutil.pid_exists(self.root_pid):
+            return
+        # If BENCH already set a better PID, keep it.
+        if self.app_pid and self.measure_pid == self.app_pid:
+            return
+
+        with self._pid_discovery_lock:
+            candidate = self._discover_app_pid_from_tree(self.root_pid)
+            if candidate and candidate != self.measure_pid:
+                self.app_pid = candidate
+                self.measure_pid = candidate
+                self._record_event("app_pid_heuristic", time.time(), {"app_pid": candidate})
+
+    def _discover_app_pid_from_tree(self, root_pid: int) -> Optional[int]:
+        try:
+            root = psutil.Process(root_pid)
+            procs = [root] + root.children(recursive=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return None
+
+        best_score = -10_000
+        best_pid: Optional[int] = None
+
+        for proc in procs:
+            try:
+                pid = proc.pid
+                name = (proc.name() or "").lower()
+                cmdline = " ".join(proc.cmdline() or []).lower()
+                exe = (proc.exe() or "").lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+            score = 0
+            # Strong positive signals.
+            if "/target/debug/app" in exe or cmdline.endswith("target/debug/app") or "target/debug/app" in cmdline:
+                score += 200
+            if "genhat" in exe or "genhat" in cmdline:
+                score += 120
+            if name in {"app", "genhat", "genhat-desktop"}:
+                score += 80
+
+            # Penalize build/dev tooling wrappers.
+            if name in {"bash", "node", "npm", "npx", "cargo", "rustc", "vite", "esbuild"}:
+                score -= 200
+            if "tauri" in cmdline and name in {"node", "bash"}:
+                score -= 50
+
+            # Prefer non-root descendants (actual app is usually not the root wrapper).
+            if pid != root_pid:
+                score += 10
+
+            if score > best_score:
+                best_score = score
+                best_pid = pid
+
+        # Require a minimum confidence.
+        if best_pid is None or best_score < 80:
+            return None
+        return best_pid
+
+    def _maybe_collect_extended_sample(self, ts: float, elapsed: float, rss_mb: float, cpu_pct: float, process_count: int):
+        interval = float(getattr(self.args, "extended_sample_interval_s", 5.0))
+        if interval <= 0:
+            return
+        if self._last_extended_ts is not None and ts - self._last_extended_ts < interval:
+            return
+        self._last_extended_ts = ts
+
+        pid = self.measure_pid or self.root_pid
+        if not pid or not psutil.pid_exists(pid):
+            return
+
+        pids = [pid] + self._descendant_pids(pid)
+        stats = self._collect_proc_tree_stats(pids)
+
+        read_rate = None
+        write_rate = None
+        if self._last_io is not None:
+            last_ts, last_r, last_w = self._last_io
+            dt = ts - last_ts
+            if dt > 0:
+                read_rate = (stats["read_bytes"] - last_r) / dt
+                write_rate = (stats["write_bytes"] - last_w) / dt
+        self._last_io = (ts, stats["read_bytes"], stats["write_bytes"])
+
+        minflt_rate = None
+        majflt_rate = None
+        if self._last_faults is not None:
+            last_ts, last_minflt, last_majflt = self._last_faults
+            dt = ts - last_ts
+            if dt > 0:
+                minflt_rate = (stats["minor_faults"] - last_minflt) / dt
+                majflt_rate = (stats["major_faults"] - last_majflt) / dt
+        self._last_faults = (ts, stats["minor_faults"], stats["major_faults"])
+
+        llama_count = self._count_processes_matching(pids, ["llama-server", "llama_server", "llama"])
+
+        self.extended_samples.append(
+            ExtendedSample(
+                ts=ts,
+                elapsed_s=elapsed,
+                rss_mb=rss_mb,
+                vms_mb=stats.get("vms_mb", 0.0),
+                pss_mb=stats.get("pss_mb"),
+                uss_mb=stats.get("uss_mb"),
+                shared_mb=stats.get("shared_mb"),
+                cpu_percent=cpu_pct,
+                process_count=process_count,
+                threads=int(stats.get("threads", 0)),
+                open_fds=stats.get("open_fds"),
+                read_bytes=int(stats.get("read_bytes", 0)),
+                write_bytes=int(stats.get("write_bytes", 0)),
+                read_rate_bps=read_rate,
+                write_rate_bps=write_rate,
+                minor_faults=int(stats.get("minor_faults", 0)),
+                major_faults=int(stats.get("major_faults", 0)),
+                minor_faults_rate=minflt_rate,
+                major_faults_rate=majflt_rate,
+                ctx_switches_voluntary=stats.get("ctx_vol"),
+                ctx_switches_involuntary=stats.get("ctx_invol"),
+                llama_server_count=llama_count,
+            )
+        )
+
+    def _count_processes_matching(self, pids: List[int], needles: List[str]) -> int:
+        needles_l = [n.lower() for n in needles]
+        count = 0
+        for pid in pids:
+            try:
+                proc = psutil.Process(pid)
+                name = (proc.name() or "").lower()
+                cmdline = " ".join(proc.cmdline() or []).lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            hay = f"{name} {cmdline}"
+            if any(n in hay for n in needles_l):
+                count += 1
+        return count
+
+    def _collect_proc_tree_stats(self, pids: List[int]) -> Dict[str, Any]:
+        # Aggregates multiple /proc-derived metrics across a process tree.
+        total_vms = 0
+        total_threads = 0
+        total_fds: Optional[int] = 0
+        total_read = 0
+        total_write = 0
+        total_minflt = 0
+        total_majflt = 0
+        total_ctx_vol: Optional[int] = 0
+        total_ctx_invol: Optional[int] = 0
+
+        pss_kb: Optional[int] = 0
+        uss_kb: Optional[int] = 0
+        shared_kb: Optional[int] = 0
+
+        enable_smaps = bool(getattr(self.args, "enable_smaps_rollup", False))
+        enable_io = bool(getattr(self.args, "enable_proc_io", True))
+        enable_faults = bool(getattr(self.args, "enable_proc_faults", True))
+        enable_fds = bool(getattr(self.args, "enable_proc_fds", True))
+        enable_ctx = bool(getattr(self.args, "enable_proc_ctx_switches", True))
+
+        for pid in pids:
+            # psutil vms + threads are cheap.
+            try:
+                proc = psutil.Process(pid)
+                mi = proc.memory_info()
+                total_vms += getattr(mi, "vms", 0)
+                total_threads += int(proc.num_threads())
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+            if enable_fds:
+                try:
+                    # Linux-only.
+                    fds = proc.num_fds()
+                    total_fds = (total_fds or 0) + int(fds)
+                except (AttributeError, psutil.Error):
+                    total_fds = None
+
+            if enable_io:
+                io = self._read_proc_io(pid)
+                if io:
+                    total_read += io.get("read_bytes", 0)
+                    total_write += io.get("write_bytes", 0)
+
+            if enable_faults:
+                faults = self._read_proc_faults(pid)
+                if faults:
+                    total_minflt += faults.get("minor_faults", 0)
+                    total_majflt += faults.get("major_faults", 0)
+
+            if enable_ctx:
+                ctx = self._read_proc_ctx_switches(pid)
+                if ctx:
+                    if total_ctx_vol is not None:
+                        vol = ctx.get("voluntary")
+                        if vol is None:
+                            total_ctx_vol = None
+                        else:
+                            total_ctx_vol += int(vol)
+                    if total_ctx_invol is not None:
+                        invol = ctx.get("involuntary")
+                        if invol is None:
+                            total_ctx_invol = None
+                        else:
+                            total_ctx_invol += int(invol)
+
+            if enable_smaps:
+                smaps = self._read_proc_smaps_rollup(pid)
+                if smaps:
+                    if pss_kb is not None:
+                        pss_val = smaps.get("pss_kb")
+                        if pss_val is None:
+                            pss_kb = None
+                        else:
+                            pss_kb += int(pss_val)
+                    if uss_kb is not None:
+                        uss_val = smaps.get("uss_kb")
+                        if uss_val is None:
+                            uss_kb = None
+                        else:
+                            uss_kb += int(uss_val)
+                    if shared_kb is not None:
+                        sh_val = smaps.get("shared_kb")
+                        if sh_val is None:
+                            shared_kb = None
+                        else:
+                            shared_kb += int(sh_val)
+
+        out: Dict[str, Any] = {
+            "vms_mb": total_vms / (1024 * 1024),
+            "threads": total_threads,
+            "open_fds": total_fds,
+            "read_bytes": total_read,
+            "write_bytes": total_write,
+            "minor_faults": total_minflt,
+            "major_faults": total_majflt,
+            "ctx_vol": total_ctx_vol,
+            "ctx_invol": total_ctx_invol,
+        }
+
+        if enable_smaps:
+            out["pss_mb"] = (pss_kb / 1024.0) if isinstance(pss_kb, int) else None
+            out["uss_mb"] = (uss_kb / 1024.0) if isinstance(uss_kb, int) else None
+            out["shared_mb"] = (shared_kb / 1024.0) if isinstance(shared_kb, int) else None
+        else:
+            out["pss_mb"] = None
+            out["uss_mb"] = None
+            out["shared_mb"] = None
+
+        return out
+
+    def _read_proc_io(self, pid: int) -> Optional[Dict[str, int]]:
+        path = Path(f"/proc/{pid}/io")
+        if not path.exists():
+            return None
+        out: Dict[str, int] = {}
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                k = k.strip()
+                v = v.strip()
+                if k in {"read_bytes", "write_bytes"}:
+                    try:
+                        out[k] = int(v)
+                    except ValueError:
+                        continue
+        except OSError:
+            return None
+        return out
+
+    def _read_proc_faults(self, pid: int) -> Optional[Dict[str, int]]:
+        # /proc/<pid>/stat: fields 10 (minflt) and 12 (majflt)
+        path = Path(f"/proc/{pid}/stat")
+        if not path.exists():
+            return None
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            # process name may contain spaces inside parentheses; split accordingly.
+            after = raw.rsplit(")", 1)
+            if len(after) != 2:
+                return None
+            parts = after[1].strip().split()
+            # After the ')' split, parts[0] is state (field 3).
+            # So minflt (field 10) becomes index 7, majflt (field 12) becomes index 9.
+            minflt = int(parts[7])
+            majflt = int(parts[9])
+            return {"minor_faults": minflt, "major_faults": majflt}
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def _read_proc_ctx_switches(self, pid: int) -> Optional[Dict[str, int]]:
+        path = Path(f"/proc/{pid}/status")
+        if not path.exists():
+            return None
+        vol = None
+        invol = None
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("voluntary_ctxt_switches"):
+                    try:
+                        vol = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        vol = None
+                elif line.startswith("nonvoluntary_ctxt_switches"):
+                    try:
+                        invol = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        invol = None
+        except OSError:
+            return None
+        if vol is None and invol is None:
+            return None
+        out: Dict[str, int] = {}
+        if vol is not None:
+            out["voluntary"] = vol
+        if invol is not None:
+            out["involuntary"] = invol
+        return out
+
+    def _read_proc_smaps_rollup(self, pid: int) -> Optional[Dict[str, int]]:
+        path = Path(f"/proc/{pid}/smaps_rollup")
+        if not path.exists():
+            return None
+        pss = None
+        priv_clean = 0
+        priv_dirty = 0
+        shared_clean = 0
+        shared_dirty = 0
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("Pss:"):
+                    pss = int(line.split()[1])
+                elif line.startswith("Private_Clean:"):
+                    priv_clean += int(line.split()[1])
+                elif line.startswith("Private_Dirty:"):
+                    priv_dirty += int(line.split()[1])
+                elif line.startswith("Shared_Clean:"):
+                    shared_clean += int(line.split()[1])
+                elif line.startswith("Shared_Dirty:"):
+                    shared_dirty += int(line.split()[1])
+        except (OSError, ValueError):
+            return None
+
+        uss = priv_clean + priv_dirty
+        shared = shared_clean + shared_dirty
+        out = {
+            "pss_kb": pss,
+            "uss_kb": uss,
+            "shared_kb": shared,
+        }
+        return out
+
     def _finalize_metrics(self) -> dict:
         self.monitoring_active = False
         time.sleep(self.args.sample_interval_s * 1.2)
 
-        idle_samples = [s for s in self.samples if s.elapsed_s <= self.args.idle_window_s + 2]
         all_samples = self.samples or []
+
+        # "Idle" should represent steady-state after the app becomes interactive.
+        idle_samples: List[Sample] = []
+        if all_samples and self.start_time:
+            ready_elapsed = 0.0
+            if self.ready_time is not None:
+                ready_elapsed = max(0.0, self.ready_time - self.start_time)
+            idle_start = ready_elapsed
+            idle_end = ready_elapsed + max(0.0, self.args.idle_window_s)
+            idle_samples = [s for s in all_samples if idle_start <= s.elapsed_s <= idle_end]
 
         idle_memory_mb = self._median([s.rss_mb for s in idle_samples]) if idle_samples else 0.0
         idle_cpu_percent = self._median([s.cpu_percent for s in idle_samples]) if idle_samples else 0.0
         peak_memory_mb = max([s.rss_mb for s in all_samples], default=0.0)
         peak_process_count = max([s.process_count for s in all_samples], default=0)
+
+        idle_pss_mb = None
+        idle_uss_mb = None
+        peak_pss_mb = None
+        peak_uss_mb = None
+        peak_llama_server_count = None
+        if self.extended_samples:
+            # Align idle window for extended samples too.
+            ex_idle = []
+            if self.start_time:
+                ready_elapsed = 0.0
+                if self.ready_time is not None:
+                    ready_elapsed = max(0.0, self.ready_time - self.start_time)
+                idle_start = ready_elapsed
+                idle_end = ready_elapsed + max(0.0, self.args.idle_window_s)
+                ex_idle = [s for s in self.extended_samples if idle_start <= s.elapsed_s <= idle_end]
+
+            pss_vals = [s.pss_mb for s in ex_idle if s.pss_mb is not None]
+            uss_vals = [s.uss_mb for s in ex_idle if s.uss_mb is not None]
+            if pss_vals:
+                idle_pss_mb = self._median([float(v) for v in pss_vals])
+            if uss_vals:
+                idle_uss_mb = self._median([float(v) for v in uss_vals])
+
+            all_pss = [s.pss_mb for s in self.extended_samples if s.pss_mb is not None]
+            all_uss = [s.uss_mb for s in self.extended_samples if s.uss_mb is not None]
+            if all_pss:
+                peak_pss_mb = max(float(v) for v in all_pss)
+            if all_uss:
+                peak_uss_mb = max(float(v) for v in all_uss)
+            peak_llama_server_count = max([s.llama_server_count for s in self.extended_samples], default=0)
 
         idle_memory_ps_mb = self._ps_rss_mb_tree()
         idle_memory_smem_mb = self._smem_rss_mb_tree()
@@ -289,8 +924,13 @@ class BenchmarkRunner:
             idle_cpu_percent = idle_cpu_pidstat
 
         cold_start_time_s = None
-        if self.start_time and self.ready_time:
+        cold_start_method = None
+        if self.app_start_ms is not None and self.ui_ready_ms is not None:
+            cold_start_time_s = max(0.0, (self.ui_ready_ms - self.app_start_ms) / 1000.0)
+            cold_start_method = "[BENCH] APP_START_MS -> [BENCH] MARK ui_ready"
+        elif self.start_time and self.ready_time:
             cold_start_time_s = max(0.0, self.ready_time - self.start_time)
+            cold_start_method = "wall clock (launch -> ready regex)"
 
         app_binary_path = self._resolve_binary_path()
         app_binary_size_bytes = self._file_size_bytes(app_binary_path) if app_binary_path else 0
@@ -304,16 +944,29 @@ class BenchmarkRunner:
         root_status = self._proc_status_snapshot()
         root_smaps_rollup_kb = self._proc_smaps_rollup_kb()
 
+        app_reported_shutdown_time_s = None
+        if self.shutdown_begin_ms is not None and self.shutdown_end_ms is not None:
+            app_reported_shutdown_time_s = max(0.0, (self.shutdown_end_ms - self.shutdown_begin_ms) / 1000.0)
+
         metrics = {
             "mode": self.args.mode,
             "timestamp": datetime.now().isoformat(),
             "root_pid": self.root_pid,
+            "app_pid": self.app_pid,
+            "measure_pid": self.measure_pid,
+            "app_start_ms": self.app_start_ms,
+            "ui_ready_ms": self.ui_ready_ms,
+            "cold_start_method": cold_start_method,
             "cold_start_time_s": round(cold_start_time_s or 0.0, 3),
             "idle_memory_mb": round(idle_memory_mb, 2),
+            "idle_pss_mb": round(idle_pss_mb, 2) if idle_pss_mb is not None else None,
+            "idle_uss_mb": round(idle_uss_mb, 2) if idle_uss_mb is not None else None,
             "idle_memory_ps_mb": round(idle_memory_ps_mb, 2) if idle_memory_ps_mb is not None else None,
             "idle_memory_smem_mb": round(idle_memory_smem_mb, 2) if idle_memory_smem_mb is not None else None,
             "per_model_memory_method": "RSS delta between spawn and ready events",
             "peak_memory_mb": round(peak_memory_mb, 2),
+            "peak_pss_mb": round(peak_pss_mb, 2) if peak_pss_mb is not None else None,
+            "peak_uss_mb": round(peak_uss_mb, 2) if peak_uss_mb is not None else None,
             "total_disk_footprint_bytes": int(total_disk_bytes),
             "total_disk_footprint_human": total_disk_human,
             "app_binary_size_bytes": int(app_binary_size_bytes),
@@ -323,10 +976,19 @@ class BenchmarkRunner:
             "idle_cpu_percent": round(idle_cpu_percent, 2),
             "idle_cpu_pidstat_percent": round(idle_cpu_pidstat, 2) if idle_cpu_pidstat is not None else None,
             "peak_process_count": int(peak_process_count),
+            "peak_llama_server_count": int(peak_llama_server_count)
+            if peak_llama_server_count is not None
+            else None,
             "graceful_shutdown_time_s": None,
+            "app_reported_shutdown_time_s": round(app_reported_shutdown_time_s, 4)
+            if app_reported_shutdown_time_s is not None
+            else None,
             "health_check_interval_s": self.lifecycle_interval_s,
             "health_check_overhead_cpu_percent": round(health_overhead, 4),
             "process_count_method": "psutil descendants + pstree snapshots",
+            "event_count": int(len(self.events)),
+            "sample_count": int(len(self.samples)),
+            "extended_sample_count": int(len(self.extended_samples)),
             "tooling": {
                 "time": "internal wall clock + launch timestamps",
                 "ps": self._which("ps"),
@@ -342,7 +1004,9 @@ class BenchmarkRunner:
             "proc_smaps_rollup_rss_kb": root_smaps_rollup_kb,
         }
 
-        if self.root_pid:
+        if self.measure_pid:
+            metrics["pstree_snapshot"] = self._pstree_snapshot(self.measure_pid)
+        elif self.root_pid:
             metrics["pstree_snapshot"] = self._pstree_snapshot(self.root_pid)
 
         return metrics
@@ -350,6 +1014,13 @@ class BenchmarkRunner:
     def _write_outputs(self, metrics: dict):
         metrics_path = self.results_dir / "metrics.json"
         metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+        with self._log_lock:
+            events_snapshot = list(self.events)
+        (self.results_dir / "events.json").write_text(
+            json.dumps(events_snapshot, indent=2),
+            encoding="utf-8",
+        )
 
         with (self.results_dir / "samples.csv").open("w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=["ts", "elapsed_s", "rss_mb", "cpu_percent", "process_count"])
@@ -364,6 +1035,62 @@ class BenchmarkRunner:
                         "process_count": sample.process_count,
                     }
                 )
+
+        if self.extended_samples:
+            with (self.results_dir / "extended_samples.csv").open("w", newline="", encoding="utf-8") as file:
+                fieldnames = [
+                    "ts",
+                    "elapsed_s",
+                    "rss_mb",
+                    "vms_mb",
+                    "pss_mb",
+                    "uss_mb",
+                    "shared_mb",
+                    "cpu_percent",
+                    "process_count",
+                    "threads",
+                    "open_fds",
+                    "read_bytes",
+                    "write_bytes",
+                    "read_rate_bps",
+                    "write_rate_bps",
+                    "minor_faults",
+                    "major_faults",
+                    "minor_faults_rate",
+                    "major_faults_rate",
+                    "ctx_switches_voluntary",
+                    "ctx_switches_involuntary",
+                    "llama_server_count",
+                ]
+                writer = csv.DictWriter(file, fieldnames=fieldnames)
+                writer.writeheader()
+                for s in self.extended_samples:
+                    writer.writerow(
+                        {
+                            "ts": round(s.ts, 6),
+                            "elapsed_s": round(s.elapsed_s, 4),
+                            "rss_mb": round(s.rss_mb, 4),
+                            "vms_mb": round(s.vms_mb, 4),
+                            "pss_mb": round(s.pss_mb, 4) if s.pss_mb is not None else None,
+                            "uss_mb": round(s.uss_mb, 4) if s.uss_mb is not None else None,
+                            "shared_mb": round(s.shared_mb, 4) if s.shared_mb is not None else None,
+                            "cpu_percent": round(s.cpu_percent, 4),
+                            "process_count": s.process_count,
+                            "threads": s.threads,
+                            "open_fds": s.open_fds,
+                            "read_bytes": s.read_bytes,
+                            "write_bytes": s.write_bytes,
+                            "read_rate_bps": round(s.read_rate_bps, 4) if s.read_rate_bps is not None else None,
+                            "write_rate_bps": round(s.write_rate_bps, 4) if s.write_rate_bps is not None else None,
+                            "minor_faults": s.minor_faults,
+                            "major_faults": s.major_faults,
+                            "minor_faults_rate": round(s.minor_faults_rate, 6) if s.minor_faults_rate is not None else None,
+                            "major_faults_rate": round(s.major_faults_rate, 6) if s.major_faults_rate is not None else None,
+                            "ctx_switches_voluntary": s.ctx_switches_voluntary,
+                            "ctx_switches_involuntary": s.ctx_switches_involuntary,
+                            "llama_server_count": s.llama_server_count,
+                        }
+                    )
 
         with (self.results_dir / "model_metrics.csv").open("w", newline="", encoding="utf-8") as file:
             fieldnames = [
@@ -396,35 +1123,44 @@ class BenchmarkRunner:
         print(f"Total disk footprint: {metrics.get('total_disk_footprint_human')}")
 
     def _graceful_shutdown(self) -> Optional[float]:
-        if not self.root_pid:
+        target_pid = self.measure_pid or self.root_pid
+        if not target_pid:
             return None
 
         start = time.time()
         try:
-            os.kill(self.root_pid, signal.SIGTERM)
+            os.kill(target_pid, signal.SIGTERM)
         except ProcessLookupError:
             return 0.0
 
         timeout_s = self.args.shutdown_timeout_s
         while time.time() - start < timeout_s:
-            if not psutil.pid_exists(self.root_pid):
+            if not psutil.pid_exists(target_pid):
                 return round(time.time() - start, 4)
-            descendants = self._descendant_pids(self.root_pid)
+            descendants = self._descendant_pids(target_pid)
             if not descendants:
                 return round(time.time() - start, 4)
             time.sleep(0.2)
 
         try:
-            os.kill(self.root_pid, signal.SIGKILL)
+            os.kill(target_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+        # If we launched via a wrapper shell, attempt to stop it too.
+        if self.root_pid and self.root_pid != target_pid:
+            try:
+                os.kill(self.root_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         return round(time.time() - start, 4)
 
     def _rss_mb_tree(self) -> float:
-        if not self.root_pid or not psutil.pid_exists(self.root_pid):
+        pid = self.measure_pid or self.root_pid
+        if not pid or not psutil.pid_exists(pid):
             return 0.0
 
-        pids = [self.root_pid] + self._descendant_pids(self.root_pid)
+        pids = [pid] + self._descendant_pids(pid)
         total = 0
         for pid in pids:
             try:
@@ -435,10 +1171,11 @@ class BenchmarkRunner:
         return total / (1024 * 1024)
 
     def _cpu_percent_tree(self) -> float:
-        if not self.root_pid or not psutil.pid_exists(self.root_pid):
+        pid = self.measure_pid or self.root_pid
+        if not pid or not psutil.pid_exists(pid):
             return 0.0
 
-        pids = [self.root_pid] + self._descendant_pids(self.root_pid)
+        pids = [pid] + self._descendant_pids(pid)
         total = 0.0
         for pid in pids:
             try:
@@ -449,9 +1186,10 @@ class BenchmarkRunner:
         return total
 
     def _process_count_tree(self) -> int:
-        if not self.root_pid or not psutil.pid_exists(self.root_pid):
+        pid = self.measure_pid or self.root_pid
+        if not pid or not psutil.pid_exists(pid):
             return 0
-        return 1 + len(self._descendant_pids(self.root_pid))
+        return 1 + len(self._descendant_pids(pid))
 
     def _descendant_pids(self, pid: int) -> List[int]:
         try:
@@ -482,9 +1220,10 @@ class BenchmarkRunner:
                     file_candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
                     return file_candidates[0]
 
-        if self.root_pid and psutil.pid_exists(self.root_pid):
+        pid = self.measure_pid or self.root_pid
+        if pid and psutil.pid_exists(pid):
             try:
-                exe = Path(psutil.Process(self.root_pid).exe())
+                exe = Path(psutil.Process(pid).exe())
                 if exe.exists():
                     return exe
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -540,10 +1279,11 @@ class BenchmarkRunner:
 
     def _ps_rss_mb_tree(self) -> Optional[float]:
         ps_bin = self._which("ps")
-        if not ps_bin or not self.root_pid or not psutil.pid_exists(self.root_pid):
+        pid = self.measure_pid or self.root_pid
+        if not ps_bin or not pid or not psutil.pid_exists(pid):
             return None
 
-        pids = [self.root_pid] + self._descendant_pids(self.root_pid)
+        pids = [pid] + self._descendant_pids(pid)
         pid_arg = ",".join(str(pid) for pid in pids)
         proc = subprocess.run(
             [ps_bin, "-o", "rss=", "-p", pid_arg],
@@ -568,10 +1308,11 @@ class BenchmarkRunner:
 
     def _smem_rss_mb_tree(self) -> Optional[float]:
         smem_bin = self._which("smem")
-        if not smem_bin or not self.root_pid or not psutil.pid_exists(self.root_pid):
+        pid = self.measure_pid or self.root_pid
+        if not smem_bin or not pid or not psutil.pid_exists(pid):
             return None
 
-        pids = [self.root_pid] + self._descendant_pids(self.root_pid)
+        pids = [pid] + self._descendant_pids(pid)
         total_kb = 0
 
         for pid in pids:
@@ -597,11 +1338,12 @@ class BenchmarkRunner:
 
     def _pidstat_cpu_percent(self) -> Optional[float]:
         pidstat_bin = self._which("pidstat")
-        if not pidstat_bin or not self.root_pid:
+        pid = self.measure_pid or self.root_pid
+        if not pidstat_bin or not pid:
             return None
 
         proc = subprocess.run(
-            [pidstat_bin, "-u", "-p", str(self.root_pid), "1", "1"],
+            [pidstat_bin, "-u", "-p", str(pid), "1", "1"],
             capture_output=True,
             text=True,
             check=False,
@@ -611,14 +1353,14 @@ class BenchmarkRunner:
 
         avg_cpu = None
         for line in proc.stdout.splitlines():
-            if "Average:" in line and line.strip().endswith(str(self.root_pid)) is False:
+            if "Average:" in line and line.strip().endswith(str(pid)) is False:
                 parts = line.split()
                 # expected tail format includes %usr %system %guest %wait %CPU CPU Command
                 for idx, token in enumerate(parts):
                     if token.replace(".", "", 1).isdigit() and idx + 2 < len(parts):
                         # try to identify %CPU as the 7th numeric in Average line
                         pass
-            if "Average:" in line and str(self.root_pid) in line:
+            if "Average:" in line and str(pid) in line:
                 parts = line.split()
                 numeric = []
                 for token in parts:
@@ -637,9 +1379,10 @@ class BenchmarkRunner:
         return avg_cpu
 
     def _proc_status_snapshot(self) -> dict:
-        if not self.root_pid:
+        pid = self.measure_pid or self.root_pid
+        if not pid:
             return {}
-        status_path = Path(f"/proc/{self.root_pid}/status")
+        status_path = Path(f"/proc/{pid}/status")
         if not status_path.exists():
             return {}
 
@@ -659,9 +1402,10 @@ class BenchmarkRunner:
         return snapshot
 
     def _proc_smaps_rollup_kb(self) -> Optional[int]:
-        if not self.root_pid:
+        pid = self.measure_pid or self.root_pid
+        if not pid:
             return None
-        smaps_path = Path(f"/proc/{self.root_pid}/smaps_rollup")
+        smaps_path = Path(f"/proc/{pid}/smaps_rollup")
         if not smaps_path.exists():
             return None
 
@@ -681,7 +1425,15 @@ class BenchmarkRunner:
             return 0.0
 
         baseline_window_s = min(10, self.args.idle_window_s)
-        baseline = [s.cpu_percent for s in self.samples if s.elapsed_s <= baseline_window_s]
+        ready_elapsed = 0.0
+        if self.start_time and self.ready_time is not None:
+            ready_elapsed = max(0.0, self.ready_time - self.start_time)
+
+        baseline = [
+            s.cpu_percent
+            for s in self.samples
+            if ready_elapsed <= s.elapsed_s <= ready_elapsed + baseline_window_s
+        ]
         if not baseline:
             baseline = [s.cpu_percent for s in self.samples[:10]]
         baseline_median = self._median(baseline)
@@ -742,10 +1494,65 @@ def parse_args():
     parser.add_argument("--ready-regex", default=r"Lifecycle manager started|RAG enrichment worker started", help="Regex marking first interactive readiness")
     parser.add_argument("--ready-timeout-s", type=int, default=180, help="Timeout to wait for readiness pattern")
 
+    parser.add_argument(
+        "--sanitize-launch-env",
+        action="store_true",
+        default=(os.name == "posix"),
+        help="Best-effort remove Snap/LD_LIBRARY_PATH injection when launching (helps avoid libpthread symbol errors)",
+    )
+
     parser.add_argument("--sample-interval-s", type=float, default=1.0, help="Sampling interval for RSS/CPU/process count")
+    parser.add_argument(
+        "--extended-sample-interval-s",
+        type=float,
+        default=5.0,
+        help="Sampling interval for extended /proc metrics (PSS/USS, IO, faults, fds, ctx switches). 0 disables.",
+    )
+    # Toggle-able extended collectors (enabled by default for exhaustive runs).
+    parser.add_argument(
+        "--smaps-rollup",
+        dest="enable_smaps_rollup",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable reading /proc/<pid>/smaps_rollup for PSS/USS (heavier; disable with --no-smaps-rollup).",
+    )
+    parser.add_argument(
+        "--proc-io",
+        dest="enable_proc_io",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable reading /proc/<pid>/io counters (disable with --no-proc-io).",
+    )
+    parser.add_argument(
+        "--proc-faults",
+        dest="enable_proc_faults",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable reading /proc/<pid>/stat page-fault counters (disable with --no-proc-faults).",
+    )
+    parser.add_argument(
+        "--proc-fds",
+        dest="enable_proc_fds",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable collecting open FD counts (disable with --no-proc-fds).",
+    )
+    parser.add_argument(
+        "--proc-ctx-switches",
+        dest="enable_proc_ctx_switches",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable collecting context switches from /proc/<pid>/status (disable with --no-proc-ctx-switches).",
+    )
     parser.add_argument("--idle-window-s", type=int, default=90, help="Seconds to capture idle metrics")
     parser.add_argument("--model-load-window-s", type=int, default=180, help="Window to trigger and observe model loading")
     parser.add_argument("--interactive", action="store_true", help="Ask for Enter key during model loading phase")
+
+    parser.add_argument(
+        "--run-until-exit",
+        action="store_true",
+        help="Keep sampling until the app process exits (close the app normally to stop).",
+    )
 
     parser.add_argument("--app-binary-path", default=None, help="Path to app binary (if known)")
     parser.add_argument("--shutdown-after-benchmark", action="store_true", help="Gracefully shut down launched app and measure shutdown time")

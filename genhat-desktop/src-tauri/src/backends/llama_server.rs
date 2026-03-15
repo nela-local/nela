@@ -424,14 +424,47 @@ impl ModelBackend for LlamaServerBackend {
                     let _ = Command::new("taskkill")
                         .args(["/F", "/PID", &ph.pid.to_string()])
                         .output();
+                    return Ok(());
                 }
                 #[cfg(unix)]
                 {
+                    let pid = ph.pid as i32;
+                    let is_alive = || unsafe { libc::kill(pid, 0) } == 0;
+
+                    // Best-effort graceful stop first.
                     unsafe {
-                        libc::kill(ph.pid as i32, libc::SIGTERM);
+                        libc::kill(pid, libc::SIGTERM);
                     }
+
+                    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+                    while Instant::now() < deadline {
+                        if !is_alive() {
+                            return Ok(());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+
+                    log::warn!(
+                        "llama-server pid={} did not exit after SIGTERM; sending SIGKILL",
+                        ph.pid
+                    );
+                    unsafe {
+                        libc::kill(pid, libc::SIGKILL);
+                    }
+
+                    let kill_deadline = Instant::now() + std::time::Duration::from_secs(2);
+                    while Instant::now() < kill_deadline {
+                        if !is_alive() {
+                            return Ok(());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+
+                    return Err(format!(
+                        "llama-server pid={} did not exit after SIGKILL",
+                        ph.pid
+                    ));
                 }
-                Ok(())
             }
             _ => Err("LlamaServerBackend requires a ProcessHandle".into()),
         }

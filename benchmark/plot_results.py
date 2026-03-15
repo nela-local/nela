@@ -17,6 +17,131 @@ def read_csv(path: Path):
             rows.append(row)
     return rows
 
+def plot_process_count(samples, out_path: Path):
+    if not samples:
+        return
+    xs = [to_float(row.get("elapsed_s")) for row in samples]
+    ys = [to_float(row.get("process_count")) for row in samples]
+    plt.figure(figsize=(10, 4.5))
+    plt.plot(xs, ys, color="#4C72B0", linewidth=1.6)
+    plt.title("Process Count Over Time")
+    plt.xlabel("Elapsed (s)")
+    plt.ylabel("Process count")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close()
+
+
+def plot_memory_breakdown(ext_samples, out_path: Path):
+    if not ext_samples:
+        return
+    xs = [to_float(row.get("elapsed_s")) for row in ext_samples]
+    rss = [to_float(row.get("rss_mb")) for row in ext_samples]
+    pss = [to_float(row.get("pss_mb"), None) for row in ext_samples]
+    uss = [to_float(row.get("uss_mb"), None) for row in ext_samples]
+
+    plt.figure(figsize=(10, 4.8))
+    plt.plot(xs, rss, label="RSS", color="#4C72B0", linewidth=1.6)
+    if any(v is not None for v in pss):
+        plt.plot(xs, [v if v is not None else float('nan') for v in pss], label="PSS", color="#55A868", linewidth=1.6)
+    if any(v is not None for v in uss):
+        plt.plot(xs, [v if v is not None else float('nan') for v in uss], label="USS", color="#C44E52", linewidth=1.6)
+    plt.title("Memory Breakdown Over Time")
+    plt.xlabel("Elapsed (s)")
+    plt.ylabel("MB")
+    plt.grid(alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close()
+
+
+def plot_io_rates(ext_samples, out_path: Path):
+    if not ext_samples:
+        return
+    xs = [to_float(row.get("elapsed_s")) for row in ext_samples]
+    rr = [to_float(row.get("read_rate_bps"), None) for row in ext_samples]
+    wr = [to_float(row.get("write_rate_bps"), None) for row in ext_samples]
+
+    if not any(v is not None for v in rr) and not any(v is not None for v in wr):
+        return
+
+    rr_mb = [(v / (1024 * 1024)) if v is not None else float('nan') for v in rr]
+    wr_mb = [(v / (1024 * 1024)) if v is not None else float('nan') for v in wr]
+
+    plt.figure(figsize=(10, 4.8))
+    plt.plot(xs, rr_mb, label="Read MB/s", color="#4C72B0", linewidth=1.6)
+    plt.plot(xs, wr_mb, label="Write MB/s", color="#55A868", linewidth=1.6)
+    plt.title("Disk I/O Rates (Process Tree)")
+    plt.xlabel("Elapsed (s)")
+    plt.ylabel("MB/s")
+    plt.grid(alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close()
+
+
+def plot_fault_rates(ext_samples, out_path: Path):
+    if not ext_samples:
+        return
+    xs = [to_float(row.get("elapsed_s")) for row in ext_samples]
+    mn = [to_float(row.get("minor_faults_rate"), None) for row in ext_samples]
+    mj = [to_float(row.get("major_faults_rate"), None) for row in ext_samples]
+    if not any(v is not None for v in mn) and not any(v is not None for v in mj):
+        return
+    plt.figure(figsize=(10, 4.8))
+    plt.plot(xs, [v if v is not None else float('nan') for v in mn], label="Minor faults/s", color="#8172B2", linewidth=1.6)
+    plt.plot(xs, [v if v is not None else float('nan') for v in mj], label="Major faults/s", color="#C44E52", linewidth=1.6)
+    plt.title("Page Fault Rates (Process Tree)")
+    plt.xlabel("Elapsed (s)")
+    plt.ylabel("faults/s")
+    plt.grid(alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close()
+
+
+def plot_threads_fds(ext_samples, out_path: Path):
+    if not ext_samples:
+        return
+    xs = [to_float(row.get("elapsed_s")) for row in ext_samples]
+    threads = [to_float(row.get("threads")) for row in ext_samples]
+    fds = [to_float(row.get("open_fds"), None) for row in ext_samples]
+
+    plt.figure(figsize=(10, 4.8))
+    plt.plot(xs, threads, label="Threads", color="#4C72B0", linewidth=1.6)
+    if any(v is not None for v in fds):
+        plt.plot(xs, [v if v is not None else float('nan') for v in fds], label="Open FDs", color="#55A868", linewidth=1.6)
+    plt.title("Threads / Open File Descriptors")
+    plt.xlabel("Elapsed (s)")
+    plt.ylabel("count")
+    plt.grid(alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close()
+
+
+def plot_llama_server_count(ext_samples, out_path: Path):
+    if not ext_samples:
+        return
+    xs = [to_float(row.get("elapsed_s")) for row in ext_samples]
+    ys = [to_float(row.get("llama_server_count")) for row in ext_samples]
+    if not ys:
+        return
+    plt.figure(figsize=(10, 4.5))
+    plt.plot(xs, ys, color="#C44E52", linewidth=1.6)
+    plt.title("llama-server Process Count (Process Tree)")
+    plt.xlabel("Elapsed (s)")
+    plt.ylabel("count")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close()
+
 
 def to_float(value, default=0.0):
     try:
@@ -107,7 +232,9 @@ def plot_summary(metrics: dict, out_path: Path):
     keys = [
         "cold_start_time_s",
         "idle_memory_mb",
+        "idle_pss_mb",
         "peak_memory_mb",
+        "peak_pss_mb",
         "idle_cpu_percent",
         "graceful_shutdown_time_s",
         "health_check_overhead_cpu_percent",
@@ -115,11 +242,13 @@ def plot_summary(metrics: dict, out_path: Path):
 
     labels = [
         "Cold Start (s)",
-        "Idle Memory (MB)",
-        "Peak Memory (MB)",
+        "Idle RSS (MB)",
+        "Idle PSS (MB)",
+        "Peak RSS (MB)",
+        "Peak PSS (MB)",
         "Idle CPU (%)",
         "Shutdown (s)",
-        "Lifecycle Overhead CPU%",
+        "Lifecycle CPU%",
     ]
 
     values = [to_float(metrics.get(key), 0.0) for key in keys]
@@ -154,10 +283,17 @@ def main():
 
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     samples = read_csv(results_dir / "samples.csv")
+    extended_samples = read_csv(results_dir / "extended_samples.csv")
     model_metrics = read_csv(results_dir / "model_metrics.csv")
 
     plot_rss(samples, plots_dir / "rss_over_time.png")
     plot_cpu(samples, plots_dir / "cpu_over_time.png")
+    plot_process_count(samples, plots_dir / "process_count_over_time.png")
+    plot_memory_breakdown(extended_samples, plots_dir / "memory_breakdown_over_time.png")
+    plot_io_rates(extended_samples, plots_dir / "io_rates_over_time.png")
+    plot_fault_rates(extended_samples, plots_dir / "fault_rates_over_time.png")
+    plot_threads_fds(extended_samples, plots_dir / "threads_fds_over_time.png")
+    plot_llama_server_count(extended_samples, plots_dir / "llama_server_count_over_time.png")
     plot_model_loads(model_metrics, plots_dir / "model_load_time.png")
     plot_model_memory(model_metrics, plots_dir / "model_memory_delta.png")
     plot_summary(metrics, plots_dir / "summary_metrics.png")

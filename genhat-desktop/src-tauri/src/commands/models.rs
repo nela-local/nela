@@ -124,14 +124,14 @@ pub async fn switch_model(
     model_identifier: String,
     state: State<'_, ProcessManagerState>,
 ) -> Result<String, String> {
-    // Stop the currently-active LLM
-    let prev_id = state.0.active_llm_id().await;
-    let _ = state.0.stop_model(&prev_id).await;
+    // Keep the previous model warm instead of stopping on every switch.
 
     // First check if the identifier is a registered model ID
     if let Some(def) = state.0.get_model_def(&model_identifier).await {
         let instance_id = state.0.ensure_running(&def.id, false).await?;
-        state.0.set_active_llm(&def.id).await;
+        if let Some(evict) = state.0.rotate_active_llm_keep_previous(&def.id).await {
+            let _ = state.0.stop_model(&evict).await;
+        }
         return Ok(format!("server started (instance: {})", &instance_id[..8]));
     }
 
@@ -182,7 +182,9 @@ pub async fn switch_model(
     // Register and start the new model
     state.0.register_model(def).await?;
     let instance_id = state.0.ensure_running(&model_id, false).await?;
-    state.0.set_active_llm(&model_id).await;
+    if let Some(evict) = state.0.rotate_active_llm_keep_previous(&model_id).await {
+        let _ = state.0.stop_model(&evict).await;
+    }
 
     Ok(format!("server started (instance: {})", &instance_id[..8]))
 }
@@ -191,7 +193,14 @@ pub async fn switch_model(
 #[tauri::command]
 pub async fn stop_llama(state: State<'_, ProcessManagerState>) -> Result<(), String> {
     let active_id = state.0.active_llm_id().await;
-    state.0.stop_model(&active_id).await
+    let prev_id = state.0.previous_llm_id().await;
+    state.0.stop_model(&active_id).await?;
+    if let Some(prev) = prev_id {
+        if prev != active_id {
+            let _ = state.0.stop_model(&prev).await;
+        }
+    }
+    Ok(())
 }
 
 /// Get the port of the running llama-server (for frontend SSE streaming).
