@@ -71,13 +71,6 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ graph, height = 620, zoom
   const [panOffset, setPanOffset] = useState<Point>({ x: 0, y: 0 });
 
   useEffect(() => {
-    setCollapsed(new Set());
-    setManualOffsets({});
-    setPanOffset({ x: 0, y: 0 });
-    setPanning(null);
-  }, [graph]);
-
-  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 

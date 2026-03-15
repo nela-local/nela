@@ -35,6 +35,7 @@ const MindMapOverlay: React.FC<MindMapOverlayProps> = ({
   query,
   onClose,
 }) => {
+  const graphKey = graph?.id ?? "__none__";
   const [viewport, setViewport] = useState({
     width: window.innerWidth,
     height: window.innerHeight,
@@ -52,12 +53,8 @@ const MindMapOverlay: React.FC<MindMapOverlayProps> = ({
     originX: number;
     originY: number;
   } | null>(null);
-  const [zoom, setZoom] = useState(1);
-
-  useEffect(() => {
-    if (isGenerating) return;
-    setZoom(1);
-  }, [graph?.id, isGenerating]);
+  const [zoomByGraph, setZoomByGraph] = useState<Record<string, number>>({});
+  const zoom = zoomByGraph[graphKey] ?? 1;
 
   useEffect(() => {
     const onResize = () => {
@@ -155,8 +152,21 @@ const MindMapOverlay: React.FC<MindMapOverlayProps> = ({
     setMode((prev) => (prev === "maximized" ? "normal" : "maximized"));
   };
 
-  const zoomOut = () => setZoom((prev) => Math.max(0.5, +(prev - 0.1).toFixed(2)));
-  const zoomIn = () => setZoom((prev) => Math.min(2.5, +(prev + 0.1).toFixed(2)));
+  const zoomOut = () => {
+    if (!graph) return;
+    setZoomByGraph((prev) => {
+      const current = prev[graphKey] ?? 1;
+      return { ...prev, [graphKey]: Math.max(0.5, +(current - 0.1).toFixed(2)) };
+    });
+  };
+
+  const zoomIn = () => {
+    if (!graph) return;
+    setZoomByGraph((prev) => {
+      const current = prev[graphKey] ?? 1;
+      return { ...prev, [graphKey]: Math.min(2.5, +(current + 0.1).toFixed(2)) };
+    });
+  };
 
   const canvasHeight = Math.max(420, resolvedRect.height - HEADER_H - 24);
 
@@ -247,7 +257,7 @@ const MindMapOverlay: React.FC<MindMapOverlayProps> = ({
                   </div>
                 </div>
               ) : graph ? (
-                <MindMapCanvas graph={graph} height={canvasHeight} zoom={zoom} />
+                <MindMapCanvas key={graph.id} graph={graph} height={canvasHeight} zoom={zoom} />
               ) : (
                 <div className="h-full w-full rounded-2xl border border-glass-border bg-void-900/70 backdrop-blur-md flex items-center justify-center text-txt-muted text-sm">
                   No mindmap selected.
