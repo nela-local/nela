@@ -175,9 +175,101 @@ This suite is designed to work without any app-side instrumentation.
 - `--no-smaps-rollup`, `--no-proc-io`, `--no-proc-faults`, `--no-proc-fds`, `--no-proc-ctx-switches`: disable expensive collectors
 - `--sanitize-launch-env`: strips Snap-injected loader paths (helps avoid `libpthread` / `GLIBC_PRIVATE` symbol errors)
 
+## 7) llama-bench Model Throughput Sweeper (C)
+
+If you want to find the best `llama-bench` tokens/s for each local GGUF model across key knobs (threads, prompt length, flash-attn, KV cache type), use the benchmark-only sweeper:
+
+### Build
+
+```bash
+cd benchmark
+make
+```
+
+### Run (from repo root)
+
+Fast-ish default sweep (threads × flash-attn × cache types):
+
+```bash
+./benchmark/llama_bench_sweep
+```
+
+More exhaustive example (adjust to taste):
+
+```bash
+./benchmark/llama_bench_sweep \
+  --threads 1,2,4,6,8,12,16 \
+  --prompt 256,512,1024,2048 \
+  --gen 64,128 \
+  --flash-attn 0,1 \
+  --cache f16,q8_0,q4_0 \
+  --reps 1
+```
+
+If you want to target a specific model (useful when some models fail to load due to RAM), pass `--model`:
+
+```bash
+./benchmark/llama_bench_sweep \
+  --model models/LLM/Qwen3.5-0.8B-UD-Q4_K_XL.gguf \
+  --threads 2,4,8 \
+  --flash-attn 0,1 \
+  --cache-k f16,q8_0 \
+  --cache-v f16,q8_0 \
+  --reps 1
+```
+
+### Complete sweep behavior with `--model`
+
+When you run only:
+
+```bash
+./benchmark/llama_bench_sweep --model <model_path>
+```
+
+the tool now automatically uses a broad full-grid profile (across threads, prompt/gen sizes, flash-attn, cache-k/cache-v, batch/ubatch, reps) and runs every combination sequentially, waiting for each `llama-bench` result before moving to the next combination.
+
+During execution it prints a live progress line with:
+- overall runs completed / total runs
+- current model progress
+- successful run count
+- run rate (`run/s`)
+- ETA
+
+Default full-grid profile for `--model` (unless overridden):
+- `--threads 1,2,4,6,8,12,16`
+- `--prompt 64,128,256,512,1024,2048,4096`
+- `--gen 32,64,128,256,512`
+- `--flash-attn 0,1`
+- `--cache-k f16,q8_0,q4_0`
+- `--cache-v f16,q8_0,q4_0`
+- `--batch-list 256,512,1024,2048,4096`
+- `--ubatch-list 64,128,256,512,1024`
+- `--reps-list 1`
+
+You can override any field with your own list flags (`--threads`, `--prompt`, `--gen`, `--cache-k`, `--cache-v`, `--batch-list`, `--ubatch-list`, `--reps-list`) or force compact defaults with `--quick`.
+
+If you want to cross-test different K/V cache types independently:
+
+```bash
+./benchmark/llama_bench_sweep \
+  --threads 4,8 \
+  --prompt 512 \
+  --gen 128 \
+  --flash-attn 0,1 \
+  --cache-k f16,q8_0 \
+  --cache-v f16,q8_0,q4_0 \
+  --reps 1
+```
+
+Outputs are written under `benchmark/results/llama_bench_sweep_<timestamp>/`:
+- `all_results.csv` (every run)
+- `best_by_model.csv` (best `tg` tok/s config per model)
+- `best_by_model_pp.csv` (best `pp` tok/s config per model)
+- `summary.json` (includes both best-by-tg and best-by-pp)
+
 ---
 
-## 7) Notes
+## 8) Notes
 
 - For the most complete benchmark (shutdown timing + full capture), use `--mode launch` and `--shutdown-after-benchmark`.
 - Per-model metrics depend on runtime logs that contain:

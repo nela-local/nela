@@ -80,6 +80,8 @@ GenHat-The-Local-Intelligence-Engine/
 ├── benchmark/                    ← Benchmark suite (runtime metrics + plots)
 │   ├── run_benchmark.py          ← Main benchmark runner (launch/attach modes)
 │   ├── plot_results.py           ← Graph generator from benchmark outputs
+│   ├── llama_bench_sweep.c       ← llama.cpp `llama-bench` parameter sweep (best tok/s per model)
+│   ├── Makefile                  ← Builds `llama_bench_sweep`
 │   ├── requirements.txt          ← Benchmark Python deps (psutil, matplotlib)
 │   ├── README.md                 ← Setup and run instructions
 │   └── results/                  ← Timestamped benchmark outputs (JSON/CSV/PNG)
@@ -558,13 +560,30 @@ python3 benchmark/run_benchmark.py \
   --launch-cmd "cd genhat-desktop && npx tauri dev" \
   --interactive \
   --shutdown-after-benchmark
+
+# Or: keep sampling until you close the app
+python3 benchmark/run_benchmark.py \
+  --repo-root . \
+  --mode launch \
+  --launch-cmd "cd genhat-desktop && npx tauri dev" \
+  --run-until-exit
 ```
 
 Outputs are written to `benchmark/results/<timestamp>/` with:
 - `metrics.json` (all core metrics)
 - `samples.csv` (RSS/CPU/process count time series)
+- `extended_samples.csv` (Linux `/proc`-derived metrics: PSS/USS, IO, faults, FDs, threads, ctx switches, etc.)
+- `events.json` (timestamped lifecycle/benchmark events)
 - `model_metrics.csv` (per-model load time + memory deltas)
 - `plots/*.png` (visual graphs)
+
+Throughput tuning (tok/s) via llama.cpp `llama-bench` sweep:
+```bash
+make -C benchmark
+
+# Sweeps bundled llama-bench across parameter grids and emits CSV + JSON summary
+./benchmark/llama_bench_sweep --help
+```
 
 Git tracking policy: benchmark source files (`benchmark/*.py`, `benchmark/README.md`, `benchmark/requirements.txt`) are tracked; generated artifacts (`benchmark/results/`, `benchmark/__pycache__/`) are ignored via `.gitignore`.
 
@@ -672,9 +691,12 @@ Run with: `cd genhat-desktop/src-tauri && cargo test --lib`
 22. **Podcast script routing**: The podcast engine (`podcast/engine.rs`) routes script generation via `TaskType::PodcastScript` (not `Chat`), so it respects the separate podcast priority chain (Qwen 2B > LFM > Qwen 0.8B).
 23. **llama-server params from TOML**: All llama-server CLI flags are driven from `[models.params]` in `models.toml`. Supported params: `ctx_size`, `max_tokens`, `temp`, `top_p`, `top_k`, `repeat_penalty`, `embedding`, `batch_size`, `flash_attn`, `mlock`, `cache_type`, `chat_template_kwargs`. No hardcoded values — defaults are in `param_or()` calls.
 24. **Model file-presence filtering**: `ModelDef::files_exist(models_dir)` / `missing_files(models_dir)` checks the primary `model_file` (file or directory) and every param key ending with `_file`. `ProcessManager::new()` skips models with missing files (logged at `warn` level). The `TaskRouter` iterates registry candidates and only picks models that are present in ProcessManager. This means models simply disappear from listings and routing when their files are absent — no error at runtime.
-25. **Benchmark suite available**: Use `benchmark/run_benchmark.py` for launch/attach benchmarking and `benchmark/plot_results.py` for graph generation. The benchmark collects cold start, memory, CPU, process count, model load times, disk footprint, shutdown time, and lifecycle overhead metrics.
+25. **Benchmark suite available**: Use `benchmark/run_benchmark.py` for launch/attach benchmarking (including `--run-until-exit`) and `benchmark/plot_results.py` for graph generation. The benchmark collects cold start, memory, CPU, process count, per-model deltas, disk footprint, shutdown time, and lifecycle overhead metrics.
 26. **Benchmark launch command context**: `benchmark/run_benchmark.py` executes `--launch-cmd` from repo root (`--repo-root`), so launch commands should include `cd genhat-desktop && ...` when invoking Tauri dev/build commands.
 27. **Benchmark gitignore policy**: Track benchmark source files in git, but ignore generated outputs (`benchmark/results/`) and Python bytecode cache (`benchmark/__pycache__/`).
 28. **Model-switch chat continuity**: Changing the selected chat model (`handleModelChange`) updates backend routing only and must NOT clear session messages/rag/media state; conversation remains in the same active chat tab.
 29. **Left sidebar toggle behavior**: The sidebar nav (`SidebarNav` + `sidebarSection` in `App.tsx`) supports a collapsed state (`null`); clicking the currently active sidebar button toggles the section closed, and clicking again reopens that section.
 30. **Keep this file updated**: Every architectural change, new module, renamed file, or removed feature must be reflected here.
+31. **llama-bench sweeps**: `benchmark/llama_bench_sweep.c` runs the bundled `genhat-desktop/src-tauri/bin/llama-<os>/llama-bench` across parameter grids (including separate K/V cache-type sweeps via `--cache-k` / `--cache-v` and list sweeps for `--batch-list` / `--ubatch-list` / `--reps-list`) and writes results under `benchmark/results/llama_bench_sweep_<timestamp>/` (includes `best_by_model.csv` for best-by-tg and `best_by_model_pp.csv` for best-by-pp). When `--model` is provided without explicit sweep lists, it defaults to a broad full-grid profile for complete parameter sweeps. The tool prints live progress with completed/total runs, current model progress, run rate, and ETA.
+32. **Mindmap cursor/background interaction**: In `MindMapCanvas`, the SVG no longer forces a global `grab` cursor; it shows `grabbing` only during active node drag or canvas pan, while node rectangles keep `grab`/`grabbing` locally. In `MindMapBackground`, modal-mode particle interaction now tracks window mouse movement projected into canvas coordinates, so particle motion still reacts even when the SVG node layer is above the background canvas.
+33. **Mindmap background stability hardening**: `MindMapBackground` now guards against hang-like behavior by (a) removing fullscreen mouse listener leaks on cleanup, (b) handling zero-distance mouse/particle math without division by zero, (c) capping particle count (`MAX_PARTICLES`) to bound per-frame work on large/high-DPI displays, and (d) throttling animation workload to a target FPS with visibility-aware skipping.

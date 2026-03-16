@@ -249,7 +249,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ graph, height = 620, zoom
           aria-label="Mindmap graph"
           className="relative z-10 select-none"
           onPointerDown={onCanvasPointerDown}
-          style={{ cursor: panning ? "grabbing" : "grab", touchAction: "none" }}
+          style={{ cursor: dragging || panning ? "grabbing" : "default", touchAction: "none" }}
         >
           <g transform={`translate(${mapOffset.x}, ${mapOffset.y})`}>
             <g transform={`scale(${zoom})`}>
@@ -298,7 +298,7 @@ const MindMapCanvas: React.FC<MindMapCanvasProps> = ({ graph, height = 620, zoom
                       const base = manualOffsets[node.id] ?? { x: 0, y: 0 };
                       setDragging({ id: node.id, startX: e.clientX, startY: e.clientY, base });
                     }}
-                    style={{ cursor: "grab" }}
+                    style={{ cursor: dragging?.id === node.id ? "grabbing" : "grab" }}
                   />
                   <text
                     x={12}

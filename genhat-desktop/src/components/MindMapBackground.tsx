@@ -10,6 +10,8 @@ const PARTICLE_COLOR = "rgba(0, 213, 255, 0.89)";
 const PARTICLE_DISTANCE = 40;
 const PARTICLE_RADIUS = 2;
 const MOUSE_RADIUS = 100;
+const MAX_PARTICLES = 3200;
+const TARGET_FPS = 45;
 
 interface Particle {
   x: number;
@@ -31,6 +33,7 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
   const particlesRef = useRef<Particle[]>([]);
   const mouseRef = useRef<{ x: number | undefined; y: number | undefined }>({ x: undefined, y: undefined });
   const mouseActiveRef = useRef<boolean>(false);
+  const lastFrameTimeRef = useRef<number>(0);
 
   // Resize and initialize particles
   const resizeParticles = () => {
@@ -41,6 +44,8 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
     canvas.width = w;
     canvas.height = h;
     const particles: Particle[] = [];
+    let count = 0;
+    let reachedCap = false;
     for (
       let y = (((h - PARTICLE_DISTANCE) % PARTICLE_DISTANCE) + PARTICLE_DISTANCE) / 2;
       y < h;
@@ -51,6 +56,10 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
         x < w;
         x += PARTICLE_DISTANCE
       ) {
+        if (count >= MAX_PARTICLES) {
+          reachedCap = true;
+          break;
+        }
         particles.push({
           x,
           y,
@@ -59,15 +68,30 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
           size: PARTICLE_RADIUS,
           speed: Math.random() * 25 + 5,
         });
+        count++;
       }
+      if (reachedCap) break;
     }
     particlesRef.current = particles;
   };
 
   // Animation loop
-  const animate = () => {
+  const animate = (ts: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    const minInterval = 1000 / TARGET_FPS;
+    if (ts - lastFrameTimeRef.current < minInterval) {
+      animationRef.current = requestAnimationFrame(animate);
+      return;
+    }
+    lastFrameTimeRef.current = ts;
+
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      animationRef.current = requestAnimationFrame(animate);
+      return;
+    }
+
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const w = canvas.width;
@@ -82,8 +106,8 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
         const dy = mouse.y - p.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         const force = (MOUSE_RADIUS - distance) / MOUSE_RADIUS;
-        const directionX = dx / distance;
-        const directionY = dy / distance;
+        const directionX = distance > 0.0001 ? dx / distance : 0;
+        const directionY = distance > 0.0001 ? dy / distance : 0;
         if (distance < MOUSE_RADIUS) {
           p.x -= directionX * force * p.speed;
           p.y -= directionY * force * p.speed;
@@ -109,44 +133,63 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
 
   useEffect(() => {
     resizeParticles();
-    animate();
+    animationRef.current = requestAnimationFrame(animate);
     let cleanup: (() => void) | undefined;
     if (!width && !height) {
       // Fullscreen mode: use window events
-      window.addEventListener("resize", resizeParticles);
-      window.addEventListener("mousemove", (e) => {
-        mouseRef.current.x = e.x;
-        mouseRef.current.y = e.y;
+      const handleWindowMouseMove = (e: MouseEvent) => {
+        mouseRef.current.x = e.clientX;
+        mouseRef.current.y = e.clientY;
         mouseActiveRef.current = true;
-      });
-      window.addEventListener("mouseout", () => {
+      };
+      const handleWindowMouseOut = () => {
         mouseRef.current.x = undefined;
         mouseRef.current.y = undefined;
         mouseActiveRef.current = false;
-      });
+      };
+
+      window.addEventListener("resize", resizeParticles);
+      window.addEventListener("mousemove", handleWindowMouseMove);
+      window.addEventListener("mouseout", handleWindowMouseOut);
       cleanup = () => {
         window.removeEventListener("resize", resizeParticles);
+        window.removeEventListener("mousemove", handleWindowMouseMove);
+        window.removeEventListener("mouseout", handleWindowMouseOut);
       };
     } else {
-      // Modal mode: use canvas-local events
+      // Modal/canvas-bound mode: use window mouse events and project into canvas space.
+      // This keeps particle interaction working even when another interactive layer (e.g. SVG nodes)
+      // sits above this canvas and captures pointer events.
       const canvas = canvasRef.current;
       if (canvas) {
-        const handleMouseMove = (e: MouseEvent) => {
+        const handleWindowMouseMove = (e: MouseEvent) => {
           const rect = canvas.getBoundingClientRect();
-          mouseRef.current.x = e.clientX - rect.left;
-          mouseRef.current.y = e.clientY - rect.top;
-          mouseActiveRef.current = true;
+          const localX = e.clientX - rect.left;
+          const localY = e.clientY - rect.top;
+          const inside = localX >= 0 && localX <= rect.width && localY >= 0 && localY <= rect.height;
+
+          if (inside) {
+            mouseRef.current.x = localX;
+            mouseRef.current.y = localY;
+            mouseActiveRef.current = true;
+          } else {
+            mouseRef.current.x = undefined;
+            mouseRef.current.y = undefined;
+            mouseActiveRef.current = false;
+          }
         };
-        const handleMouseOut = () => {
+
+        const handleWindowMouseOut = () => {
           mouseRef.current.x = undefined;
           mouseRef.current.y = undefined;
           mouseActiveRef.current = false;
         };
-        canvas.addEventListener("mousemove", handleMouseMove);
-        canvas.addEventListener("mouseout", handleMouseOut);
+
+        window.addEventListener("mousemove", handleWindowMouseMove);
+        window.addEventListener("mouseout", handleWindowMouseOut);
         cleanup = () => {
-          canvas.removeEventListener("mousemove", handleMouseMove);
-          canvas.removeEventListener("mouseout", handleMouseOut);
+          window.removeEventListener("mousemove", handleWindowMouseMove);
+          window.removeEventListener("mouseout", handleWindowMouseOut);
         };
       }
     }
@@ -154,6 +197,7 @@ const MindMapBackground: React.FC<MindMapBackgroundProps> = ({ width, height }) 
       if (cleanup) cleanup();
       if (animationRef.current !== null) {
         cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
     };
     // eslint-disable-next-line
