@@ -16,6 +16,7 @@ pub mod process;
 pub mod router;
 pub mod commands;
 pub mod rag;
+pub mod workspace;
 pub mod tts;
 pub mod asr;
 pub mod podcast;

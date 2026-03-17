@@ -1,6 +1,7 @@
 //! Model management commands — list, start, stop, status.
 
 use crate::process::ProcessManager;
+use crate::commands::workspace::WorkspaceState;
 use crate::registry::types::{
     BackendKind, ModelDef, ModelInfo, ModelKind, ModelStatus, TaskType,
 };
@@ -228,10 +229,8 @@ pub async fn get_memory_usage(
 
 /// Return the current working directory so frontend state can be scoped per workspace.
 #[tauri::command]
-pub fn get_workspace_scope() -> Result<String, String> {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("Failed to read current workspace directory: {e}"))
+pub fn get_workspace_scope(workspace: State<'_, WorkspaceState>) -> Result<String, String> {
+    workspace.0.get_workspace_scope()
 }
 
 // ── Helper ──────────────────────────────────────────────────────────────────

@@ -4,10 +4,29 @@ use crate::rag::pipeline::{IngestionStatus, RagPipeline, RagResult};
 use crate::commands::models::ProcessManagerState;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock;
 use tauri::State;
 
 /// Tauri-managed state wrapper for the RAG pipeline.
-pub struct RagPipelineState(pub Arc<RagPipeline>);
+pub struct RagPipelineState(pub RwLock<Arc<RagPipeline>>);
+
+impl RagPipelineState {
+    pub fn active_pipeline(&self) -> Result<Arc<RagPipeline>, String> {
+        self.0
+            .read()
+            .map(|guard| guard.clone())
+            .map_err(|_| "RAG pipeline state lock poisoned".to_string())
+    }
+
+    pub fn replace_pipeline(&self, pipeline: Arc<RagPipeline>) -> Result<(), String> {
+        let mut guard = self
+            .0
+            .write()
+            .map_err(|_| "RAG pipeline state lock poisoned".to_string())?;
+        *guard = pipeline;
+        Ok(())
+    }
+}
 
 /// Response from the streaming RAG retrieve command.
 /// Frontend uses sources immediately, then streams the answer from llama-server SSE.
@@ -29,7 +48,7 @@ pub async fn ingest_document(
     path: String,
     state: State<'_, RagPipelineState>,
 ) -> Result<IngestionStatus, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.ingest_document(&PathBuf::from(path)).await
 }
 
@@ -39,7 +58,7 @@ pub async fn ingest_folder(
     path: String,
     state: State<'_, RagPipelineState>,
 ) -> Result<Vec<IngestionStatus>, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.ingest_folder(&PathBuf::from(path)).await
 }
 
@@ -50,7 +69,7 @@ pub async fn query_rag(
     top_k: Option<usize>,
     state: State<'_, RagPipelineState>,
 ) -> Result<RagResult, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     let k = top_k.unwrap_or(5);
     pipeline.query(&query, k).await
 }
@@ -60,7 +79,7 @@ pub async fn query_rag(
 pub async fn list_rag_documents(
     state: State<'_, RagPipelineState>,
 ) -> Result<Vec<IngestionStatus>, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.list_documents()
 }
 
@@ -70,7 +89,7 @@ pub async fn delete_rag_document(
     doc_id: i64,
     state: State<'_, RagPipelineState>,
 ) -> Result<(), String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.delete_document(doc_id).await
 }
 
@@ -80,7 +99,7 @@ pub async fn enrich_rag_documents(
     batch_size: Option<usize>,
     state: State<'_, RagPipelineState>,
 ) -> Result<usize, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     let size = batch_size.unwrap_or(10);
     pipeline.enrich_pending(size).await
 }
@@ -95,7 +114,7 @@ pub async fn build_raptor_tree(
     doc_id: i64,
     state: State<'_, RagPipelineState>,
 ) -> Result<crate::rag::raptor::RaptorTreeStatus, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.build_raptor_tree(doc_id).await
 }
 
@@ -105,7 +124,7 @@ pub async fn has_raptor_tree(
     doc_id: i64,
     state: State<'_, RagPipelineState>,
 ) -> Result<bool, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.has_raptor_tree(doc_id)
 }
 
@@ -115,7 +134,7 @@ pub async fn delete_raptor_tree(
     doc_id: i64,
     state: State<'_, RagPipelineState>,
 ) -> Result<(), String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.delete_raptor_tree(doc_id).await
 }
 
@@ -127,7 +146,7 @@ pub async fn query_rag_with_raptor(
     top_k: Option<usize>,
     state: State<'_, RagPipelineState>,
 ) -> Result<RagResult, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     let k = top_k.unwrap_or(5);
     pipeline.query_with_raptor(doc_id, &query, k).await
 }
@@ -146,7 +165,7 @@ pub async fn query_rag_stream(
     rag_state: State<'_, RagPipelineState>,
     pm_state: State<'_, ProcessManagerState>,
 ) -> Result<RagStreamSetup, String> {
-    let pipeline = rag_state.0.clone();
+    let pipeline = rag_state.active_pipeline()?;
     let k = top_k.unwrap_or(5);
 
     // Phase 1: Retrieval (classify → HyDE → search → RRF → grade)
@@ -201,7 +220,7 @@ pub async fn retrieve_media_for_response(
     threshold: Option<f32>,
     state: State<'_, RagPipelineState>,
 ) -> Result<Vec<crate::rag::db::MediaAssetRecord>, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     let k = top_k.unwrap_or(3);
     let sim_threshold = threshold.unwrap_or(0.50);
 
@@ -222,7 +241,7 @@ pub async fn get_media_for_document(
     doc_id: i64,
     state: State<'_, RagPipelineState>,
 ) -> Result<Vec<crate::rag::db::MediaAssetRecord>, String> {
-    let pipeline = state.0.clone();
+    let pipeline = state.active_pipeline()?;
     pipeline.db.get_media_for_doc(doc_id)
 }
 
@@ -235,7 +254,7 @@ pub async fn query_rag_with_raptor_stream(
     rag_state: State<'_, RagPipelineState>,
     pm_state: State<'_, ProcessManagerState>,
 ) -> Result<RagStreamSetup, String> {
-    let pipeline = rag_state.0.clone();
+    let pipeline = rag_state.active_pipeline()?;
     let k = top_k.unwrap_or(5);
 
     // Phase 1: RAPTOR retrieval

@@ -7,3 +7,4 @@ pub mod inference;
 pub mod audio;
 pub mod rag;
 pub mod podcast;
+pub mod workspace;

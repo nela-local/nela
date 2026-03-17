@@ -16,7 +16,7 @@ pub async fn generate_podcast(
     rag_state: State<'_, RagPipelineState>,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<PodcastResult, String> {
-    let rag_pipeline = rag_state.0.clone();
+    let rag_pipeline = rag_state.active_pipeline()?;
     let router = router_state.0.clone();
 
     crate::podcast::engine::generate_podcast(&app, request, rag_pipeline, router).await

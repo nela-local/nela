@@ -8,11 +8,14 @@
 use app_lib::commands::inference::TaskRouterState;
 use app_lib::commands::models::ProcessManagerState;
 use app_lib::commands::rag::RagPipelineState;
+use app_lib::commands::workspace::WorkspaceState;
 use app_lib::process::ProcessManager;
 use app_lib::rag::pipeline::RagPipeline;
 use app_lib::registry::ModelRegistry;
 use app_lib::router::TaskRouter;
+use app_lib::workspace::WorkspaceManager;
 use std::sync::Arc;
+use std::sync::RwLock;
 use tauri::Manager;
 
 fn main() {
@@ -77,12 +80,21 @@ fn main() {
                 });
             }
 
-            // 7. Initialize RAG pipeline
-            let rag_data_dir = app
+            // 7. Initialize workspace manager
+            let app_data_dir = app
                 .path()
                 .app_data_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"));
-            let rag_dir = rag_data_dir.join("rag");
+
+            let workspace_manager = Arc::new(
+                WorkspaceManager::new(&app_data_dir)
+                    .expect("Failed to initialize workspace manager"),
+            );
+
+            // 8. Initialize RAG pipeline for active workspace cache
+            let rag_dir = workspace_manager
+                .active_rag_dir()
+                .expect("Failed to resolve active workspace RAG directory");
             let rag_pipeline = Arc::new(
                 RagPipeline::open(&rag_dir, router.clone())
                     .expect("Failed to initialize RAG pipeline"),
@@ -91,10 +103,11 @@ fn main() {
             // Start background enrichment worker (with app handle for event emission)
             RagPipeline::start_enrichment_worker(rag_pipeline.clone(), app.handle().clone());
 
-            // 8. Register state for Tauri commands
+            // 9. Register state for Tauri commands
             app.manage(ProcessManagerState(process_manager));
             app.manage(TaskRouterState(router));
-            app.manage(RagPipelineState(rag_pipeline));
+            app.manage(RagPipelineState(RwLock::new(rag_pipeline)));
+            app.manage(WorkspaceState(workspace_manager));
 
             Ok(())
         })
@@ -114,6 +127,18 @@ fn main() {
             app_lib::commands::models::get_memory_usage,
             app_lib::commands::models::get_workspace_scope,
             app_lib::commands::models::read_image_base64,
+            // Workspace commands
+            app_lib::commands::workspace::list_workspaces,
+            app_lib::commands::workspace::get_active_workspace,
+            app_lib::commands::workspace::create_workspace,
+            app_lib::commands::workspace::open_workspace,
+            app_lib::commands::workspace::set_workspace_file,
+            app_lib::commands::workspace::get_workspace_frontend_state,
+            app_lib::commands::workspace::save_workspace_frontend_state,
+            app_lib::commands::workspace::save_workspace_as_nela,
+            app_lib::commands::workspace::save_workspace_nela,
+            app_lib::commands::workspace::delete_workspace,
+            app_lib::commands::workspace::open_workspace_nela,
             app_lib::commands::inference::route_request,
             app_lib::commands::inference::vision_chat,
             app_lib::commands::inference::vision_chat_stream,

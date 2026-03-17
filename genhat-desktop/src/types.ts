@@ -3,6 +3,20 @@ export interface ModelFile {
   path: string;
 }
 
+export interface WorkspaceRecord {
+  id: string;
+  name: string;
+  nela_path: string | null;
+  cache_dir: string;
+  created_at: number;
+  last_opened_at: number;
+}
+
+export interface WorkspaceOpenResult {
+  workspace: WorkspaceRecord;
+  frontend_state_json: string | null;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;

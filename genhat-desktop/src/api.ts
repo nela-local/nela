@@ -9,6 +9,8 @@ import type {
   MediaAsset,
   PodcastRequest,
   PodcastResult,
+  WorkspaceOpenResult,
+  WorkspaceRecord,
 } from "./types";
 
 export const Api = {
@@ -52,6 +54,86 @@ export const Api = {
   /** Get a workspace identifier (cwd) for scoping local UI persistence. */
   async getWorkspaceScope(): Promise<string> {
     return invoke<string>("get_workspace_scope");
+  },
+
+  /** List all known app workspaces. */
+  async listWorkspaces(): Promise<WorkspaceRecord[]> {
+    return invoke<WorkspaceRecord[]>("list_workspaces");
+  },
+
+  /** Get currently active app workspace metadata. */
+  async getActiveWorkspace(): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("get_active_workspace");
+  },
+
+  /** Create a new workspace and make it active. */
+  async createWorkspace(name?: string): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("create_workspace", {
+      name: name ?? null,
+    });
+  },
+
+  /** Open an existing workspace by id and make it active. */
+  async openWorkspace(workspaceId: string): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("open_workspace", {
+      workspaceId,
+    });
+  },
+
+  /** Delete a workspace by id; returns the active workspace after deletion. */
+  async deleteWorkspace(workspaceId: string): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("delete_workspace", {
+      workspaceId,
+    });
+  },
+
+  /** Attach/update the saved .nela file path for a workspace. */
+  async setWorkspaceFile(workspaceId: string, nelaPath: string): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("set_workspace_file", {
+      workspaceId,
+      nelaPath,
+    });
+  },
+
+  /** Read persisted frontend state JSON for the active workspace. */
+  async getWorkspaceFrontendState(): Promise<string | null> {
+    return invoke<string | null>("get_workspace_frontend_state");
+  },
+
+  /** Persist frontend state JSON for the active workspace. */
+  async saveWorkspaceFrontendState(frontendStateJson: string): Promise<void> {
+    await invoke("save_workspace_frontend_state", {
+      frontendStateJson,
+    });
+  },
+
+  /** Save active workspace to a chosen .nela file path. */
+  async saveWorkspaceAsNela(
+    nelaPath: string,
+    frontendStateJson?: string
+  ): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("save_workspace_as_nela", {
+      nelaPath,
+      frontendStateJson: frontendStateJson ?? null,
+    });
+  },
+
+  /** Save active workspace to its already-associated .nela path. */
+  async saveWorkspaceNela(frontendStateJson?: string): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("save_workspace_nela", {
+      frontendStateJson: frontendStateJson ?? null,
+    });
+  },
+
+  /** Open/import a .nela file and make its workspace active. */
+  async openWorkspaceNela(
+    nelaPath: string,
+    name?: string
+  ): Promise<WorkspaceOpenResult> {
+    return invoke<WorkspaceOpenResult>("open_workspace_nela", {
+      nelaPath,
+      name: name ?? null,
+    });
   },
 
   /** Manually start (pre-warm) a model by ID. */
