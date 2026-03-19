@@ -56,37 +56,6 @@ pub struct WorkspaceManager {
     inner: Mutex<WorkspaceRegistry>,
 }
 
-fn replace_file_from_temp(tmp_path: &Path, target_path: &Path, label: &str) -> Result<(), String> {
-    if target_path.exists() {
-        std::fs::remove_file(target_path).map_err(|e| {
-            format!(
-                "Failed to remove existing {label} target {}: {e}",
-                target_path.display()
-            )
-        })?;
-    }
-
-    match std::fs::rename(tmp_path, target_path) {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            std::fs::copy(tmp_path, target_path).map_err(|e| {
-                format!(
-                    "Failed to copy temporary {label} file {} into place {}: {e}",
-                    tmp_path.display(),
-                    target_path.display()
-                )
-            })?;
-            std::fs::remove_file(tmp_path).map_err(|e| {
-                format!(
-                    "Failed to clean up temporary {label} file {}: {e}",
-                    tmp_path.display()
-                )
-            })?;
-            Ok(())
-        }
-    }
-}
-
 impl WorkspaceManager {
     pub fn new(app_data_dir: &Path) -> Result<Self, String> {
         let workspaces_root = app_data_dir.join("workspaces");
@@ -360,9 +329,8 @@ impl WorkspaceManager {
             workspace_name: active.name.clone(),
         };
 
-        let tmp_path = nela_path_buf.with_extension("nela.tmp");
-        let file = File::create(&tmp_path)
-            .map_err(|e| format!("Failed to create temporary .nela file {}: {e}", tmp_path.display()))?;
+        let file = File::create(&nela_path_buf)
+            .map_err(|e| format!("Failed to create .nela file {}: {e}", nela_path_buf.display()))?;
 
         let mut zip = zip::ZipWriter::new(BufWriter::new(file));
         let options = SimpleFileOptions::default()
@@ -399,8 +367,6 @@ impl WorkspaceManager {
 
         zip.finish()
             .map_err(|e| format!("Failed to finalize .nela archive: {e}"))?;
-
-        replace_file_from_temp(&tmp_path, &nela_path_buf, ".nela archive")?;
 
         let saved = self.set_workspace_file(&active.id, &nela_path_buf.to_string_lossy())?;
         Ok(saved)
@@ -541,7 +507,8 @@ impl WorkspaceManager {
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, json)
             .map_err(|e| format!("Failed to write workspace registry temp file {}: {e}", tmp.display()))?;
-        replace_file_from_temp(&tmp, path, "workspace registry")?;
+        std::fs::rename(&tmp, path)
+            .map_err(|e| format!("Failed to replace workspace registry {}: {e}", path.display()))?;
 
         Ok(())
     }
