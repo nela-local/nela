@@ -778,62 +778,36 @@ function App() {
   const deleteWorkspaceById = useCallback(
     async (workspaceId: string) => {
       if (workspaceBusy) return;
-      const index = workspaces.findIndex((ws) => ws.id === workspaceId);
-      const aboveWorkspaceId = index > 0 ? workspaces[index - 1]?.id : null;
       const deletingActive = activeWorkspace?.id === workspaceId;
-      const deletingName =
-        workspaces.find((ws) => ws.id === workspaceId)?.name ?? activeWorkspace?.name ?? "workspace";
-
-      const confirmed = window.confirm(
-        `Delete workspace "${deletingName}"? This removes its local cache from the app.`
-      );
-      if (!confirmed) return;
 
       try {
         setWorkspaceBusy(true);
-        setSessionStoreReady(false);
+        const nextActiveFromBackend = await Api.deleteWorkspace(workspaceId);
 
-        await Api.deleteWorkspace(workspaceId);
-
-        // Deleting the active workspace: follow the "above it, otherwise empty window" rule.
-        if (deletingActive) {
-          // Clear local state immediately to ensure content exclusivity while backend switches.
-          setSessions([]);
-          setOpenSessionIds([]);
-          setActiveSessionId("");
-          setMindmapsBySession({});
-          setActiveMindmapOverlay(null);
-          setRagDocs([]);
-
-          if (aboveWorkspaceId) {
-            const opened = await Api.openWorkspace(aboveWorkspaceId);
-            const scope = await Api.getWorkspaceScope();
-            setActiveWorkspace(opened);
-            setWorkspaceScope(scope || `workspace:${opened.id}`);
-
-            // Update dropdown list + active metadata, then restore per-workspace sessions.
-            await refreshWorkspaceRegistry();
-            await loadRagDocs();
-          } else {
-            // No workspace above — empty window, but keep the remaining workspaces in the dropdown.
-            await refreshWorkspaceListOnly();
-            setActiveWorkspace(null);
-            setWorkspaceScope(null);
-            setSessionStoreReady(true);
-          }
-        } else {
-          // Deleting a non-active workspace.
-          // If we are currently in an "empty window", keep it empty.
-          if (!activeWorkspace) {
-            await refreshWorkspaceListOnly();
-            setSessionStoreReady(true);
-          } else {
-            await refreshWorkspaceRegistry();
-            await loadRagDocs();
-          }
+        if (!deletingActive) {
+          // Non-active deletion: keep current workspace scope/session state untouched.
+          await refreshWorkspaceListOnly();
+          return;
         }
+
+        // Active deletion: clear state immediately, then bind to backend-selected fallback workspace.
+        setSessionStoreReady(false);
+        setSessions([]);
+        setOpenSessionIds([]);
+        setActiveSessionId("");
+        setMindmapsBySession({});
+        setActiveMindmapOverlay(null);
+        setRagDocs([]);
+
+        const scope = await Api.getWorkspaceScope();
+        setActiveWorkspace(nextActiveFromBackend);
+        setWorkspaceScope(scope || `workspace:${nextActiveFromBackend.id}`);
+
+        await refreshWorkspaceRegistry();
+        await loadRagDocs();
       } catch (err) {
         console.error("Failed to delete workspace:", err);
+        setSessionStoreReady(true);
       } finally {
         setWorkspaceBusy(false);
       }
@@ -1755,7 +1729,14 @@ function App() {
 
   return (
     <div className="flex h-full w-full">
-      <SidebarNav selected={sidebarSection} onSelect={handleSidebarNav} />
+      <SidebarNav
+        selected={sidebarSection}
+        onSelect={handleSidebarNav}
+        onImportProject={() => void openWorkspaceFromFile()}
+        onExportProject={() => void saveWorkspaceFile()}
+        workspaceBusy={workspaceBusy}
+        canExport={!!activeWorkspace}
+      />
       {/* Vertical blue line when sidebar is minimized */}
           {sidebarSection === null && (
         <div className="w-[4px] min-w-[4px] h-full bg-[#00d4ff] rounded-full mx-1 shadow-[0_0_16px_#00d4ff88] transition-all duration-200 opacity-100" />
@@ -1908,50 +1889,25 @@ function App() {
         )}
 
         {/* ── Top Bar ── */}
-        <header className="h-14 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
-          <div className="flex items-center gap-2.5">
-            <currentModeConfig.icon size={18} strokeWidth={1.8} className="text-neon" />
-            <h1 className="text-[0.95rem] font-semibold m-0 text-txt">{currentModeConfig.label}</h1>
-            <span className="text-[0.78rem] text-txt-muted pl-2.5 border-l border-glass-border">{currentModeConfig.desc}</span>
+        <header className="min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
+          <div className="flex flex-col items-start gap-1.5">
+            <div className="flex items-center gap-2.5">
+              <currentModeConfig.icon size={18} strokeWidth={1.8} className="text-neon" />
+              <h1 className="text-[0.95rem] font-semibold m-0 text-txt">{currentModeConfig.label}</h1>
+              <span className="text-[0.78rem] text-txt-muted pl-2.5 border-l border-glass-border">{currentModeConfig.desc}</span>
+            </div>
+            <WorkspaceSelector
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspace?.id ?? null}
+              onSelectWorkspace={(id) => void switchWorkspaceById(id)}
+              onCreateWorkspace={() => void createNewWorkspace()}
+              onDeleteWorkspace={(id) => void deleteWorkspaceById(id)}
+              onRenameWorkspace={(id, name) => renameWorkspaceById(id, name)}
+              busy={workspaceBusy}
+            />
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <WorkspaceSelector
-                workspaces={workspaces}
-                activeWorkspaceId={activeWorkspace?.id ?? null}
-                onSelectWorkspace={(id) => void switchWorkspaceById(id)}
-                onCreateWorkspace={() => void createNewWorkspace()}
-                onDeleteWorkspace={(id) => void deleteWorkspaceById(id)}
-                onRenameWorkspace={(id, name) => renameWorkspaceById(id, name)}
-                busy={workspaceBusy}
-              />
-              <button
-                className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
-                onClick={() => void openWorkspaceFromFile()}
-                disabled={workspaceBusy || !activeWorkspace}
-                title="Open .nela workspace"
-              >
-                Open
-              </button>
-              <button
-                className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
-                onClick={() => void saveWorkspaceFile()}
-                disabled={workspaceBusy || !activeWorkspace}
-                title="Save workspace"
-              >
-                Save
-              </button>
-              <button
-                className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
-                onClick={() => void saveWorkspaceAsFile()}
-                disabled={workspaceBusy || !activeWorkspace}
-                title="Save workspace as .nela"
-              >
-                Save As
-              </button>
-            </div>
-
             {(chatMode === "text" || chatMode === "mindmap") && (
               <ModelSelector
                 models={models}
@@ -2039,7 +1995,7 @@ function App() {
           <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">
             {activeWorkspace
               ? "Open a chat from the left sidebar or create a new chat."
-              : "No workspace selected. Create a workspace from the dropdown above."}
+              : "No workspace selected. Create a workspace from the left sidebar."}
           </div>
         ) : (
           <ChatWindow
