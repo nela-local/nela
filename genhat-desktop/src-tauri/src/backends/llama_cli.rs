@@ -148,12 +148,16 @@ impl super::ModelBackend for LlamaCliBackend {
 
         // Create a minimal process handle (no actual process yet)
         #[cfg(target_os = "windows")]
-        let child = Command::new("cmd")
-            .args(["/C", "echo ready"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("Failed to create dummy process: {e}"))?;
+        let child = {
+            let mut dummy_cmd = Command::new("cmd");
+            dummy_cmd.args(["/C", "echo ready"]);
+            dummy_cmd.stdout(Stdio::null());
+            dummy_cmd.stderr(Stdio::null());
+            crate::windows_spawn::hide_console_std(&mut dummy_cmd);
+            dummy_cmd
+                .spawn()
+                .map_err(|e| format!("Failed to create dummy process: {e}"))?
+        };
 
         #[cfg(not(target_os = "windows"))]
         let child = Command::new("true")
@@ -207,6 +211,8 @@ impl super::ModelBackend for LlamaCliBackend {
         let mut cmd = TokioCommand::new(&exe_path);
         cmd.current_dir(&work_dir);
         apply_lib_env_tokio(&mut cmd, &work_dir);
+        #[cfg(windows)]
+        crate::windows_spawn::hide_console_tokio(&mut cmd);
         
         // Always use local model file
         if model_path.exists() {
@@ -325,6 +331,8 @@ pub async fn execute_vision_streaming(
     let mut cmd = TokioCommand::new(&exe_path);
     cmd.current_dir(work_dir);
     apply_lib_env_tokio(&mut cmd, work_dir);
+    #[cfg(windows)]
+    crate::windows_spawn::hide_console_tokio(&mut cmd);
 
     let mut child = cmd
         .arg("-m").arg(&model_path)

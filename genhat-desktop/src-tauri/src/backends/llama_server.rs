@@ -137,11 +137,16 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
 
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let mut child = Command::new(&exe)
+    let mut spawn_cmd = Command::new(&exe);
+    spawn_cmd
         .args(&args_refs)
         .current_dir(work_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    crate::windows_spawn::hide_console_std(&mut spawn_cmd);
+
+    let mut child = spawn_cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn llama-server: {e}"))?;
 
@@ -421,9 +426,10 @@ impl ModelBackend for LlamaServerBackend {
                 // We need mutable access to call kill; use platform-specific kill by PID
                 #[cfg(windows)]
                 {
-                    let _ = Command::new("taskkill")
-                        .args(["/F", "/PID", &ph.pid.to_string()])
-                        .output();
+                    let mut taskkill_cmd = Command::new("taskkill");
+                    taskkill_cmd.args(["/F", "/PID", &ph.pid.to_string()]);
+                    crate::windows_spawn::hide_console_std(&mut taskkill_cmd);
+                    let _ = taskkill_cmd.output();
                     return Ok(());
                 }
                 #[cfg(unix)]

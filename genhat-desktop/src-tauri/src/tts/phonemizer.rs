@@ -101,6 +101,9 @@ pub fn phonemize(text: &str) -> Result<String, String> {
     cmd.args(["--ipa", "-v", "en-us", "-q"]);
     cmd.arg(text);
 
+    #[cfg(windows)]
+    crate::windows_spawn::hide_console_std(&mut cmd);
+
     let output = cmd.output().map_err(|e| {
         format!(
             "Failed to run espeak-ng: {e}\n\
@@ -137,9 +140,11 @@ pub fn is_available() -> bool {
         // Quick sanity check with the bundled binary.
         phonemize("test").is_ok()
     } else {
-        Command::new("espeak-ng")
-            .arg("--version")
-            .output()
+        let mut cmd = Command::new("espeak-ng");
+        cmd.arg("--version");
+        #[cfg(windows)]
+        crate::windows_spawn::hide_console_std(&mut cmd);
+        cmd.output()
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
