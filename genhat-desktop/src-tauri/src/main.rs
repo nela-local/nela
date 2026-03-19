@@ -138,6 +138,7 @@ fn main() {
             app_lib::commands::workspace::save_workspace_as_nela,
             app_lib::commands::workspace::save_workspace_nela,
             app_lib::commands::workspace::delete_workspace,
+            app_lib::commands::workspace::rename_workspace,
             app_lib::commands::workspace::open_workspace_nela,
             app_lib::commands::inference::route_request,
             app_lib::commands::inference::vision_chat,

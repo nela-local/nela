@@ -34,6 +34,7 @@ import ChatTabBar from "./components/ChatTabBar";
 import ChatHistorySidebar from "./components/ChatHistorySidebar";
 import SidebarNav from "./components/SidebarNav";
 import ModelSelector from "./components/ModelSelector";
+import WorkspaceSelector from "./components/WorkspaceSelector";
 import PdfViewer from "./components/PdfViewer";
 import DocumentViewer from "./components/DocumentViewer";
 import PodcastTab from "./components/PodcastTab";
@@ -317,11 +318,13 @@ function App() {
 
   /** Create a new session, add it to the list, and activate it. */
   const addNewSession = useCallback(() => {
+    // No active workspace means we keep the app in the "empty window" state.
+    if (!activeWorkspace) return;
     const newSession = createEmptySession();
     setSessions((prev) => [...prev, newSession]);
     setOpenSessionIds((prev) => [...prev, newSession.id]);
     setActiveSessionId(newSession.id);
-  }, []);
+  }, [activeWorkspace]);
 
   /** Open a chat from history into the top viewer tabs and activate it. */
   const openSessionInViewer = useCallback((sessionId: string) => {
@@ -443,6 +446,18 @@ function App() {
       setActiveWorkspace(active);
     } catch (err) {
       console.warn("Failed to refresh workspace registry:", err);
+    }
+  }, []);
+
+  // ── RAG helpers ────────────────────────────────────────────────────────────
+  // NOTE: This must be declared before any hook dependency arrays that reference
+  // `loadRagDocs` (e.g. workspace switching), otherwise it hits TDZ at runtime.
+  const loadRagDocs = useCallback(async () => {
+    try {
+      const docs = await Api.listRagDocuments();
+      setRagDocs(docs);
+    } catch (e) {
+      console.error("Failed to load RAG docs:", e);
     }
   }, []);
 
@@ -599,36 +614,51 @@ function App() {
     try {
       setWorkspaceBusy(true);
       setSessionStoreReady(false);
+      setRagDocs([]);
+      // Clear per-workspace frontend state immediately to avoid any brief cross-workspace mix.
+      setSessions([]);
+      setOpenSessionIds([]);
+      setActiveSessionId("");
+      setMindmapsBySession({});
+      setActiveMindmapOverlay(null);
       const opened = await Api.openWorkspace(workspaceId);
       const scope = await Api.getWorkspaceScope();
       setActiveWorkspace(opened);
       setWorkspaceScope(scope || `workspace:${opened.id}`);
       await refreshWorkspaceRegistry();
+      await loadRagDocs();
     } catch (err) {
       console.error("Failed to switch workspace:", err);
       setSessionStoreReady(true);
     } finally {
       setWorkspaceBusy(false);
     }
-  }, [workspaceBusy, refreshWorkspaceRegistry]);
+  }, [workspaceBusy, refreshWorkspaceRegistry, loadRagDocs]);
 
   const createNewWorkspace = useCallback(async () => {
     if (workspaceBusy) return;
     try {
       setWorkspaceBusy(true);
       setSessionStoreReady(false);
+      setRagDocs([]);
+      setSessions([]);
+      setOpenSessionIds([]);
+      setActiveSessionId("");
+      setMindmapsBySession({});
+      setActiveMindmapOverlay(null);
       const created = await Api.createWorkspace();
       const scope = await Api.getWorkspaceScope();
       setActiveWorkspace(created);
       setWorkspaceScope(scope || `workspace:${created.id}`);
       await refreshWorkspaceRegistry();
+      await loadRagDocs();
     } catch (err) {
       console.error("Failed to create workspace:", err);
       setSessionStoreReady(true);
     } finally {
       setWorkspaceBusy(false);
     }
-  }, [workspaceBusy, refreshWorkspaceRegistry]);
+  }, [workspaceBusy, refreshWorkspaceRegistry, loadRagDocs]);
 
   const saveWorkspaceAsFile = useCallback(async () => {
     if (workspaceBusy || !activeSession) return;
@@ -682,6 +712,13 @@ function App() {
     if (workspaceBusy) return;
     try {
       setWorkspaceBusy(true);
+      setSessionStoreReady(false);
+      setRagDocs([]);
+      setSessions([]);
+      setOpenSessionIds([]);
+      setActiveSessionId("");
+      setMindmapsBySession({});
+      setActiveMindmapOverlay(null);
       const selected = await open({
         title: "Open NELA Workspace",
         multiple: false,
@@ -689,43 +726,127 @@ function App() {
       });
       if (!selected || Array.isArray(selected)) return;
 
-      setSessionStoreReady(false);
       const result = await Api.openWorkspaceNela(selected);
       const scope = await Api.getWorkspaceScope();
       setActiveWorkspace(result.workspace);
       setWorkspaceScope(scope || `workspace:${result.workspace.id}`);
       await refreshWorkspaceRegistry();
+      await loadRagDocs();
     } catch (err) {
       console.error("Failed to open .nela workspace:", err);
       setSessionStoreReady(true);
     } finally {
       setWorkspaceBusy(false);
     }
-  }, [workspaceBusy, refreshWorkspaceRegistry]);
+  }, [workspaceBusy, refreshWorkspaceRegistry, loadRagDocs]);
 
-  const deleteCurrentWorkspace = useCallback(async () => {
-    if (workspaceBusy || !activeWorkspace) return;
-
-    const confirmed = window.confirm(
-      `Delete workspace "${activeWorkspace.name}"? This removes its local cache from the app.`
-    );
-    if (!confirmed) return;
-
+  const refreshWorkspaceListOnly = useCallback(async () => {
     try {
-      setWorkspaceBusy(true);
-      setSessionStoreReady(false);
-      const nextActive = await Api.deleteWorkspace(activeWorkspace.id);
-      const scope = await Api.getWorkspaceScope();
-      setActiveWorkspace(nextActive);
-      setWorkspaceScope(scope || `workspace:${nextActive.id}`);
-      await refreshWorkspaceRegistry();
+      const all = await Api.listWorkspaces();
+      setWorkspaces(all);
     } catch (err) {
-      console.error("Failed to delete workspace:", err);
-      setSessionStoreReady(true);
-    } finally {
-      setWorkspaceBusy(false);
+      console.warn("Failed to refresh workspace list:", err);
     }
-  }, [workspaceBusy, activeWorkspace, refreshWorkspaceRegistry]);
+  }, []);
+
+  const renameWorkspaceById = useCallback(
+    async (workspaceId: string, newName: string) => {
+      if (workspaceBusy) return;
+      const trimmed = newName.trim();
+      if (!trimmed) return;
+
+      try {
+        setWorkspaceBusy(true);
+        await Api.renameWorkspace(workspaceId, trimmed);
+
+        // In the "empty window" state, do NOT ask backend for active workspace,
+        // otherwise we'd accidentally exit the empty state.
+        if (activeWorkspace) {
+          await refreshWorkspaceRegistry();
+        } else {
+          await refreshWorkspaceListOnly();
+        }
+      } catch (err) {
+        console.error("Failed to rename workspace:", err);
+      } finally {
+        setWorkspaceBusy(false);
+      }
+    },
+    [workspaceBusy, activeWorkspace, refreshWorkspaceRegistry, refreshWorkspaceListOnly]
+  );
+
+  const deleteWorkspaceById = useCallback(
+    async (workspaceId: string) => {
+      if (workspaceBusy) return;
+      const index = workspaces.findIndex((ws) => ws.id === workspaceId);
+      const aboveWorkspaceId = index > 0 ? workspaces[index - 1]?.id : null;
+      const deletingActive = activeWorkspace?.id === workspaceId;
+      const deletingName =
+        workspaces.find((ws) => ws.id === workspaceId)?.name ?? activeWorkspace?.name ?? "workspace";
+
+      const confirmed = window.confirm(
+        `Delete workspace "${deletingName}"? This removes its local cache from the app.`
+      );
+      if (!confirmed) return;
+
+      try {
+        setWorkspaceBusy(true);
+        setSessionStoreReady(false);
+
+        await Api.deleteWorkspace(workspaceId);
+
+        // Deleting the active workspace: follow the "above it, otherwise empty window" rule.
+        if (deletingActive) {
+          // Clear local state immediately to ensure content exclusivity while backend switches.
+          setSessions([]);
+          setOpenSessionIds([]);
+          setActiveSessionId("");
+          setMindmapsBySession({});
+          setActiveMindmapOverlay(null);
+          setRagDocs([]);
+
+          if (aboveWorkspaceId) {
+            const opened = await Api.openWorkspace(aboveWorkspaceId);
+            const scope = await Api.getWorkspaceScope();
+            setActiveWorkspace(opened);
+            setWorkspaceScope(scope || `workspace:${opened.id}`);
+
+            // Update dropdown list + active metadata, then restore per-workspace sessions.
+            await refreshWorkspaceRegistry();
+            await loadRagDocs();
+          } else {
+            // No workspace above — empty window, but keep the remaining workspaces in the dropdown.
+            await refreshWorkspaceListOnly();
+            setActiveWorkspace(null);
+            setWorkspaceScope(null);
+            setSessionStoreReady(true);
+          }
+        } else {
+          // Deleting a non-active workspace.
+          // If we are currently in an "empty window", keep it empty.
+          if (!activeWorkspace) {
+            await refreshWorkspaceListOnly();
+            setSessionStoreReady(true);
+          } else {
+            await refreshWorkspaceRegistry();
+            await loadRagDocs();
+          }
+        }
+      } catch (err) {
+        console.error("Failed to delete workspace:", err);
+      } finally {
+        setWorkspaceBusy(false);
+      }
+    },
+    [
+      workspaceBusy,
+      workspaces,
+      activeWorkspace,
+      refreshWorkspaceRegistry,
+      refreshWorkspaceListOnly,
+      loadRagDocs,
+    ]
+  );
 
   // Keep active session aligned with currently open viewer tabs.
   useEffect(() => {
@@ -906,15 +1027,6 @@ function App() {
   };
 
   // ── RAG helpers ────────────────────────────────────────────────────────────
-
-  const loadRagDocs = async () => {
-    try {
-      const docs = await Api.listRagDocuments();
-      setRagDocs(docs);
-    } catch (e) {
-      console.error("Failed to load RAG docs:", e);
-    }
-  };
 
   const ingestFile = async () => {
     try {
@@ -1805,38 +1917,19 @@ function App() {
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <div className="relative flex items-center">
-                <select
-                  value={activeWorkspace?.id ?? ""}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    if (id && id !== activeWorkspace?.id) {
-                      void switchWorkspaceById(id);
-                    }
-                  }}
-                  className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[170px] hover:border-neon"
-                  disabled={workspaceBusy}
-                  title={activeWorkspace?.name ?? "Workspace"}
-                >
-                  {workspaces.map((ws) => (
-                    <option key={ws.id} value={ws.id}>{ws.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
-              </div>
-
-              <button
-                className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
-                onClick={() => void createNewWorkspace()}
-                disabled={workspaceBusy}
-                title="Create workspace"
-              >
-                New
-              </button>
+              <WorkspaceSelector
+                workspaces={workspaces}
+                activeWorkspaceId={activeWorkspace?.id ?? null}
+                onSelectWorkspace={(id) => void switchWorkspaceById(id)}
+                onCreateWorkspace={() => void createNewWorkspace()}
+                onDeleteWorkspace={(id) => void deleteWorkspaceById(id)}
+                onRenameWorkspace={(id, name) => renameWorkspaceById(id, name)}
+                busy={workspaceBusy}
+              />
               <button
                 className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
                 onClick={() => void openWorkspaceFromFile()}
-                disabled={workspaceBusy}
+                disabled={workspaceBusy || !activeWorkspace}
                 title="Open .nela workspace"
               >
                 Open
@@ -1844,7 +1937,7 @@ function App() {
               <button
                 className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
                 onClick={() => void saveWorkspaceFile()}
-                disabled={workspaceBusy}
+                disabled={workspaceBusy || !activeWorkspace}
                 title="Save workspace"
               >
                 Save
@@ -1852,18 +1945,10 @@ function App() {
               <button
                 className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
                 onClick={() => void saveWorkspaceAsFile()}
-                disabled={workspaceBusy}
+                disabled={workspaceBusy || !activeWorkspace}
                 title="Save workspace as .nela"
               >
                 Save As
-              </button>
-              <button
-                className="glass-btn inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[0.76rem]"
-                onClick={() => void deleteCurrentWorkspace()}
-                disabled={workspaceBusy || !activeWorkspace}
-                title="Delete current workspace"
-              >
-                Delete
               </button>
             </div>
 
@@ -1952,7 +2037,9 @@ function App() {
           />
         ) : !activeSession ? (
           <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">
-            Open a chat from the left sidebar or create a new chat.
+            {activeWorkspace
+              ? "Open a chat from the left sidebar or create a new chat."
+              : "No workspace selected. Create a workspace from the dropdown above."}
           </div>
         ) : (
           <ChatWindow

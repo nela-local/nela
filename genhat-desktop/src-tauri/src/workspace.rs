@@ -252,6 +252,29 @@ impl WorkspaceManager {
         Ok(out)
     }
 
+    pub fn rename_workspace(
+        &self,
+        workspace_id: &str,
+        new_name: &str,
+    ) -> Result<WorkspaceRecord, String> {
+        let mut registry = self.lock_registry()?;
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return Err("Workspace name cannot be empty".to_string());
+        }
+
+        let ws = registry
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.id == workspace_id)
+            .ok_or_else(|| format!("Workspace '{workspace_id}' not found"))?;
+
+        ws.name = trimmed.to_string();
+        let out = ws.clone();
+        Self::save_registry(&self.registry_path, &registry)?;
+        Ok(out)
+    }
+
     pub fn get_workspace_scope(&self) -> Result<String, String> {
         let active = self.get_active_workspace()?;
         Ok(format!("workspace:{}", active.id))

@@ -87,6 +87,14 @@ export const Api = {
     });
   },
 
+  /** Rename a workspace by id; persists in the workspace registry. */
+  async renameWorkspace(workspaceId: string, name: string): Promise<WorkspaceRecord> {
+    return invoke<WorkspaceRecord>("rename_workspace", {
+      workspaceId,
+      name,
+    });
+  },
+
   /** Attach/update the saved .nela file path for a workspace. */
   async setWorkspaceFile(workspaceId: string, nelaPath: string): Promise<WorkspaceRecord> {
     return invoke<WorkspaceRecord>("set_workspace_file", {

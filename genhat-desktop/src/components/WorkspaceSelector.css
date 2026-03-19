@@ -1,0 +1,190 @@
+/* Workspace Selector — Void Glass */
+.workspace-selector-container {
+  position: relative;
+  user-select: none;
+}
+
+.workspace-selector-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 14px;
+  background-color: var(--color-void-700);
+  color: var(--color-txt-secondary);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 200px;
+}
+
+.workspace-selector-btn:hover,
+.workspace-selector-btn.active {
+  background-color: var(--color-void-600);
+  color: var(--color-txt);
+  border-color: var(--color-neon);
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.15);
+}
+
+.workspace-selector-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.workspace-selector-btn .workspace-name {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.workspace-selector-btn .chevron {
+  opacity: 0.5;
+  transition: transform 0.2s;
+}
+
+.workspace-selector-btn.active .chevron {
+  transform: rotate(180deg);
+}
+
+.workspace-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  background-color: var(--color-void-700);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  padding: 4px;
+  z-index: 100;
+  animation: dropdownFade 0.15s ease-out;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.dropdown-header {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-txt-muted);
+  padding: 8px 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-glass-border);
+  margin-bottom: 4px;
+}
+
+.workspace-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.workspace-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--color-txt-secondary);
+  transition: background 0.1s;
+  gap: 12px;
+}
+
+.workspace-item:hover {
+  background-color: var(--color-glass-hover);
+  color: var(--color-txt);
+}
+
+.workspace-item.selected {
+  background-color: var(--color-neon-subtle);
+  color: var(--color-neon);
+}
+
+.workspace-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.workspace-action-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: var(--color-txt-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.workspace-action-btn:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--color-txt);
+  border-color: rgba(0, 212, 255, 0.25);
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.12);
+}
+
+.workspace-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.workspace-action-btn.danger:hover:not(:disabled) {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
+  background-color: rgba(239, 68, 68, 0.08);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.12);
+}
+
+.check-icon {
+  color: var(--color-neon);
+}
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.dropdown-footer {
+  border-top: 1px solid var(--color-glass-border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.add-workspace-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--color-txt-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.add-workspace-btn:hover:not(:disabled) {
+  background-color: var(--color-glass-hover);
+  color: var(--color-txt);
+}
+
+.add-workspace-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+

@@ -58,6 +58,16 @@ pub fn set_workspace_file(
     state.0.set_workspace_file(&workspace_id, &nela_path)
 }
 
+/// Rename a workspace and persist the change in the workspace registry.
+#[tauri::command]
+pub fn rename_workspace(
+    workspace_id: String,
+    name: String,
+    state: State<'_, WorkspaceState>,
+) -> Result<WorkspaceRecord, String> {
+    state.0.rename_workspace(&workspace_id, &name)
+}
+
 /// Read currently active workspace frontend state blob.
 #[tauri::command]
 pub fn get_workspace_frontend_state(
