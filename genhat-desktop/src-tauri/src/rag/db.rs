@@ -135,6 +135,22 @@ impl RagDb {
                 .map_err(|e| format!("Failed to create DB directory: {e}"))?;
         }
 
+        // Ensure the SQLite file itself exists before creating the pool.
+        // Some sqlite open modes used by pooled connection managers may not
+        // create the file automatically on first connection.
+        if !db_path.exists() {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(db_path)
+                .map_err(|e| {
+                    format!(
+                        "Failed to create DB file {}: {e}",
+                        db_path.display()
+                    )
+                })?;
+        }
+
         let manager = SqliteConnectionManager::file(db_path);
         let pool = Pool::builder()
             .max_size(8) // 8 connections for parallel read access

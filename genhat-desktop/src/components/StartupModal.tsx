@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, FileUp } from "lucide-react";
+import { ArrowRight, Plus, FileUp } from "lucide-react";
 import "./StartupModal.css";
 
 interface StartupModalProps {
+  onContinueWorkspace: () => void;
+  canContinueWorkspace: boolean;
+  continueWorkspaceName?: string | null;
   onNewProject: () => void;
   onImportProject: () => void;
   busy?: boolean;
@@ -48,6 +51,9 @@ const generateSinePath = (config: WaveConfig, timeInSeconds: number): string => 
 };
 
 const StartupModal: React.FC<StartupModalProps> = ({
+  onContinueWorkspace,
+  canContinueWorkspace,
+  continueWorkspaceName = null,
   onNewProject,
   onImportProject,
   busy = false,
@@ -93,6 +99,20 @@ const StartupModal: React.FC<StartupModalProps> = ({
             </div>
 
             <div className="startup-actions">
+              <button
+                className="startup-action startup-btn-primary"
+                onClick={onContinueWorkspace}
+                disabled={busy || !canContinueWorkspace}
+                title={
+                  canContinueWorkspace && continueWorkspaceName
+                    ? `Continue ${continueWorkspaceName}`
+                    : "Continue with your existing workspace"
+                }
+              >
+                <ArrowRight size={16} />
+                <span>{canContinueWorkspace ? "Continue Workspace" : "No Existing Workspace"}</span>
+              </button>
+
               <button
                 className="startup-action startup-btn-primary"
                 onClick={onNewProject}

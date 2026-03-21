@@ -74,9 +74,15 @@ impl BM25Index {
             .map_err(|e| format!("Reader error: {e}"))?;
 
         // 50 MB heap for the writer
-        let writer = index
+        let mut writer = index
             .writer(50_000_000)
             .map_err(|e| format!("Writer error: {e}"))?;
+
+        // Initialize tantivy metadata files eagerly to avoid startup-time
+        // watcher warnings on fresh/empty indexes.
+        writer
+            .commit()
+            .map_err(|e| format!("Initial writer commit error: {e}"))?;
 
         Ok(Self {
             index,

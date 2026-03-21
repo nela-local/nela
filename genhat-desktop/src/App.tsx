@@ -1719,6 +1719,19 @@ function App() {
   };
 
   const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
+  const mostRecentWorkspace = workspaces.length > 0
+    ? [...workspaces].sort((a, b) => {
+        const timeA = a.last_opened_at || a.created_at || 0;
+        const timeB = b.last_opened_at || b.created_at || 0;
+        return timeB - timeA;
+      })[0]
+    : null;
+
+  const continueExistingWorkspace = () => {
+    if (!mostRecentWorkspace) return;
+    void switchWorkspaceById(mostRecentWorkspace.id);
+  };
+
   const mindmaps = activeSessionMindmaps
     .map((map) => ({
       id: map.id,
@@ -1752,6 +1765,9 @@ function App() {
       {/* Startup Modal Overlay */}
       {showStartupModal && (
         <StartupModal
+          onContinueWorkspace={continueExistingWorkspace}
+          canContinueWorkspace={!!mostRecentWorkspace}
+          continueWorkspaceName={mostRecentWorkspace?.name ?? null}
           onNewProject={() => void createNewWorkspace()}
           onImportProject={() => void openWorkspaceFromFile()}
           busy={workspaceBusy}
