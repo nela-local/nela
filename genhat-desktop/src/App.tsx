@@ -1023,6 +1023,20 @@ function App() {
       if (!selected) return;
       const files = Array.isArray(selected) ? selected : [selected];
       if (files.length === 0) return;
+
+      // Add placeholder entries to the side panel immediately so users can
+      // click to view the file while ingestion is still running.
+      const placeholders: IngestionStatus[] = files.map((f, i) => ({
+        doc_id: -(i + 1), // negative IDs to avoid clashing with real docs
+        title: f.split(/[\\/]/).pop() || f,
+        file_path: f,
+        total_chunks: 0,
+        embedded_chunks: 0,
+        enriched_chunks: 0,
+        phase: "ingesting",
+      }));
+      setRagDocs((prev) => [...placeholders, ...prev]);
+
       setRagIngesting(true);
       for (let i = 0; i < files.length; i++) {
         await Api.ingestDocument(files[i]);
@@ -1032,6 +1046,7 @@ function App() {
     } catch (e) {
       console.error(e);
       setRagIngesting(false);
+      await loadRagDocs(); // refresh to remove stale placeholders on error
       alert(`Ingest failed: ${e}`);
     }
   };
@@ -2120,6 +2135,7 @@ function App() {
                 {ragDocs.map((doc) => {
                   const ext = doc.file_path?.split(".").pop()?.toLowerCase() || "";
                   const isViewable = ext === "pdf" || VIEWABLE_EXTS.has(ext);
+                  const isPlaceholder = doc.doc_id < 0;
                   return (
                     <div
                       key={doc.doc_id}
@@ -2129,17 +2145,23 @@ function App() {
                     >
                       <FileText size={14} className="text-txt-muted shrink-0" />
                       <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-txt font-medium text-[0.78rem]">{doc.title}</span>
-                      <span className="text-txt-muted text-[0.7rem] whitespace-nowrap">{doc.total_chunks} chunks</span>
+                      {!isPlaceholder && (
+                        <span className="text-txt-muted text-[0.7rem] whitespace-nowrap">{doc.total_chunks} chunks</span>
+                      )}
                       <span className={`py-0.5 px-2 rounded-full text-[0.65rem] font-semibold whitespace-nowrap capitalize ${doc.phase.includes("phase2_complete") ? "bg-[rgba(34,197,94,0.15)] text-success" : "bg-[rgba(0,212,255,0.1)] text-[#66e5ff]"}`}>
-                        {doc.phase.replace(/_/g, " ")}
+                        {isPlaceholder ? (
+                          <span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> ingesting</span>
+                        ) : doc.phase.replace(/_/g, " ")}
                       </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteRagDoc(doc.doc_id); }}
-                        className="p-1! bg-transparent! text-txt-muted! border-none! rounded! cursor-pointer flex items-center justify-center transition-all duration-150 hover:text-danger! hover:bg-[rgba(239,68,68,0.1)]!"
-                        title="Remove document"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                      {!isPlaceholder && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteRagDoc(doc.doc_id); }}
+                          className="p-1! bg-transparent! text-txt-muted! border-none! rounded! cursor-pointer flex items-center justify-center transition-all duration-150 hover:text-danger! hover:bg-[rgba(239,68,68,0.1)]!"
+                          title="Remove document"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
