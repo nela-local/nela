@@ -66,6 +66,11 @@ export const Api = {
     return invoke<WorkspaceRecord>("get_active_workspace");
   },
 
+  /** Clear the active workspace (shows startup modal on next app load). */
+  async clearActiveWorkspace(): Promise<void> {
+    return invoke<void>("clear_active_workspace");
+  },
+
   /** Create a new workspace and make it active. */
   async createWorkspace(name?: string): Promise<WorkspaceRecord> {
     return invoke<WorkspaceRecord>("create_workspace", {

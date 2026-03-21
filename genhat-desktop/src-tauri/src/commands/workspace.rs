@@ -22,6 +22,12 @@ pub fn get_active_workspace(state: State<'_, WorkspaceState>) -> Result<Workspac
     state.0.get_active_workspace()
 }
 
+/// Clear the active workspace (allows startup modal to appear on next app load).
+#[tauri::command]
+pub fn clear_active_workspace(state: State<'_, WorkspaceState>) -> Result<(), String> {
+    state.0.clear_active_workspace()
+}
+
 /// Create a new workspace and make it active.
 #[tauri::command]
 pub fn create_workspace(

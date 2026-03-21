@@ -39,6 +39,7 @@ import PdfViewer from "./components/PdfViewer";
 import DocumentViewer from "./components/DocumentViewer";
 import PodcastTab from "./components/PodcastTab";
 import MindMapOverlay from "./components/MindMapOverlay";
+import StartupModal from "./components/StartupModal";
 import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
@@ -494,8 +495,24 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void refreshWorkspaceRegistry();
-  }, [refreshWorkspaceRegistry]);
+    const initializeApp = async () => {
+      // Clear active workspace on app load so startup modal appears
+      try {
+        await Api.clearActiveWorkspace();
+      } catch (err) {
+        console.warn("Failed to clear active workspace:", err);
+      }
+      // Load workspaces list only (without the active workspace)
+      try {
+        const all = await Api.listWorkspaces();
+        setWorkspaces(all);
+        setActiveWorkspace(null); // Ensure active workspace is null for startup modal
+      } catch (err) {
+        console.warn("Failed to refresh workspace list:", err);
+      }
+    };
+    void initializeApp();
+  }, []);
 
   // Restore persisted chat sessions for the active workspace.
   useEffect(() => {
@@ -1742,9 +1759,23 @@ function App() {
     }));
   };
 
+  // Show startup modal if no active workspace yet
+  const showStartupModal = !activeWorkspace;
+
   return (
-    <div className="flex h-full w-full">
-      <SidebarNav
+    <div className="relative w-full h-full overflow-hidden">
+      {/* Startup Modal Overlay */}
+      {showStartupModal && (
+        <StartupModal
+          onNewProject={() => void createNewWorkspace()}
+          onImportProject={() => void openWorkspaceFromFile()}
+          busy={workspaceBusy}
+        />
+      )}
+
+      {/* Main app content stays visible in background behind startup modal */}
+      <div className="flex h-full w-full relative z-10">
+          <SidebarNav
         selected={sidebarSection}
         onSelect={handleSidebarNav}
         onImportProject={() => void openWorkspaceFromFile()}
@@ -2191,7 +2222,10 @@ function App() {
         </div>
       </aside>
     </div>
+
+    </div>
   );
 }
+
 
 export default App;

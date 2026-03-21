@@ -238,6 +238,13 @@ impl WorkspaceManager {
         Ok(out)
     }
 
+    pub fn clear_active_workspace(&self) -> Result<(), String> {
+        let mut registry = self.lock_registry()?;
+        registry.active_workspace_id = None;
+        Self::save_registry(&self.registry_path, &registry)?;
+        Ok(())
+    }
+
     pub fn set_workspace_file(&self, workspace_id: &str, nela_path: &str) -> Result<WorkspaceRecord, String> {
         let mut registry = self.lock_registry()?;
         let ws = registry
