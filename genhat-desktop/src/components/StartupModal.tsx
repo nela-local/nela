@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Plus, FileUp } from "lucide-react";
 import "./StartupModal.css";
 
@@ -8,18 +8,76 @@ interface StartupModalProps {
   busy?: boolean;
 }
 
+interface WaveConfig {
+  baseY: number;
+  amplitude: number;
+  wavelength: number;
+  phase: number;
+  speed: number;
+}
+
+const WAVE_WIDTH = 1200;
+const SAMPLE_STEP = 32;
+
+const WAVE_CONFIGS: WaveConfig[] = [
+  { baseY: 156, amplitude: 28, wavelength: 400, phase: 0.1, speed: 2.5 },
+  { baseY: 176, amplitude: 15, wavelength: 300, phase: 1.6, speed: 2.05 },
+  { baseY: 198, amplitude: 12, wavelength: 380, phase: 1.0, speed: 0.95 },
+];
+
+const generateSinePath = (config: WaveConfig, timeInSeconds: number): string => {
+  const twoPi = Math.PI * 2;
+  const initialY = config.baseY + config.amplitude * Math.sin((0 / config.wavelength) * twoPi + config.phase - timeInSeconds * config.speed);
+  let pathData = `M0 ${initialY.toFixed(2)}`;
+
+  for (let xCoord = SAMPLE_STEP; xCoord <= WAVE_WIDTH; xCoord += SAMPLE_STEP) {
+    const yCoord =
+      config.baseY +
+      config.amplitude * Math.sin((xCoord / config.wavelength) * twoPi + config.phase - timeInSeconds * config.speed);
+    pathData += ` L${xCoord} ${yCoord.toFixed(2)}`;
+  }
+
+  if (WAVE_WIDTH % SAMPLE_STEP !== 0) {
+    const edgeY =
+      config.baseY +
+      config.amplitude * Math.sin((WAVE_WIDTH / config.wavelength) * twoPi + config.phase - timeInSeconds * config.speed);
+    pathData += ` L${WAVE_WIDTH} ${edgeY.toFixed(2)}`;
+  }
+
+  return pathData;
+};
+
 const StartupModal: React.FC<StartupModalProps> = ({
   onNewProject,
   onImportProject,
   busy = false,
 }) => {
+  const [elapsedTime, setElapsedTime] = useState(0);
+
   useEffect(() => {
-    // Prevent background scroll
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = "";
     };
   }, []);
+
+  useEffect(() => {
+    let animationFrameId = 0;
+    const startTimestamp = performance.now();
+
+    const tick = (timestamp: number) => {
+      setElapsedTime((timestamp - startTimestamp) / 1000);
+      animationFrameId = window.requestAnimationFrame(tick);
+    };
+
+    animationFrameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, []);
+
+  const wavePaths = useMemo(
+    () => WAVE_CONFIGS.map((config) => generateSinePath(config, elapsedTime * 1.5)),
+    [elapsedTime],
+  );
 
   return (
     <div className="startup-modal-overlay">
@@ -84,7 +142,7 @@ const StartupModal: React.FC<StartupModalProps> = ({
 
             <g className="startup-wave-layer startup-wave-layer-1">
               <path
-                d="M0 146 C80 136, 140 184, 220 172 C300 158, 360 98, 440 110 C520 122, 590 190, 670 178 C750 166, 820 110, 900 122 C980 134, 1040 186, 1120 172 C1160 166, 1180 156, 1200 148"
+                d={wavePaths[0]}
                 fill="none"
                 stroke="url(#nelaWaveStrokeA)"
                 strokeWidth="3"
@@ -94,7 +152,7 @@ const StartupModal: React.FC<StartupModalProps> = ({
 
             <g className="startup-wave-layer startup-wave-layer-2">
               <path
-                d="M0 176 C70 152, 130 196, 205 180 C275 166, 338 132, 410 144 C482 156, 550 204, 625 190 C702 176, 764 126, 842 140 C920 154, 990 205, 1062 192 C1128 180, 1174 162, 1200 154"
+                d={wavePaths[1]}
                 fill="none"
                 stroke="url(#nelaWaveStrokeB)"
                 strokeWidth="2.2"
@@ -104,7 +162,7 @@ const StartupModal: React.FC<StartupModalProps> = ({
 
             <g className="startup-wave-layer startup-wave-layer-3">
               <path
-                d="M0 198 C92 182, 160 222, 250 206 C340 190, 420 156, 512 168 C604 180, 678 226, 770 212 C860 198, 940 164, 1030 176 C1104 186, 1162 204, 1200 198"
+                d={wavePaths[2]}
                 fill="none"
                 stroke="rgba(145, 236, 255, 0.22)"
                 strokeWidth="1.4"

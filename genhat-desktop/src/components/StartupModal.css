@@ -28,7 +28,7 @@
   position: relative;
   width: 100%;
   max-width: 820px;
-  padding: 20px 24px;
+  padding: 20px 10px 20px 10px;
   background: linear-gradient(165deg, rgba(11, 20, 34, 0.95) 0%, rgba(8, 15, 26, 0.96) 100%);
   border: 1px solid var(--color-glass-border);
   border-radius: 18px;
@@ -54,6 +54,7 @@
   position: relative;
   min-height: 340px;
   padding-bottom: 170px;
+  padding: 14px
 }
 
 .startup-top-row {
@@ -163,42 +164,15 @@
 }
 
 .startup-wave-layer-1 {
-  animation: startupWaveSine 6.8s linear infinite;
+  opacity: 1;
 }
 
 .startup-wave-layer-2 {
-  animation: startupWaveCosine 5.4s linear infinite;
-  opacity: 0.88;
+  opacity: 0.9;
 }
 
 .startup-wave-layer-3 {
-  animation: startupWaveSine 9.6s linear infinite;
-  animation-delay: -1.6s;
-  opacity: 0.72;
-}
-
-@keyframes startupWaveSine {
-  0% { transform: translateX(0); }
-  12.5% { transform: translateX(7px); }
-  25% { transform: translateX(12px); }
-  37.5% { transform: translateX(7px); }
-  50% { transform: translateX(0); }
-  62.5% { transform: translateX(-7px); }
-  75% { transform: translateX(-12px); }
-  87.5% { transform: translateX(-7px); }
-  100% { transform: translateX(0); }
-}
-
-@keyframes startupWaveCosine {
-  0% { transform: translateX(11px); }
-  12.5% { transform: translateX(6px); }
-  25% { transform: translateX(0); }
-  37.5% { transform: translateX(-6px); }
-  50% { transform: translateX(-11px); }
-  62.5% { transform: translateX(-6px); }
-  75% { transform: translateX(0); }
-  87.5% { transform: translateX(6px); }
-  100% { transform: translateX(11px); }
+  opacity: 0.75;
 }
 
 .startup-logo-img {
