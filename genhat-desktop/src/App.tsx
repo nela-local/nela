@@ -456,7 +456,15 @@ function App() {
   const loadRagDocs = useCallback(async () => {
     try {
       const docs = await Api.listRagDocuments();
-      setRagDocs(docs);
+      // Preserve placeholder entries (doc_id < 0) for files still being ingested
+      // that haven't appeared in the backend list yet.
+      setRagDocs((prev) => {
+        const completedPaths = new Set(docs.map((d) => d.file_path));
+        const remainingPlaceholders = prev.filter(
+          (d) => d.doc_id < 0 && !completedPaths.has(d.file_path)
+        );
+        return [...remainingPlaceholders, ...docs];
+      });
     } catch (e) {
       console.error("Failed to load RAG docs:", e);
     }
@@ -1055,15 +1063,30 @@ function App() {
       setRagDocs((prev) => [...placeholders, ...prev]);
 
       setRagIngesting(true);
-      for (let i = 0; i < files.length; i++) {
-        await Api.ingestDocument(files[i]);
-      }
+
+      // Ingest all files in parallel so the UI doesn't hang waiting on each one.
+      // As each file finishes, refresh the doc list to replace its placeholder.
+      const results = await Promise.allSettled(
+        files.map((f) =>
+          Api.ingestDocument(f).then(async (res) => {
+            await loadRagDocs(); // refresh side panel as each file completes
+            return res;
+          })
+        )
+      );
+
       await loadRagDocs();
       setRagIngesting(false);
+
+      const failures = results.filter((r) => r.status === "rejected");
+      if (failures.length > 0) {
+        const msgs = failures.map((r) => (r as PromiseRejectedResult).reason).join("\n");
+        alert(`${failures.length} file(s) failed to ingest:\n${msgs}`);
+      }
     } catch (e) {
       console.error(e);
       setRagIngesting(false);
-      await loadRagDocs(); // refresh to remove stale placeholders on error
+      await loadRagDocs();
       alert(`Ingest failed: ${e}`);
     }
   };
@@ -1086,6 +1109,18 @@ function App() {
 
   const deleteRagDoc = async (docId: number) => {
     try {
+      // Close the viewer if the deleted document is currently open
+      const doc = ragDocs.find((d) => d.doc_id === docId);
+      if (doc) {
+        const delPath = doc.file_path;
+        if (pdfViewerData && doc.title === pdfViewerData.title) {
+          setPdfViewerData(null);
+        }
+        if (docViewerFile && docViewerFile.filePath === delPath) {
+          setDocViewerFile(null);
+        }
+      }
+
       await Api.deleteRagDocument(docId);
       await loadRagDocs();
     } catch (e) {
