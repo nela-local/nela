@@ -8,6 +8,9 @@ interface StartupModalProps {
   continueWorkspaceName?: string | null;
   onNewProject: () => void;
   onImportProject: () => void;
+  downloadOptionalOnStart: boolean;
+  onToggleDownloadOptional: (value: boolean) => void;
+  optionalMissingCount?: number;
   busy?: boolean;
 }
 
@@ -56,6 +59,9 @@ const StartupModal: React.FC<StartupModalProps> = ({
   continueWorkspaceName = null,
   onNewProject,
   onImportProject,
+  downloadOptionalOnStart,
+  onToggleDownloadOptional,
+  optionalMissingCount = 0,
   busy = false,
 }) => {
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -139,6 +145,23 @@ const StartupModal: React.FC<StartupModalProps> = ({
             <p className="startup-description">
               Start a new intelligent workspace or import an existing one.
             </p>
+            <div className="mt-6 flex flex-col gap-2 text-sm text-txt-secondary">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={downloadOptionalOnStart}
+                  onChange={(e) => onToggleDownloadOptional(e.target.checked)}
+                  className="accent-neon"
+                />
+                <span>
+                  Download optional models on startup
+                  {optionalMissingCount > 0 ? ` (${optionalMissingCount} missing)` : ""}
+                </span>
+              </label>
+              <span className="text-xs text-txt-secondary/80">
+                Includes embedding + grader models for retrieval quality.
+              </span>
+            </div>
           </div>
 
           <svg

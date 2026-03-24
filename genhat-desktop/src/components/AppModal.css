@@ -1,0 +1,122 @@
+:root {
+  --modal-bg: rgba(9, 12, 16, 0.96);
+  --modal-border: rgba(0, 212, 255, 0.18);
+  --modal-text: #e7f6ff;
+  --modal-muted: rgba(255, 255, 255, 0.6);
+  --modal-accent: #00d4ff;
+  --modal-warning: #fbbf24;
+  --modal-error: #f87171;
+}
+
+.app-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 4, 8, 0.66);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+}
+
+.app-modal {
+  width: min(460px, 92vw);
+  background: var(--modal-bg);
+  border: 1px solid var(--modal-border);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  color: var(--modal-text);
+  overflow: hidden;
+  animation: app-modal-pop 0.18s ease-out;
+}
+
+@keyframes app-modal-pop {
+  0% { transform: translateY(6px) scale(0.98); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.app-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.app-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.app-modal-header.info svg {
+  color: var(--modal-accent);
+}
+
+.app-modal-header.warning svg {
+  color: var(--modal-warning);
+}
+
+.app-modal-header.error svg {
+  color: var(--modal-error);
+}
+
+.app-modal-header.confirm svg {
+  color: #34d399;
+}
+
+.app-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--modal-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.app-modal-body {
+  padding: 16px 18px 8px;
+  font-size: 0.92rem;
+  color: var(--modal-muted);
+}
+
+.app-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px 18px;
+}
+
+.app-modal-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.app-modal-btn.info,
+.app-modal-btn.confirm {
+  background: linear-gradient(120deg, #00d4ff, #43e3ff);
+  color: #081018;
+}
+
+.app-modal-btn.warning {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fde68a;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
+.app-modal-btn.error {
+  background: rgba(248, 113, 113, 0.16);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.app-modal-btn.ghost {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--modal-muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}

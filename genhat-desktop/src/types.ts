@@ -1,6 +1,8 @@
 export interface ModelFile {
   name: string;
   path: string;
+  is_downloaded?: boolean;
+  gdrive_id?: string | null;
 }
 
 export interface WorkspaceRecord {
@@ -41,6 +43,8 @@ export interface RegisteredModel {
   instance_count: number;
   memory_mb: number;
   priority: number;
+  is_downloaded: boolean;
+  gdrive_id?: string | null;
 }
 
 export interface IngestionStatus {

@@ -59,7 +59,7 @@ impl ProcessManager {
                     def.id,
                     missing.join(", ")
                 );
-                continue;
+                
             }
 
             let backend: Arc<dyn ModelBackend> = Arc::from(backends::create_backend(def));
@@ -582,6 +582,10 @@ impl ProcessManager {
         models
             .values()
             .map(|m| {
+                let models_dir = crate::paths::resolve_models_dir();
+                let model_path = models_dir.join(&m.def.model_file);
+                let is_downloaded = model_path.exists();
+                
                 let status = if m.instances.is_empty() {
                     ModelStatus::Unloaded
                 } else if m.instances.iter().any(|i| i.status == ModelStatus::Ready) {
@@ -603,8 +607,9 @@ impl ProcessManager {
                     tasks: m.def.tasks.iter().map(|t| t.to_string()).collect(),
                     status,
                     instance_count: m.instances.len() as u32,
-                    memory_mb: m.def.memory_mb,
+                    memory_mb: m.def.memory_mb, gdrive_id: m.def.gdrive_id.clone(), is_zip: m.def.is_zip,
                     priority: m.def.priority,
+                    is_downloaded,
                 }
             })
             .collect()
@@ -688,6 +693,9 @@ impl ProcessManager {
         models
             .values()
             .map(|m| {
+                let models_dir = crate::paths::resolve_models_dir();
+                let model_path = models_dir.join(&m.def.model_file);
+                
                 let instance_count = m
                     .instances
                     .iter()

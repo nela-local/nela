@@ -9,6 +9,7 @@ use app_lib::commands::inference::TaskRouterState;
 use app_lib::commands::models::ProcessManagerState;
 use app_lib::commands::rag::RagPipelineState;
 use app_lib::commands::workspace::WorkspaceState;
+use app_lib::commands::download::DownloadState;
 use app_lib::process::ProcessManager;
 use app_lib::rag::pipeline::RagPipeline;
 use app_lib::registry::ModelRegistry;
@@ -108,6 +109,7 @@ fn main() {
             app.manage(TaskRouterState(router));
             app.manage(RagPipelineState(RwLock::new(rag_pipeline)));
             app.manage(WorkspaceState(workspace_manager));
+            app.manage(DownloadState::default());
 
             Ok(())
         })
@@ -117,6 +119,9 @@ fn main() {
             app_lib::commands::models::list_vision_models,
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,
+            app_lib::commands::download::download_model,
+            app_lib::commands::download::cancel_download,
+            app_lib::commands::download::uninstall_model,
             app_lib::commands::audio::generate_speech,
             // New unified commands
             app_lib::commands::models::list_registered_models,

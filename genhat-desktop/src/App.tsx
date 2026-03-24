@@ -40,9 +40,13 @@ import DocumentViewer from "./components/DocumentViewer";
 import PodcastTab from "./components/PodcastTab";
 import MindMapOverlay from "./components/MindMapOverlay";
 import StartupModal from "./components/StartupModal";
+import ModelsSettingsModal from "./components/ModelsSettingsModal";
+import AppModal, { type AppModalKind } from "./components/AppModal";
 import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
+const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
+const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
 
 /** Extensions the DocumentViewer can render (non-PDF). */
 const VIEWABLE_EXTS = new Set([
@@ -237,6 +241,21 @@ function App() {
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [registeredModels, setRegisteredModels] = useState<RegisteredModel[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [downloadOptionalOnStart, setDownloadOptionalOnStart] = useState(() => {
+    return localStorage.getItem(STARTUP_OPTIONAL_DOWNLOAD_KEY) === "true";
+  });
+  const [appModal, setAppModal] = useState({
+    open: false,
+    kind: "info" as AppModalKind,
+    title: "",
+    message: "",
+    confirmLabel: "OK",
+    cancelLabel: "Cancel",
+    showCancel: false,
+  });
+  const modalResolveRef = useRef<((value: boolean) => void) | null>(null);
 
   // ── TTS engine state (registered models with TTS task) ─────────────────
   const [ttsEngines, setTtsEngines] = useState<RegisteredModel[]>([]);
@@ -940,11 +959,161 @@ function App() {
     };
   }, []);
 
+
+  // ── Download state ─────────────────────────────────────────────────────────
+  const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string }>>({});
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ model_id: string; progress: number; status: string }>(
+      "model-download-progress",
+      (e) => {
+        setDownloads((prev) => ({
+          ...prev,
+          [e.payload.model_id]: { progress: e.payload.progress, status: e.payload.status },
+        }));
+        if (e.payload.progress >= 100 && e.payload.status === "Complete") {
+          setTimeout(refreshModels, 1000);
+          setTimeout(() => {
+            setDownloads((prev) => {
+              const newD = { ...prev };
+              delete newD[e.payload.model_id];
+              return newD;
+            });
+          }, 3000);
+        }
+      }
+    ).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      STARTUP_OPTIONAL_DOWNLOAD_KEY,
+      downloadOptionalOnStart ? "true" : "false"
+    );
+  }, [downloadOptionalOnStart]);
+
   // ── Model helpers ──────────────────────────────────────────────────────────
+
+
+  const handleDownloadModel = async (modelId: string) => {
+    try {
+      await Api.downloadModel(modelId);
+    } catch (e) {
+      console.error("Failed to download model", e);
+      showError(`Failed to download model: ${String(e)}`);
+    }
+  };
+
+  const handleCancelDownload = async (modelId: string) => {
+    try {
+      await Api.cancelDownload(modelId);
+      setDownloads((prev) => {
+        const next = { ...prev };
+        delete next[modelId];
+        return next;
+      });
+    } catch (e) {
+      console.error("Failed to cancel download", e);
+      showError(`Failed to cancel download: ${String(e)}`);
+    }
+  };
+
+  const handleUninstall = async (modelId: string) => {
+    try {
+      await Api.uninstallModel(modelId);
+      setTimeout(refreshModels, 1000);
+    } catch (e) {
+      console.error("Failed to uninstall model", e);
+      showError(`Failed to uninstall model: ${String(e)}`);
+    }
+  };
+
+  const getOptionalModels = (list: RegisteredModel[]) =>
+    list.filter((model) => model.tasks.some((t) => OPTIONAL_TASKS.has(t)));
+
+  const downloadMissingOptionalModels = async () => {
+    const list = registeredModels.length > 0
+      ? registeredModels
+      : await Api.listRegisteredModels();
+    if (registeredModels.length === 0) setRegisteredModels(list);
+
+    const missing = getOptionalModels(list)
+      .filter((model) => model.gdrive_id && !model.is_downloaded)
+      .filter((model) => !downloads[model.id]);
+
+    for (const model of missing) {
+      await handleDownloadModel(model.id);
+    }
+  };
+
+  const showModal = (
+    kind: AppModalKind,
+    title: string,
+    message: string,
+    options?: { confirmLabel?: string; cancelLabel?: string; showCancel?: boolean }
+  ) => {
+    setAppModal({
+      open: true,
+      kind,
+      title,
+      message,
+      confirmLabel: options?.confirmLabel ?? "OK",
+      cancelLabel: options?.cancelLabel ?? "Cancel",
+      showCancel: options?.showCancel ?? false,
+    });
+  };
+
+  const showInfo = (message: string, title = "Info") => {
+    showModal("info", title, message);
+  };
+
+  const showWarning = (message: string, title = "Warning") => {
+    showModal("warning", title, message);
+  };
+
+  const showError = (message: string, title = "Error") => {
+    showModal("error", title, message);
+  };
+
+  const confirmAction = (
+    title: string,
+    message: string,
+    confirmLabel = "OK",
+    cancelLabel = "Cancel"
+  ) =>
+    new Promise<boolean>((resolve) => {
+      modalResolveRef.current = resolve;
+      showModal("confirm", title, message, {
+        confirmLabel,
+        cancelLabel,
+        showCancel: true,
+      });
+    });
+
+  const handleModalConfirm = () => {
+    const resolver = modalResolveRef.current;
+    modalResolveRef.current = null;
+    if (resolver) resolver(true);
+    setAppModal((prev) => ({ ...prev, open: false }));
+  };
+
+  const handleModalCancel = () => {
+    const resolver = modalResolveRef.current;
+    modalResolveRef.current = null;
+    if (resolver) resolver(false);
+    setAppModal((prev) => ({ ...prev, open: false }));
+  };
 
   const refreshModels = () => {
     Api.listRegisteredModels()
       .then((list) => {
+        setRegisteredModels(list);
         // Vision models
         const vision = list.filter((m) => m.tasks.includes("vision_chat"));
         setVisionModels(vision);
@@ -954,7 +1123,12 @@ function App() {
         const chatModels = list
           .filter((m) => m.tasks.includes("chat"))
           .sort((a, b) => b.priority - a.priority)
-          .map((m) => ({ name: m.name, path: m.id }));
+          .map((m) => ({
+            name: m.name,
+            path: m.id,
+            is_downloaded: m.is_downloaded,
+            gdrive_id: m.gdrive_id,
+          }));
         
         setModels(chatModels);
         if (chatModels.length > 0 && !selectedModel) {
@@ -979,12 +1153,12 @@ function App() {
       await Api.switchModel(path);
     } catch (err) {
       console.error(err);
-      alert("Failed to switch model");
+      showError("Failed to switch model");
     }
   };
 
   const handleAddModel = () => {
-    alert(
+    showInfo(
       "To add a model, place the .gguf file into the 'models' folder of the application and restart/refresh."
     );
   };
@@ -1049,7 +1223,7 @@ function App() {
     } catch (e) {
       console.error(e);
       setRagIngesting(false);
-      alert(`Ingest failed: ${e}`);
+      showError(`Ingest failed: ${e}`);
     }
   };
 
@@ -1065,7 +1239,7 @@ function App() {
     } catch (e) {
       console.error(e);
       setRagIngesting(false);
-      alert(`Folder ingest failed: ${e}`);
+      showError(`Folder ingest failed: ${e}`);
     }
   };
 
@@ -1075,7 +1249,7 @@ function App() {
       await loadRagDocs();
     } catch (e) {
       console.error(e);
-      alert(`Delete failed: ${e}`);
+      showError(`Delete failed: ${e}`);
     }
   };
 
@@ -1094,7 +1268,7 @@ function App() {
         setDocViewerFile(null); // Clear any other open viewer
       } catch (e) {
         console.error("Failed to load PDF:", e);
-        alert(`Failed to open PDF: ${e}`);
+        showError(`Failed to open PDF: ${e}`);
       } finally {
         setPdfLoading(false);
       }
@@ -1727,9 +1901,24 @@ function App() {
       })[0]
     : null;
 
+  const handleStartupAction = async (action: () => Promise<void>) => {
+    await action();
+    if (downloadOptionalOnStart) {
+      await downloadMissingOptionalModels();
+    }
+  };
+
   const continueExistingWorkspace = () => {
     if (!mostRecentWorkspace) return;
-    void switchWorkspaceById(mostRecentWorkspace.id);
+    void handleStartupAction(() => switchWorkspaceById(mostRecentWorkspace.id));
+  };
+
+  const createWorkspaceFromStartup = () => {
+    void handleStartupAction(createNewWorkspace);
+  };
+
+  const importWorkspaceFromStartup = () => {
+    void handleStartupAction(openWorkspaceFromFile);
   };
 
   const mindmaps = activeSessionMindmaps
@@ -1759,6 +1948,9 @@ function App() {
 
   // Show startup modal if no active workspace yet
   const showStartupModal = !activeWorkspace;
+  const optionalMissingCount = getOptionalModels(registeredModels)
+    .filter((model) => model.gdrive_id && !model.is_downloaded)
+    .length;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -1768,11 +1960,38 @@ function App() {
           onContinueWorkspace={continueExistingWorkspace}
           canContinueWorkspace={!!mostRecentWorkspace}
           continueWorkspaceName={mostRecentWorkspace?.name ?? null}
-          onNewProject={() => void createNewWorkspace()}
-          onImportProject={() => void openWorkspaceFromFile()}
+          onNewProject={createWorkspaceFromStartup}
+          onImportProject={importWorkspaceFromStartup}
+          downloadOptionalOnStart={downloadOptionalOnStart}
+          onToggleDownloadOptional={setDownloadOptionalOnStart}
+          optionalMissingCount={optionalMissingCount}
           busy={workspaceBusy}
         />
       )}
+
+      <AppModal
+        isOpen={appModal.open}
+        kind={appModal.kind}
+        title={appModal.title}
+        message={appModal.message}
+        confirmLabel={appModal.confirmLabel}
+        cancelLabel={appModal.cancelLabel}
+        showCancel={appModal.showCancel}
+        onConfirm={handleModalConfirm}
+        onCancel={handleModalCancel}
+      />
+
+      <ModelsSettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        models={registeredModels}
+        downloads={downloads}
+        onDownload={handleDownloadModel}
+        onCancelDownload={handleCancelDownload}
+        onUninstall={handleUninstall}
+        onDownloadMissingOptional={downloadMissingOptionalModels}
+        onConfirm={confirmAction}
+      />
 
       {/* Main app content stays visible in background behind startup modal */}
       <div className="flex h-full w-full relative z-10">
@@ -1781,6 +2000,7 @@ function App() {
         onSelect={handleSidebarNav}
         onImportProject={() => void openWorkspaceFromFile()}
         onExportProject={() => void saveWorkspaceFile()}
+        onOpenSettings={() => setSettingsOpen(true)}
         workspaceBusy={workspaceBusy}
         canExport={!!activeWorkspace}
       />
@@ -1962,23 +2182,27 @@ function App() {
                 onSelect={handleModelChange}
                 type="llm"
                 onAdd={handleAddModel}
+                onDownload={handleDownloadModel}
+                onCancelDownload={handleCancelDownload}
+                onUninstall={handleUninstall}
+                onConfirm={confirmAction}
+                downloads={downloads}
               />
             )}
             {chatMode === "audio" && ttsEngines.length > 0 && (
               <div className="flex items-center gap-2.5">
-                <div className="relative flex items-center">
-                  <select
-                    value={selectedTtsEngine}
-                    onChange={(e) => setSelectedTtsEngine(e.target.value)}
-                    className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
-                    disabled={activeSession?.loading ?? false}
-                  >
-                    {ttsEngines.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
-                </div>
+                <ModelSelector
+                    models={ttsEngines.map(m => ({ name: m.name, path: m.id, is_downloaded: m.is_downloaded, gdrive_id: m.gdrive_id }))}
+                    selectedModel={selectedTtsEngine}
+                    onSelect={setSelectedTtsEngine}
+                    type="audio"
+                    onAdd={handleAddModel}
+                    onDownload={handleDownloadModel}
+                    onCancelDownload={handleCancelDownload}
+                    onUninstall={handleUninstall}
+                    onConfirm={confirmAction}
+                    downloads={downloads}
+                  />
 
                 {selectedTtsEngine === "kitten-tts" && (
                   <>
@@ -2013,19 +2237,18 @@ function App() {
               </div>
             )}
             {chatMode === "vision" && visionModels.length > 0 && (
-              <div className="relative flex items-center">
-                <select
-                  value={selectedVisionModel}
-                  onChange={(e) => setSelectedVisionModel(e.target.value)}
-                  className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[160px] hover:border-neon"
-                  disabled={activeSession?.loading ?? false}
-                >
-                  {visionModels.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
-              </div>
+              <ModelSelector
+                  models={visionModels.map(m => ({ name: m.name, path: m.id, is_downloaded: m.is_downloaded, gdrive_id: m.gdrive_id }))}
+                  selectedModel={selectedVisionModel}
+                  onSelect={setSelectedVisionModel}
+                  type="vision"
+                  onAdd={handleAddModel}
+                  onDownload={handleDownloadModel}
+                  onCancelDownload={handleCancelDownload}
+                  onUninstall={handleUninstall}
+                  onConfirm={confirmAction}
+                  downloads={downloads}
+                />
             )}
           </div>
         </header>

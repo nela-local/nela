@@ -178,6 +178,8 @@ pub async fn switch_model(
         memory_mb: 1400,
         params: HashMap::new(),
         task_priorities: HashMap::new(),
+        gdrive_id: None,
+        is_zip: false,
     };
 
     // Register and start the new model

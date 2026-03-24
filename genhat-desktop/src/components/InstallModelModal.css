@@ -1,0 +1,178 @@
+.install-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.install-modal-content {
+  background: var(--bg-color, #1a1a1a);
+  border: 1px solid var(--glass-border, #333);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 480px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: modal-pop 0.2s ease-out;
+}
+
+@keyframes modal-pop {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.install-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border, #333);
+  color: var(--text-color, #fff);
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-color, #fff);
+}
+
+.install-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.install-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.install-section-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary, #aaa);
+  margin-top: 6px;
+}
+
+.install-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border, #333);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+.install-item:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.install-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.install-item-name {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--text-color, #fff);
+}
+
+.install-item-path {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #aaa);
+  font-family: monospace;
+}
+
+.install-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-color, #3b82f6);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.install-btn:hover {
+  opacity: 0.9;
+}
+
+.install-btn.uninstall-btn {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ffb4b4;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.install-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(var(--accent-color-rgb, 59, 130, 246), 0.1);
+  border-radius: 6px;
+}
+
+.cancel-btn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: none;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.cancel-btn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: none;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
