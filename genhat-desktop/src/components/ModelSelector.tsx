@@ -73,18 +73,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           </div>
           
           <div className="model-list">
-             {type === "audio" && (
-                <div
-                  className={`model-item ${selectedModel === "None" ? "selected" : ""}`}
-                  onClick={() => {
-                    onSelect("None");
-                    setIsOpen(false);
-                  }}
-                >
-                  <span className="truncate">None (Disable TTS)</span>
-                  {selectedModel === "None" && <Check size={14} className="check-icon" />}
-                </div>
-             )}
+             {type === "audio"}
 
             {installedModels.map((model) => {
               const isDownloading = downloads[model.path] !== undefined;

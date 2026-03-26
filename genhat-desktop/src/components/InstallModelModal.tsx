@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { X, Download, Loader2, HardDrive, Trash2 } from "lucide-react";
 import type { ModelFile } from "../types";
 import "./InstallModelModal.css";
@@ -23,8 +24,7 @@ const InstallModelModal: React.FC<InstallModelModalProps> = ({
   const missingModels = models.filter(m => !m.is_downloaded && m.gdrive_id);
   const installedModels = models.filter(m => m.is_downloaded);
   
-
-  return (
+  const modal = (
     <div className="install-modal-overlay" onClick={onClose}>
       <div className="install-modal-content" onClick={e => e.stopPropagation()}>
         <div className="install-modal-header">
@@ -111,6 +111,8 @@ const InstallModelModal: React.FC<InstallModelModalProps> = ({
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 };
 
 export default InstallModelModal;
