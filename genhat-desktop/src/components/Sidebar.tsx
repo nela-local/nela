@@ -42,12 +42,6 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="model-section">
         <h3>Audio Models</h3>
         <ul>
-          <li
-            className={selectedAudio === "None" ? "active" : ""}
-            onClick={() => onAudioSelect("None")}
-          >
-            None (Disable TTS)
-          </li>
           {audioModels.map((m) => (
             <li
               key={m.path}

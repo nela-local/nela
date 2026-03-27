@@ -274,11 +274,58 @@ pub async fn download_model(
         let zip_file = std::fs::File::open(&download_target).map_err(|e| e.to_string())?;
         let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| e.to_string())?;
         
-        // Ensure extraction target directory exists
-        // E.g., if model_file = "LiquidAI-VLM/mmproj...gguf", extract to "LiquidAI-VLM" or models directory
-        let extract_path = model_path.parent().unwrap_or(&models_dir);
-        
-        archive.extract(extract_path).map_err(|e| e.to_string())?;
+        // Extract safely while normalizing entry paths to avoid nested duplicate directories
+        // (e.g. distilBert-query-router/onnx_model/distilBert-query-router/onnx_model/...)
+        let extract_path = model_path.parent().unwrap_or(&models_dir).to_path_buf();
+        std::fs::create_dir_all(&extract_path).map_err(|e| e.to_string())?;
+
+        let extract_path_rel = extract_path
+            .strip_prefix(&models_dir)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let extract_leaf = extract_path.file_name().map(|n| n.to_os_string());
+
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+            let entry_name = entry
+                .enclosed_name()
+                .ok_or_else(|| format!("Invalid zip entry path at index {}", i))?
+                .to_path_buf();
+
+            let mut normalized_rel = entry_name.clone();
+
+            if !extract_path_rel.as_os_str().is_empty() {
+                if let Ok(stripped) = entry_name.strip_prefix(&extract_path_rel) {
+                    normalized_rel = stripped.to_path_buf();
+                }
+            }
+
+            if normalized_rel == entry_name {
+                if let Some(ref leaf) = extract_leaf {
+                    if let Ok(stripped) = entry_name.strip_prefix(std::path::Path::new(leaf)) {
+                        normalized_rel = stripped.to_path_buf();
+                    }
+                }
+            }
+
+            if normalized_rel.as_os_str().is_empty() {
+                continue;
+            }
+
+            let out_path = extract_path.join(&normalized_rel);
+
+            if entry.is_dir() {
+                std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+                continue;
+            }
+
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+
+            let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+        }
         
         // Delete zip
         let _ = std::fs::remove_file(&download_target);
