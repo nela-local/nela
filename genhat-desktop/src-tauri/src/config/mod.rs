@@ -31,6 +31,9 @@ struct RawModelDef {
     priority: u32,
     #[serde(default)]
     memory_mb: u32,
+    pub gdrive_id: Option<String>,
+    #[serde(default)]
+    pub is_zip: bool,
     #[serde(default)]
     params: HashMap<String, String>,
     #[serde(default)]
@@ -78,6 +81,8 @@ pub fn load_model_definitions() -> Result<Vec<ModelDef>, String> {
                 idle_timeout_s: r.idle_timeout_s,
                 priority: r.priority,
                 memory_mb: r.memory_mb,
+                gdrive_id: r.gdrive_id,
+                is_zip: r.is_zip,
                 params: r.params,
                 task_priorities,
             })

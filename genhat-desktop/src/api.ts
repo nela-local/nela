@@ -31,6 +31,18 @@ export const Api = {
     return invoke<RegisteredModel[]>("list_registered_models");
   },
 
+  async downloadModel(modelId: string): Promise<void> {
+    return invoke<void>("download_model", { modelId });
+  },
+
+  async cancelDownload(modelId: string): Promise<void> {
+    return invoke<void>("cancel_download", { modelId });
+  },
+
+  async uninstallModel(modelId: string): Promise<void> {
+    return invoke<void>("uninstall_model", { modelId });
+  },
+
   /** Switch to a different LLM model by registry ID or file path. */
   async switchModel(modelIdentifier: string): Promise<void> {
     await invoke("switch_model", { modelIdentifier });

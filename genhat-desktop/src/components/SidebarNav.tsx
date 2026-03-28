@@ -5,6 +5,7 @@ import {
   Share2,
   FolderOpen,
   Save,
+  Settings,
 } from "lucide-react";
 
 interface SidebarNavProps {
@@ -12,6 +13,7 @@ interface SidebarNavProps {
   onSelect: (section: "chats" | "audio" | "mindmaps") => void;
   onImportProject: () => void;
   onExportProject: () => void;
+  onOpenSettings: () => void;
   workspaceBusy?: boolean;
   canExport?: boolean;
 }
@@ -21,6 +23,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onSelect,
   onImportProject,
   onExportProject,
+  onOpenSettings,
   workspaceBusy = false,
   canExport = false,
 }) => {
@@ -50,6 +53,13 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
       </button>
 
       <div className="mt-auto flex flex-col items-center gap-2 pb-1">
+        <button
+          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
+          title="Settings"
+          onClick={onOpenSettings}
+        >
+          <Settings size={22} />
+        </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon disabled:opacity-45 disabled:cursor-not-allowed"
           title="Import project (.nela)"

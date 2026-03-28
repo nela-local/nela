@@ -146,6 +146,15 @@ fn reload_rag_for_active_workspace(
     router_state: &State<'_, TaskRouterState>,
 ) -> Result<(), String> {
     let rag_dir = workspace_state.0.active_rag_dir()?;
+
+    // If we're reopening the same workspace, keep the existing pipeline alive.
+    // Reopening Tantivy on the same directory while the previous handle exists
+    // can fail and block workspace activation.
+    let active_rag_dir = rag_state.active_data_dir()?;
+    if active_rag_dir == rag_dir {
+        return Ok(());
+    }
+
     let new_pipeline = Arc::new(
         RagPipeline::open(&rag_dir, router_state.0.clone())
             .map_err(|e| format!("Failed to re-open RAG pipeline for workspace cache {}: {e}", rag_dir.display()))?,

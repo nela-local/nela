@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ElementType } from "react";
-import { MessageSquare, Eye, Volume2, Mic, FileText, Share2 } from "lucide-react";
+import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, ChevronDown } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { Api } from "../api";
 import type {
@@ -47,11 +47,15 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
   const [activeLine, setActiveLine] = useState<number>(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [showVoiceAMenu, setShowVoiceAMenu] = useState(false);
+  const [showVoiceBMenu, setShowVoiceBMenu] = useState(false);
   const currentModeLabel = modeOptions.find((option) => option.mode === currentMode)?.label ?? "Mode";
   const CurrentModeIcon = MODE_ICON_MAP[currentMode] ?? MessageSquare;
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
+  const voiceAMenuRef = useRef<HTMLDivElement>(null);
+  const voiceBMenuRef = useRef<HTMLDivElement>(null);
 
   // Listen for podcast progress events
   useEffect(() => {
@@ -73,14 +77,20 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
       if (modeMenuRef.current && !modeMenuRef.current.contains(event.target as Node)) {
         setShowModeMenu(false);
       }
+      if (voiceAMenuRef.current && !voiceAMenuRef.current.contains(event.target as Node)) {
+        setShowVoiceAMenu(false);
+      }
+      if (voiceBMenuRef.current && !voiceBMenuRef.current.contains(event.target as Node)) {
+        setShowVoiceBMenu(false);
+      }
     };
 
-    if (showModeMenu) {
+    if (showModeMenu || showVoiceAMenu || showVoiceBMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     }
 
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showModeMenu]);
+  }, [showModeMenu, showVoiceAMenu, showVoiceBMenu]);
 
   // Track audio playback state
   useEffect(() => {
@@ -205,16 +215,39 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
                 className="podcast-input"
                 disabled={isGenerating}
               />
-              <select
-                value={voiceA}
-                onChange={(e) => setVoiceA(e.target.value as KittenTtsVoice)}
-                className="podcast-select"
-                disabled={isGenerating}
-              >
-                {KITTEN_TTS_VOICES.map((v) => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
+              <div className="relative" ref={voiceAMenuRef}>
+                <button
+                  className="w-full flex items-center justify-between gap-2 h-8.5 px-3.5 rounded-lg bg-void-700 border border-glass-border text-txt cursor-pointer transition-all duration-200 hover:border-neon"
+                  onClick={() => {
+                    if (isGenerating) return;
+                    setShowVoiceAMenu((v) => !v);
+                    setShowVoiceBMenu(false);
+                  }}
+                  disabled={isGenerating}
+                >
+                  <span className="text-sm">{voiceA}</span>
+                  <ChevronDown size={14} className="text-txt-muted" />
+                </button>
+                {showVoiceAMenu && (
+                  <div className="animate-attach-menu absolute top-full left-0 mt-2 w-full rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
+                    {KITTEN_TTS_VOICES.map((voice) => {
+                      const active = voice === voiceA;
+                      return (
+                        <button
+                          key={voice}
+                          className={`w-full text-left py-2 px-3 rounded-lg text-sm transition-all duration-150 ${active ? "bg-neon-subtle text-neon" : "text-txt-secondary hover:bg-glass-hover hover:text-txt"}`}
+                          onClick={() => {
+                            setVoiceA(voice);
+                            setShowVoiceAMenu(false);
+                          }}
+                        >
+                          {voice}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -230,16 +263,39 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
                 className="podcast-input"
                 disabled={isGenerating}
               />
-              <select
-                value={voiceB}
-                onChange={(e) => setVoiceB(e.target.value as KittenTtsVoice)}
-                className="podcast-select"
-                disabled={isGenerating}
-              >
-                {KITTEN_TTS_VOICES.map((v) => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
+              <div className="relative" ref={voiceBMenuRef}>
+                <button
+                  className="w-full flex items-center justify-between gap-2 h-8.5 px-3.5 rounded-lg bg-void-700 border border-glass-border text-txt cursor-pointer transition-all duration-200 hover:border-neon"
+                  onClick={() => {
+                    if (isGenerating) return;
+                    setShowVoiceBMenu((v) => !v);
+                    setShowVoiceAMenu(false);
+                  }}
+                  disabled={isGenerating}
+                >
+                  <span className="text-sm">{voiceB}</span>
+                  <ChevronDown size={14} className="text-txt-muted" />
+                </button>
+                {showVoiceBMenu && (
+                  <div className="animate-attach-menu absolute top-full left-0 mt-2 w-full rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
+                    {KITTEN_TTS_VOICES.map((voice) => {
+                      const active = voice === voiceB;
+                      return (
+                        <button
+                          key={voice}
+                          className={`w-full text-left py-2 px-3 rounded-lg text-sm transition-all duration-150 ${active ? "bg-neon-subtle text-neon" : "text-txt-secondary hover:bg-glass-hover hover:text-txt"}`}
+                          onClick={() => {
+                            setVoiceB(voice);
+                            setShowVoiceBMenu(false);
+                          }}
+                        >
+                          {voice}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -286,7 +342,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
             </button>
 
             {showModeMenu && (
-              <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-[180px] rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
+              <div className="animate-attach-menu absolute bottom-full right-0 mb-2 w-45 rounded-xl bg-void-700/90 backdrop-blur-xl border border-glass-border shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-1 z-50">
                 {modeOptions.map((option) => {
                   const active = option.mode === currentMode;
                   return (

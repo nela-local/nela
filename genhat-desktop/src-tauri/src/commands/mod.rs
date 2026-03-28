@@ -8,3 +8,4 @@ pub mod audio;
 pub mod rag;
 pub mod podcast;
 pub mod workspace;
+pub mod download;

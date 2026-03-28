@@ -26,6 +26,20 @@ impl RagPipelineState {
         *guard = pipeline;
         Ok(())
     }
+
+    pub fn active_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        let guard = self
+            .0
+            .read()
+            .map_err(|_| "RAG pipeline state lock poisoned".to_string())?;
+
+        guard
+            .db
+            .path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "Unable to determine active RAG data directory".to_string())
+    }
 }
 
 /// Response from the streaming RAG retrieve command.

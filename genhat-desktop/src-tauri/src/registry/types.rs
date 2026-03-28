@@ -116,6 +116,8 @@ pub struct ModelDef {
     pub idle_timeout_s: u64,
     pub priority: u32,
     pub memory_mb: u32,
+    pub gdrive_id: Option<String>,
+    pub is_zip: bool,
     /// Backend-specific parameters (all as strings, parsed by each backend).
     pub params: HashMap<String, String>,
     /// Optional per-task priority overrides. If a task is not listed here,
@@ -318,5 +320,8 @@ pub struct ModelInfo {
     pub status: ModelStatus,
     pub instance_count: u32,
     pub memory_mb: u32,
+    pub gdrive_id: Option<String>,
+    pub is_zip: bool,
     pub priority: u32,
+    pub is_downloaded: bool,
 }
