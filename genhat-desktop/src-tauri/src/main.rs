@@ -122,6 +122,8 @@ fn main() {
             app_lib::commands::download::download_model,
             app_lib::commands::download::cancel_download,
             app_lib::commands::download::uninstall_model,
+            app_lib::commands::download::download_custom_file,
+            app_lib::commands::download::check_custom_file_exists,
             app_lib::commands::audio::generate_speech,
             // New unified commands
             app_lib::commands::models::list_registered_models,

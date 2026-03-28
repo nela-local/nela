@@ -13,6 +13,23 @@ import type {
   WorkspaceRecord,
 } from "./types";
 
+export interface HFModel {
+  _id: string;
+  id: string;
+  downloads?: number;
+  likes?: number;
+  tags?: string[];
+  [key: string]: any;
+}
+
+export interface HFRepoFile {
+  type: string;
+  oid: string;
+  size: number;
+  path: string;
+  [key: string]: any;
+}
+
 export const Api = {
   // ── Model Management ───────────────────────────────────────────────────────
 
@@ -460,6 +477,45 @@ export const Api = {
       if (err instanceof DOMException && err.name === "AbortError") return;
       onError(err);
     }
+  },
+
+  // ── Hugging Face & Custom Downloads ────────────────────────────────────────
+
+  /**
+   * Invokes the Taurus backend to download an arbitrary file to a specified folder.
+   */
+  async downloadCustomFile(url: string, folder: string, filename: string): Promise<void> {
+    return invoke<void>("download_custom_file", { url, folder, filename });
+  },
+  
+  /**
+   * Checks if a custom downloaded file already exists on disk.
+   */
+  async checkCustomFileExists(folder: string, filename: string): Promise<boolean> {
+    return invoke<boolean>("check_custom_file_exists", { folder, filename });
+  },
+
+  /**
+   * Searches Hugging Face for GGUF models matching a query.
+   */
+  async searchHuggingFace(query: string): Promise<HFModel[]> {
+    const res = await fetch(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=20`);
+    if (!res.ok) {
+      throw new Error(`HF search failed: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  /**
+   * Gets specific .gguf files inside a single Hugging Face repository.
+   */
+  async getHuggingFaceRepoFiles(repoId: string): Promise<HFRepoFile[]> {
+    const res = await fetch(`https://huggingface.co/api/models/${repoId}/tree/main`);
+    if (!res.ok) {
+      throw new Error(`HF tree fetch failed: ${res.statusText}`);
+    }
+    const files: HFRepoFile[] = await res.json();
+    return files.filter(f => f.type === "file" && f.path.endsWith(".gguf"));
   },
 };
 function convertFileSrc(filePath: string): string {

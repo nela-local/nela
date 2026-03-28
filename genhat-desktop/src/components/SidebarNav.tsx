@@ -14,6 +14,7 @@ interface SidebarNavProps {
   onImportProject: () => void;
   onExportProject: () => void;
   onOpenSettings: () => void;
+  onOpenHuggingFaceSearch?: () => void;
   workspaceBusy?: boolean;
   canExport?: boolean;
 }
@@ -24,6 +25,7 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onImportProject,
   onExportProject,
   onOpenSettings,
+  onOpenHuggingFaceSearch,
   workspaceBusy = false,
   canExport = false,
 }) => {
@@ -53,6 +55,13 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
       </button>
 
       <div className="mt-auto flex flex-col items-center gap-2 pb-1">
+        <button
+          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
+          title="Search Hugging Face"
+          onClick={onOpenHuggingFaceSearch}
+        >
+          <span role="img" aria-label="Hugging Face" style={{ fontSize: '22px' }}>🤗</span>
+        </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
           title="Settings"

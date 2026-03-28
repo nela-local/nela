@@ -41,6 +41,7 @@ import PodcastTab from "./components/PodcastTab";
 import MindMapOverlay from "./components/MindMapOverlay";
 import StartupModal from "./components/StartupModal";
 import ModelsSettingsModal from "./components/ModelsSettingsModal";
+import HuggingFaceModal from "./components/HuggingFaceModal";
 import AppModal, { type AppModalKind } from "./components/AppModal";
 import "./App.css";
 
@@ -243,6 +244,7 @@ function App() {
   const [selectedModel, setSelectedModel] = useState("");
   const [registeredModels, setRegisteredModels] = useState<RegisteredModel[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hfModalOpen, setHfModalOpen] = useState(false);
   const [downloadOptionalOnStart, setDownloadOptionalOnStart] = useState(() => {
     return localStorage.getItem(STARTUP_OPTIONAL_DOWNLOAD_KEY) === "true";
   });
@@ -2039,6 +2041,11 @@ function App() {
         onConfirm={confirmAction}
       />
 
+      <HuggingFaceModal
+        isOpen={hfModalOpen}
+        onClose={() => setHfModalOpen(false)}
+      />
+
       {/* Main app content stays visible in background behind startup modal */}
       <div className="flex h-full w-full relative z-10">
           <SidebarNav
@@ -2047,6 +2054,7 @@ function App() {
         onImportProject={() => void openWorkspaceFromFile()}
         onExportProject={() => void saveWorkspaceFile()}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenHuggingFaceSearch={() => setHfModalOpen(true)}
         workspaceBusy={workspaceBusy}
         canExport={!!activeWorkspace}
       />
