@@ -1130,7 +1130,10 @@ function App() {
           .filter((m) => m.tasks.includes("chat"))
           .sort((a, b) => b.priority - a.priority)
           .map((m) => ({
-            name: m.name,
+            name:
+              m.model_source === "custom"
+                ? `${m.name} (Custom${m.model_profile ? ` ${m.model_profile.toUpperCase()}` : ""})`
+                : m.name,
             path: m.id,
             is_downloaded: m.is_downloaded,
             gdrive_id: m.gdrive_id,
@@ -2044,6 +2047,7 @@ function App() {
       <HuggingFaceModal
         isOpen={hfModalOpen}
         onClose={() => setHfModalOpen(false)}
+        onModelImported={refreshModels}
       />
 
       {/* Main app content stays visible in background behind startup modal */}

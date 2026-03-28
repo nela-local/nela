@@ -324,4 +324,7 @@ pub struct ModelInfo {
     pub is_zip: bool,
     pub priority: u32,
     pub is_downloaded: bool,
+    pub model_source: String,
+    pub model_profile: Option<String>,
+    pub engine_adapter: Option<String>,
 }

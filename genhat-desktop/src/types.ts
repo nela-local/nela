@@ -45,6 +45,20 @@ export interface RegisteredModel {
   priority: number;
   is_downloaded: boolean;
   gdrive_id?: string | null;
+  model_source?: string;
+  model_profile?: string | null;
+  engine_adapter?: string | null;
+}
+
+export type ImportModelProfile = "llm" | "vlm";
+
+export interface ImportDownloadedModelRequest {
+  folder: string;
+  filename: string;
+  profile: ImportModelProfile;
+  display_name?: string;
+  mmproj_file?: string;
+  engine_adapter?: string;
 }
 
 export interface IngestionStatus {

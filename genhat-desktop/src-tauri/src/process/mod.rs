@@ -585,6 +585,13 @@ impl ProcessManager {
                 let models_dir = crate::paths::resolve_models_dir();
                 let model_path = models_dir.join(&m.def.model_file);
                 let is_downloaded = model_path.exists();
+                let model_profile = m.def.params.get("custom_profile").cloned();
+                let engine_adapter = m.def.params.get("engine_adapter").cloned();
+                let model_source = if model_profile.is_some() {
+                    "custom".to_string()
+                } else {
+                    "builtin".to_string()
+                };
                 
                 let status = if m.instances.is_empty() {
                     ModelStatus::Unloaded
@@ -610,6 +617,9 @@ impl ProcessManager {
                     memory_mb: m.def.memory_mb, gdrive_id: m.def.gdrive_id.clone(), is_zip: m.def.is_zip,
                     priority: m.def.priority,
                     is_downloaded,
+                    model_source,
+                    model_profile,
+                    engine_adapter,
                 }
             })
             .collect()

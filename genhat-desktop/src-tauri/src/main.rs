@@ -134,6 +134,8 @@ fn main() {
             app_lib::commands::models::get_memory_usage,
             app_lib::commands::models::get_workspace_scope,
             app_lib::commands::models::read_image_base64,
+            app_lib::commands::models::import_downloaded_model,
+            app_lib::commands::models::unregister_custom_model,
             // Workspace commands
             app_lib::commands::workspace::list_workspaces,
             app_lib::commands::workspace::get_active_workspace,

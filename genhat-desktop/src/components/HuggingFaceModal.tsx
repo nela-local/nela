@@ -2,10 +2,12 @@ import React, { useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { X, Search, Download, Loader2 } from "lucide-react";
 import { Api, type HFModel, type HFRepoFile } from "../api";
+import type { ImportModelProfile } from "../types";
 
 interface HuggingFaceModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onModelImported?: () => void;
 }
 
 const CATEGORIES: { label: string; folder: string }[] = [
@@ -16,7 +18,7 @@ const CATEGORIES: { label: string; folder: string }[] = [
   { label: "STT", folder: "parakeet" },
 ];
 
-export default function HuggingFaceModal({ isOpen, onClose }: HuggingFaceModalProps) {
+export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: HuggingFaceModalProps) {
   const [query, setQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<HFModel[]>([]);
@@ -26,6 +28,9 @@ export default function HuggingFaceModal({ isOpen, onClose }: HuggingFaceModalPr
   const [repoFiles, setRepoFiles] = useState<HFRepoFile[]>([]);
   
   const [selectedFolder, setSelectedFolder] = useState<string>("LLM");
+  const [importProfile, setImportProfile] = useState<"none" | ImportModelProfile>("llm");
+  const [mmprojFile, setMmprojFile] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
   
   const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string }>>({});
   const [completedDownloads, setCompletedDownloads] = useState<string[]>([]);
@@ -90,6 +95,10 @@ export default function HuggingFaceModal({ isOpen, onClose }: HuggingFaceModalPr
       const files = await Api.getHuggingFaceRepoFiles(repoId);
       const ggufs = files.filter(f => f.path.endsWith(".gguf"));
       setRepoFiles(ggufs);
+      const mmproj = ggufs
+        .map((f) => f.file_name || f.path.split("/").pop() || f.path)
+        .find((name) => name.toLowerCase().includes("mmproj"));
+      setMmprojFile(mmproj || "");
     } catch (err) {
       console.error(err);
     } finally {
@@ -132,18 +141,64 @@ export default function HuggingFaceModal({ isOpen, onClose }: HuggingFaceModalPr
 
   const handleDownload = async (file: HFRepoFile) => {
     const url = `https://huggingface.co/${selectedRepo}/resolve/main/${file.path}`;
+    setActionError(null);
     try {
       const filename = file.file_name || file.path.split('/').pop() || file.path;
       await Api.downloadCustomFile(url, selectedFolder, filename);
+
+      if (importProfile === "none") {
+        return;
+      }
+
+      if (importProfile === "vlm") {
+        const companion = mmprojFile.trim();
+        if (!companion) {
+          throw new Error("VLM import requires an mmproj companion file name.");
+        }
+
+        if (companion === filename) {
+          throw new Error("mmproj companion file must be different from the model file.");
+        }
+
+        const companionExists = await Api.checkCustomFileExists(selectedFolder, companion);
+        if (!companionExists) {
+          const companionInRepo = repoFiles.find((repoFile) => {
+            const candidate = repoFile.file_name || repoFile.path.split("/").pop() || repoFile.path;
+            return candidate === companion;
+          });
+
+          if (!companionInRepo) {
+            throw new Error(`mmproj companion '${companion}' was not found locally or in this repo.`);
+          }
+
+          const companionUrl = `https://huggingface.co/${selectedRepo}/resolve/main/${companionInRepo.path}`;
+          await Api.downloadCustomFile(companionUrl, selectedFolder, companion);
+        }
+      }
+
+      if (importProfile === "llm" || importProfile === "vlm") {
+        await Api.importDownloadedModel({
+          folder: selectedFolder,
+          filename,
+          profile: importProfile,
+          mmproj_file:
+            importProfile === "vlm" && mmprojFile.trim()
+              ? `${selectedFolder}/${mmprojFile.trim()}`
+              : undefined,
+          engine_adapter: "llama_cpp",
+        });
+        onModelImported?.();
+      }
     } catch(err) {
       console.error(err);
+      setActionError(err instanceof Error ? err.message : String(err));
     }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-100 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-void-900 border border-glass-border rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-glass-border bg-void-800">
           <h2 className="text-xl font-semibold text-txt flex items-center gap-2">
@@ -202,7 +257,7 @@ export default function HuggingFaceModal({ isOpen, onClose }: HuggingFaceModalPr
           <div className="w-1/2 overflow-y-auto p-4 bg-void-800/30">
             {selectedRepo ? (
               <div className="flex flex-col gap-4">
-                <h3 className="font-semibold text-txt break-words text-lg">{selectedRepo}</h3>
+                <h3 className="font-semibold text-txt wrap-break-word text-lg">{selectedRepo}</h3>
                 
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-txt-secondary">Category (Folder to save into):</label>
@@ -216,6 +271,37 @@ export default function HuggingFaceModal({ isOpen, onClose }: HuggingFaceModalPr
                     ))}
                   </select>
                 </div>
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm font-medium text-txt-secondary">Import profile (required for model usage):</label>
+                  <select
+                    value={importProfile}
+                    onChange={(e) => setImportProfile(e.target.value as "none" | ImportModelProfile)}
+                    className="bg-void-900 border border-glass-border rounded-lg px-3 py-2 text-txt focus:outline-none focus:border-neon"
+                  >
+                    <option value="llm">LLM</option>
+                    <option value="vlm">VLM</option>
+                    <option value="none">Download only (do not import)</option>
+                  </select>
+                </div>
+
+                {importProfile === "vlm" && (
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-medium text-txt-secondary">VLM mmproj file name:</label>
+                    <input
+                      value={mmprojFile}
+                      onChange={(e) => setMmprojFile(e.target.value)}
+                      placeholder="mmproj-....gguf"
+                      className="bg-void-900 border border-glass-border rounded-lg px-3 py-2 text-txt focus:outline-none focus:border-neon"
+                    />
+                  </div>
+                )}
+
+                {actionError && (
+                  <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                    {actionError}
+                  </div>
+                )}
 
                 <div className="mt-2">
                   <div className="text-txt-secondary flex items-center justify-between mb-2">

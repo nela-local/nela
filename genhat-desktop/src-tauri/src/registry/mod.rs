@@ -1,5 +1,6 @@
 //! Model registry: loads model definitions from config and provides lookups.
 
+pub mod custom;
 pub mod types;
 
 use crate::config;
@@ -15,7 +16,21 @@ pub struct ModelRegistry {
 impl ModelRegistry {
     /// Load all model definitions from the embedded `models.toml`.
     pub fn load() -> Result<Self, String> {
-        let models = config::load_model_definitions()?;
+        let mut models = config::load_model_definitions()?;
+        let models_dir = crate::paths::resolve_models_dir();
+        let custom_models = custom::load_custom_models(&models_dir)?;
+
+        for custom in custom_models {
+            if models.iter().any(|m| m.id == custom.id) {
+                log::warn!(
+                    "ModelRegistry: custom model '{}' conflicts with built-in model ID; skipping custom entry",
+                    custom.id
+                );
+                continue;
+            }
+            models.push(custom);
+        }
+
         log::info!(
             "ModelRegistry: loaded {} model definition(s): [{}]",
             models.len(),

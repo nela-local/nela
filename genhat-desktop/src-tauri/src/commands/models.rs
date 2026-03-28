@@ -2,10 +2,12 @@
 
 use crate::process::ProcessManager;
 use crate::commands::workspace::WorkspaceState;
+use crate::registry::custom::{self, CustomModelEntry, CustomModelProfile};
 use crate::registry::types::{
     BackendKind, ModelDef, ModelInfo, ModelKind, ModelStatus, TaskType,
 };
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
@@ -192,6 +194,184 @@ pub async fn switch_model(
     Ok(format!("server started (instance: {})", &instance_id[..8]))
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportModelProfile {
+    Llm,
+    Vlm,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ImportDownloadedModelRequest {
+    pub folder: String,
+    pub filename: String,
+    pub profile: ImportModelProfile,
+    pub display_name: Option<String>,
+    pub mmproj_file: Option<String>,
+    pub engine_adapter: Option<String>,
+}
+
+/// Import a downloaded GGUF model into the runtime and persist it in custom registry.
+///
+/// This enables downloaded Hugging Face models to be recognized by NELA
+/// immediately without requiring app restart.
+#[tauri::command]
+pub async fn import_downloaded_model(
+    req: ImportDownloadedModelRequest,
+    state: State<'_, ProcessManagerState>,
+) -> Result<ModelInfo, String> {
+    let models_dir = crate::paths::resolve_models_dir();
+    let model_rel = PathBuf::from(&req.folder).join(&req.filename);
+    let model_path = models_dir.join(&model_rel);
+
+    if !model_path.exists() {
+        return Err(format!(
+            "Model file not found: {}",
+            model_path.display()
+        ));
+    }
+    if model_path.extension().and_then(|s| s.to_str()) != Some("gguf") {
+        return Err(format!(
+            "Only .gguf models can be imported with this command: {}",
+            model_path.display()
+        ));
+    }
+
+    let model_id = build_custom_model_id(&req.folder, &req.filename);
+    let display_name = req
+        .display_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            PathBuf::from(&req.filename)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| req.filename.clone())
+        });
+
+    let mut params = HashMap::new();
+    let engine_adapter = req
+        .engine_adapter
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "llama_cpp".to_string());
+
+    if engine_adapter != "llama_cpp" {
+        return Err(format!(
+            "Unsupported engine adapter '{}'. Currently supported: llama_cpp",
+            engine_adapter
+        ));
+    }
+
+    params.insert("engine_adapter".to_string(), engine_adapter.clone());
+
+    match req.profile {
+        ImportModelProfile::Llm => {
+            params.insert("custom_profile".to_string(), "llm".to_string());
+        }
+        ImportModelProfile::Vlm => {
+            params.insert("custom_profile".to_string(), "vlm".to_string());
+            let mmproj = req
+                .mmproj_file
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    "VLM imports require an mmproj companion file. Provide mmproj_file.".to_string()
+                })?;
+
+            let mmproj_path = std::path::Path::new(&mmproj);
+            let mmproj_exists = if mmproj_path.is_absolute() {
+                mmproj_path.exists()
+            } else {
+                models_dir.join(&mmproj).exists()
+            };
+            if !mmproj_exists {
+                return Err(format!(
+                    "VLM companion file not found: {}",
+                    mmproj
+                ));
+            }
+            params.insert("mmproj_file".to_string(), mmproj);
+        }
+    }
+
+    let tasks = match req.profile {
+        ImportModelProfile::Llm => vec![
+            TaskType::Chat,
+            TaskType::Summarize,
+            TaskType::Mindmap,
+            TaskType::Grade,
+            TaskType::Hyde,
+            TaskType::PodcastScript,
+        ],
+        ImportModelProfile::Vlm => vec![TaskType::VisionChat],
+    };
+
+    let def = ModelDef {
+        id: model_id.clone(),
+        name: display_name.clone(),
+        backend: BackendKind::LlamaServer,
+        kind: ModelKind::ChildProcess,
+        model_file: model_rel.to_string_lossy().to_string(),
+        tasks,
+        auto_start: false,
+        max_instances: 2,
+        idle_timeout_s: 0,
+        priority: 12,
+        memory_mb: 1600,
+        params: params.clone(),
+        task_priorities: HashMap::new(),
+        gdrive_id: None,
+        is_zip: false,
+    };
+
+    state.0.register_model(def).await?;
+
+    let entry = CustomModelEntry {
+        id: model_id.clone(),
+        name: display_name,
+        model_file: model_rel.to_string_lossy().to_string(),
+        profile: match req.profile {
+            ImportModelProfile::Llm => CustomModelProfile::Llm,
+            ImportModelProfile::Vlm => CustomModelProfile::Vlm,
+        },
+        engine_adapter,
+        max_instances: 2,
+        idle_timeout_s: 0,
+        priority: 12,
+        memory_mb: 1600,
+        params,
+    };
+
+    custom::upsert_custom_model(&models_dir, entry)?;
+
+    let imported = state
+        .0
+        .list_models()
+        .await
+        .into_iter()
+        .find(|m| m.id == model_id)
+        .ok_or_else(|| "Imported model was not found in runtime list".to_string())?;
+
+    Ok(imported)
+}
+
+/// Unregister a previously imported custom model.
+#[tauri::command]
+pub async fn unregister_custom_model(
+    model_id: String,
+    state: State<'_, ProcessManagerState>,
+) -> Result<(), String> {
+    let models_dir = crate::paths::resolve_models_dir();
+    if !custom::is_custom_model(&models_dir, &model_id)? {
+        return Err(format!("Model '{}' is not a custom imported model", model_id));
+    }
+
+    state.0.unregister_model(&model_id).await?;
+    let _ = custom::remove_custom_model(&models_dir, &model_id)?;
+    Ok(())
+}
+
 /// Stop the LLM server. Legacy-compatible.
 #[tauri::command]
 pub async fn stop_llama(state: State<'_, ProcessManagerState>) -> Result<(), String> {
@@ -246,6 +426,33 @@ pub fn get_workspace_scope(workspace: State<'_, WorkspaceState>) -> Result<Strin
 ///   4. `../../models` relative to the crate root at compile time (dev / cargo run fallback)
 pub fn get_models_dir() -> PathBuf {
     crate::paths::resolve_models_dir()
+}
+
+fn build_custom_model_id(folder: &str, filename: &str) -> String {
+    let stem = PathBuf::from(filename)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| filename.to_string());
+
+    let normalized = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    folder.hash(&mut hasher);
+    filename.hash(&mut hasher);
+    let suffix = hasher.finish();
+
+    format!("custom-{}-{:08x}", normalized, suffix as u32)
 }
 
 // ── File utilities ──────────────────────────────────────────────────────────

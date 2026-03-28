@@ -1,5 +1,5 @@
-use crate::process::ProcessManager;
 use crate::commands::models::ProcessManagerState;
+use crate::registry::custom;
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::fs::File;
@@ -34,7 +34,7 @@ pub async fn cancel_download(
 pub async fn uninstall_model(
     model_id: String,
     state: State<'_, ProcessManagerState>,
-    download_state: State<'_, DownloadState>,
+    _download_state: State<'_, DownloadState>,
 ) -> Result<(), String> {
     let def = state
         .0
@@ -45,6 +45,8 @@ pub async fn uninstall_model(
     let models_dir = crate::paths::resolve_models_dir();
     let model_path = models_dir.join(&def.model_file);
     
+    let is_custom = custom::is_custom_model(&models_dir, &model_id).unwrap_or(false);
+
     // Attempt to stop the model before deleting
     let _ = state.0.stop_model(&model_id).await;
 
@@ -71,6 +73,11 @@ pub async fn uninstall_model(
         }
     }
     
+    if is_custom {
+        let _ = state.0.unregister_model(&model_id).await;
+        let _ = custom::remove_custom_model(&models_dir, &model_id);
+    }
+
     Ok(())
 }
 

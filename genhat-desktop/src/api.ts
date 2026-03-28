@@ -9,6 +9,7 @@ import type {
   MediaAsset,
   PodcastRequest,
   PodcastResult,
+  ImportDownloadedModelRequest,
   WorkspaceOpenResult,
   WorkspaceRecord,
 } from "./types";
@@ -493,6 +494,15 @@ export const Api = {
    */
   async checkCustomFileExists(folder: string, filename: string): Promise<boolean> {
     return invoke<boolean>("check_custom_file_exists", { folder, filename });
+  },
+
+  /** Import a downloaded GGUF into runtime and persist custom registration. */
+  async importDownloadedModel(request: ImportDownloadedModelRequest): Promise<RegisteredModel> {
+    return invoke<RegisteredModel>("import_downloaded_model", { req: request });
+  },
+
+  async unregisterCustomModel(modelId: string): Promise<void> {
+    await invoke("unregister_custom_model", { modelId });
   },
 
   /**
