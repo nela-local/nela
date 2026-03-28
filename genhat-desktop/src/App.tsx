@@ -1073,10 +1073,6 @@ function App() {
     showModal("info", title, message);
   };
 
-  const showWarning = (message: string, title = "Warning") => {
-    showModal("warning", title, message);
-  };
-
   const showError = (message: string, title = "Error") => {
     showModal("error", title, message);
   };
