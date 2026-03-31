@@ -38,6 +38,6 @@ pub fn task_priority(task: &TaskType) -> TaskPriority {
 pub fn is_ephemeral_task(task: &TaskType) -> bool {
     matches!(
         task,
-        TaskType::Enrich | TaskType::Grade | TaskType::Hyde | TaskType::Embed
+        TaskType::Enrich | TaskType::Grade | TaskType::Hyde
     )
 }

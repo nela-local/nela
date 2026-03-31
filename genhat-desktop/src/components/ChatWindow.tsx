@@ -64,6 +64,31 @@ const CopyMsgButton: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
+/** Collapsible thinking/reasoning box for assistant messages */
+const ThinkingBox: React.FC<{ thinking: string }> = ({ thinking }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  if (!thinking) return null;
+
+  return (
+    <div className="mb-3">
+      <button
+        className="flex items-center gap-2 text-xs text-txt-muted hover:text-txt transition-colors cursor-pointer w-full"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <span className="opacity-50">{isExpanded ? "▼" : "▶"}</span>
+        <span className="font-medium">Thinking</span>
+        <span className="text-[0.65rem] opacity-40">({thinking.length} chars)</span>
+      </button>
+      {isExpanded && (
+        <div className="mt-2 p-3 rounded-lg bg-black/20 border border-white/5 text-xs text-txt-muted leading-relaxed opacity-70 max-h-60 overflow-y-auto">
+          <pre className="whitespace-pre-wrap font-mono">{thinking}</pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface ChatWindowProps {
   messages: ChatMessage[];
   streamingContent: string;
@@ -98,6 +123,9 @@ interface ChatWindowProps {
   currentMode?: ChatMode;
   onSelectMode?: (mode: ChatMode) => void;
   modeSwitchNotice?: string | null;
+  streamingThinking?: string;
+  thinkingEnabled?: boolean;
+  onToggleThinking?: () => void;
 }
 
 /** Inline gallery for extracted images/tables attached to an assistant message. */
@@ -239,6 +267,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   onSelectMode,
   modeSwitchNotice = null,
   saveAudioToSidebar = () => {},
+  streamingThinking = "",
+  thinkingEnabled = true,
+  onToggleThinking,
 }) => {
   const [inputObj, setInputObj] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -472,6 +503,20 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               rows={1}
               className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
             />
+            {onToggleThinking && (
+              <button
+                className={`glass-btn flex items-center gap-1.5 h-10 px-2.5 rounded-xl border transition-all duration-200 ${thinkingEnabled ? "bg-neon/10 border-neon/30 text-neon" : "bg-glass-bg border-glass-border text-txt-muted hover:text-txt hover:border-glass-border-hover"}`}
+                onClick={onToggleThinking}
+                title={thinkingEnabled ? "Disable thinking (faster)" : "Enable thinking"}
+                disabled={isLoading}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a10 10 0 0 0-9.95 9 10 10 0 0 0 19.4 3.1 10 10 0 0 0-9.45-12.1zM12 6a6 6 0 0 1 5.82 7.5" />
+                  <circle cx="12" cy="12" r="1" fill="currentColor" />
+                </svg>
+                <span className="text-[0.74rem] font-medium leading-none">{thinkingEnabled ? "On" : "Off"}</span>
+              </button>
+            )}
             <div className="relative" ref={modeMenuRef}>
               <button
                 className="glass-btn flex items-center gap-1.5 h-10 px-2.5 rounded-xl bg-glass-bg border border-glass-border text-txt-muted cursor-pointer transition-all duration-200 hover:text-neon hover:border-neon/30 hover:shadow-[0_0_10px_rgba(0,212,255,0.12)]"
@@ -595,6 +640,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                     />
                     <div className="flex-1 min-w-0">
                       <div className="text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4 shadow-[0_4px_20px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.03)]">
+                        {msg.thinking && <ThinkingBox thinking={msg.thinking} />}
                         <MarkdownRenderer content={msg.content} />
                         {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
@@ -637,13 +683,21 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               draggable={false}
             />
             <div className="flex-1 min-w-0 text-[0.9rem] leading-relaxed text-txt glass rounded-2xl rounded-tl-sm py-3 px-4">
+              {streamingThinking && (
+                <div className="mb-3 p-3 rounded-lg bg-black/20 border border-white/5 text-xs text-txt-muted leading-relaxed opacity-70">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-medium">Thinking...</span>
+                  </div>
+                  <pre className="whitespace-pre-wrap font-mono">{streamingThinking}</pre>
+                </div>
+              )}
               {streamingContent ? (
                 <MarkdownRenderer content={streamingContent} />
-              ) : (
+              ) : !streamingThinking ? (
                 <div className="typing-dots flex gap-1.5 py-2">
                   <span></span><span></span><span></span>
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         )}

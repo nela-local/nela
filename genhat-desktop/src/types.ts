@@ -33,6 +33,8 @@ export interface ChatMessage {
   audioUrl?: string;
   /** Whether this audio is saved in the sidebar (true), unsaved (false), or not applicable (undefined). */
   audioSaved?: boolean;
+  /** Optional thinking/reasoning content for assistant messages (from reasoning models). */
+  thinking?: string;
 }
 
 export interface RegisteredModel {
@@ -215,5 +217,13 @@ export interface PodcastProgress {
   stage: "rag" | "scripting" | "tts" | "merging" | "done";
   detail: string;
   progress: number;
+}
+
+/** User preferences for RAG pipeline model selection. */
+export interface RagModelPreferences {
+  /** Preferred embedding model ID for vector similarity search. */
+  embed_model_id: string | null;
+  /** Preferred LLM model ID for enrichment and chat tasks. */
+  llm_model_id: string | null;
 }
 

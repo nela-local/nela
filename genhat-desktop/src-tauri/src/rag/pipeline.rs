@@ -20,6 +20,7 @@ use crate::router::tasks;
 use crate::router::TaskRouter;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::Mutex as TokioMutex;
@@ -131,6 +132,8 @@ pub struct RagPipeline {
     router: Arc<TaskRouter>,
     /// Lock to serialize ingestion (prevent concurrent writes to tantivy writer).
     ingest_lock: TokioMutex<()>,
+    /// Cancellation flag for the enrichment worker. Set to true to stop the worker.
+    enrichment_cancelled: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for RagPipeline {
@@ -150,7 +153,11 @@ impl RagPipeline {
 
         // Load all embeddings into in-memory IVF vector index
         let vec_index = Arc::new(VectorIndex::load_from_db(&db)?);
-        log::info!("VectorIndex loaded: {} vectors in memory", vec_index.len());
+        log::info!(
+            "VectorIndex loaded: {} vectors in memory (~{:.2} MB quantized)",
+            vec_index.len(),
+            vec_index.estimated_memory_bytes() as f64 / (1024.0 * 1024.0)
+        );
 
         Ok(Self {
             db,
@@ -158,6 +165,7 @@ impl RagPipeline {
             vec_index,
             router,
             ingest_lock: TokioMutex::new(()),
+            enrichment_cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -521,12 +529,21 @@ impl RagPipeline {
     /// Emits `rag:enrichment_progress` events to the frontend.
     /// When enrichment is complete, automatically builds RAPTOR trees for
     /// fully-enriched documents (lazy RAPTOR) and rebuilds the vector index.
+    /// 
+    /// The worker will stop when `stop_enrichment()` is called on this pipeline.
     pub fn start_enrichment_worker(pipeline: Arc<Self>, app_handle: tauri::AppHandle) {
+        let cancel_flag = pipeline.enrichment_cancelled.clone();
         tauri::async_runtime::spawn(async move {
             log::info!("RAG enrichment worker started");
             let mut idle_cycles: u32 = 0;
             let mut failed_cycles: u32 = 0;
             loop {
+                // Check cancellation before each cycle
+                if cancel_flag.load(Ordering::Relaxed) {
+                    log::info!("RAG enrichment worker cancelled, exiting");
+                    break;
+                }
+
                 match pipeline.enrich_pending(5).await {
                     Ok(0) => {
                         idle_cycles += 1;
@@ -543,8 +560,14 @@ impl RagPipeline {
                         // Periodically rebuild vector index partitions during idle time
                         pipeline.vec_index.rebuild_if_needed();
 
-                        // Nothing to enrich — wait longer
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        // Nothing to enrich — wait longer, but check cancellation periodically
+                        for _ in 0..6 {
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                log::info!("RAG enrichment worker cancelled during idle, exiting");
+                                return;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        }
                     }
                     Ok(n) => {
                         idle_cycles = 0;
@@ -576,11 +599,30 @@ impl RagPipeline {
                             "status": "error",
                             "error": e.to_string()
                         }));
-                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        
+                        // Wait but check cancellation periodically
+                        for _ in 0..12 {
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                log::info!("RAG enrichment worker cancelled during error backoff, exiting");
+                                return;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        }
                     }
                 }
             }
         });
+    }
+
+    /// Signal the enrichment worker to stop. The worker will exit on its next cycle.
+    pub fn stop_enrichment(&self) {
+        log::info!("Stopping RAG enrichment worker");
+        self.enrichment_cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// Check if the enrichment worker has been cancelled.
+    pub fn is_enrichment_cancelled(&self) -> bool {
+        self.enrichment_cancelled.load(Ordering::Relaxed)
     }
 
     // ═══════════════════════════════════════════════════════════════════════

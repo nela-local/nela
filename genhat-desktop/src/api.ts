@@ -12,6 +12,7 @@ import type {
   ImportDownloadedModelRequest,
   WorkspaceOpenResult,
   WorkspaceRecord,
+  RagModelPreferences,
 } from "./types";
 
 export interface HFModel {
@@ -29,6 +30,32 @@ export interface HFRepoFile {
   size: number;
   path: string;
   [key: string]: any;
+}
+
+/** Device hardware specifications */
+export interface DeviceSpecs {
+  total_ram_mb: number;
+  available_ram_mb: number;
+  total_ram_gb: number;
+  available_ram_gb: number;
+  cpu_cores: number;
+  cpu_model: string;
+  os: string;
+}
+
+/** Model compatibility rating */
+export type CompatibilityRating = "good" | "medium" | "bad" | "unknown";
+
+/** Model tier classification */
+export type ModelTier = "tiny" | "small" | "medium" | "large" | "verylarge";
+
+/** Compatibility check result */
+export interface ModelCompatibility {
+  rating: CompatibilityRating;
+  reason: string;
+  estimated_memory_mb: number;
+  available_memory_mb: number;
+  can_run: boolean;
 }
 
 export const Api = {
@@ -176,6 +203,24 @@ export const Api = {
     return invoke<WorkspaceOpenResult>("open_workspace_nela", {
       nelaPath,
       name: name ?? null,
+    });
+  },
+
+  /** Get RAG model preferences for a workspace. */
+  async getRagModelPreferences(workspaceId: string): Promise<RagModelPreferences> {
+    return invoke<RagModelPreferences>("get_rag_model_preferences", {
+      workspaceId,
+    });
+  },
+
+  /** Save RAG model preferences for a workspace. */
+  async saveRagModelPreferences(
+    workspaceId: string,
+    prefs: RagModelPreferences
+  ): Promise<void> {
+    await invoke("save_rag_model_preferences", {
+      workspaceId,
+      prefs,
     });
   },
 
@@ -403,10 +448,12 @@ export const Api = {
   async streamChat(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
+    onThinking: (thinking: string) => void,
     onFinish: () => void,
     onError: (err: unknown) => void,
     port?: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    disableThinking?: boolean
   ) {
     try {
       const apiMessages = messages.map(({ role, content }) => ({ role, content }));
@@ -414,17 +461,34 @@ export const Api = {
       const llamaPort =
         port || (await invoke<number>("get_llama_port"));
 
+      const requestBody: Record<string, unknown> = {
+        messages: apiMessages,
+        stream: true,
+        max_tokens: 2048,
+        temperature: 0.7,
+      };
+
+      // Add reasoning control - enable thinking for chat unless explicitly disabled
+      // IMPORTANT: When disabling, set ALL THREE:
+      //   - reasoning_budget = 0 (disables generation of thinking tokens)
+      //   - reasoning_format = "none" (prevents parsing of <think> tags)
+      //   - chat_template_kwargs = {"enable_thinking": false} (for Qwen3 models)
+      if (!disableThinking) {
+        requestBody.reasoning_format = "deepseek";
+        requestBody.reasoning_budget = -1; // Unrestricted
+        requestBody.chat_template_kwargs = { enable_thinking: true };
+      } else {
+        requestBody.reasoning_format = "none"; // Prevent <think> tag parsing
+        requestBody.reasoning_budget = 0; // Disable thinking generation
+        requestBody.chat_template_kwargs = { enable_thinking: false };
+      }
+
       const res = await fetch(
         `http://127.0.0.1:${llamaPort}/v1/chat/completions`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: apiMessages,
-            stream: true,
-            max_tokens: 2048,
-            temperature: 0.7,
-          }),
+          body: JSON.stringify(requestBody),
           signal,
         }
       );
@@ -462,7 +526,16 @@ export const Api = {
 
           try {
             const parsed = JSON.parse(payload);
-            const content = parsed.choices?.[0]?.delta?.content;
+            const delta = parsed.choices?.[0]?.delta;
+            
+            // Handle reasoning/thinking content
+            const reasoningContent = delta?.reasoning_content;
+            if (reasoningContent) {
+              onThinking(reasoningContent);
+            }
+            
+            // Handle regular content
+            const content = delta?.content;
             if (content) {
               onChunk(content);
             }
@@ -526,6 +599,31 @@ export const Api = {
     }
     const files: HFRepoFile[] = await res.json();
     return files.filter(f => f.type === "file" && f.path.endsWith(".gguf"));
+  },
+
+  // ── System Info & Compatibility ─────────────────────────────────────────────
+
+  /** Get device specifications (RAM, CPU, OS) */
+  async getSystemSpecs(): Promise<DeviceSpecs> {
+    return invoke<DeviceSpecs>("get_system_specs");
+  },
+
+  /** Check if a model is compatible with the current device */
+  async checkCompatibility(fileSizeMb: number, memoryMb?: number): Promise<ModelCompatibility> {
+    return invoke<ModelCompatibility>("check_compatibility", {
+      fileSizeMb,
+      memoryMb: memoryMb ?? null,
+    });
+  },
+
+  /** Get the model tier classification based on file size */
+  async getModelTier(fileSizeMb: number): Promise<ModelTier> {
+    return invoke<ModelTier>("get_model_tier", { fileSizeMb });
+  },
+
+  /** Estimate memory requirements for a model based on its file size */
+  async estimateModelMemory(fileSizeMb: number): Promise<number> {
+    return invoke<number>("estimate_model_memory", { fileSizeMb });
   },
 };
 function convertFileSrc(filePath: string): string {

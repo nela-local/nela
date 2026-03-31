@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { X, Search, Download, Loader2 } from "lucide-react";
-import { Api, type HFModel, type HFRepoFile } from "../api";
+import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility } from "../api";
 import type { ImportModelProfile } from "../types";
 
 interface HuggingFaceModalProps {
@@ -17,6 +17,31 @@ const CATEGORIES: { label: string; folder: string }[] = [
   { label: "TTS", folder: "kittenTTS" },
   { label: "STT", folder: "parakeet" },
 ];
+
+/** Compatibility badge component */
+const CompatibilityBadge: React.FC<{ compatibility: ModelCompatibility }> = ({ compatibility }) => {
+  const colors = {
+    good: "bg-green-500/20 text-green-400 border-green-500/30",
+    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    bad: "bg-red-500/20 text-red-400 border-red-500/30",
+    unknown: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  };
+  const labels = {
+    good: "✓ Good",
+    medium: "⚠ Medium",
+    bad: "✗ Slow",
+    unknown: "? Unknown",
+  };
+  
+  return (
+    <span
+      className={`px-2 py-0.5 text-xs font-medium rounded border ${colors[compatibility.rating]}`}
+      title={compatibility.reason}
+    >
+      {labels[compatibility.rating]}
+    </span>
+  );
+};
 
 export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: HuggingFaceModalProps) {
   const [query, setQuery] = useState("");
@@ -36,6 +61,44 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
   const [completedDownloads, setCompletedDownloads] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  // Device specs and compatibility
+  const [deviceSpecs, setDeviceSpecs] = useState<DeviceSpecs | null>(null);
+  const [fileCompatibility, setFileCompatibility] = useState<Record<string, ModelCompatibility>>({});
+
+  // Fetch device specs on mount
+  useEffect(() => {
+    if (isOpen && !deviceSpecs) {
+      Api.getSystemSpecs().then(setDeviceSpecs).catch(console.error);
+    }
+  }, [isOpen, deviceSpecs]);
+
+  // Check compatibility for each file when repo files change
+  useEffect(() => {
+    if (repoFiles.length === 0 || !deviceSpecs) return;
+    
+    let isMounted = true;
+    const checkCompatibility = async () => {
+      const results: Record<string, ModelCompatibility> = {};
+      for (const file of repoFiles) {
+        const fileSizeMb = Math.round(file.size / (1024 * 1024));
+        try {
+          const compat = await Api.checkCompatibility(fileSizeMb);
+          if (isMounted) {
+            results[file.oid] = compat;
+          }
+        } catch (e) {
+          console.error("Compatibility check failed:", e);
+        }
+      }
+      if (isMounted) {
+        setFileCompatibility(results);
+      }
+    };
+    
+    checkCompatibility();
+    return () => { isMounted = false; };
+  }, [repoFiles, deviceSpecs]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -204,9 +267,18 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           <h2 className="text-xl font-semibold text-txt flex items-center gap-2">
             <span role="img" aria-label="Hugging Face">🤗</span> Hugging Face Hub Search
           </h2>
-          <button onClick={onClose} className="text-txt-secondary hover:text-txt transition-colors">
-            <X size={24} />
-          </button>
+          <div className="flex items-center gap-4">
+            {deviceSpecs && (
+              <div className="text-xs text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border">
+                <span className="text-txt-muted">RAM:</span>{" "}
+                <span className="text-txt">{deviceSpecs.available_ram_gb.toFixed(1)}</span>
+                <span className="text-txt-muted">/{deviceSpecs.total_ram_gb.toFixed(1)} GB available</span>
+              </div>
+            )}
+            <button onClick={onClose} className="text-txt-secondary hover:text-txt transition-colors">
+              <X size={24} />
+            </button>
+          </div>
         </div>
         
         <div className="p-4 border-b border-glass-border flex gap-4 bg-void-800">
@@ -317,12 +389,16 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
                         const dlState = downloads[dlKey] || downloads[filename];
                         const isDownloading = dlState !== undefined;
                         const isCompleted = completedDownloads.includes(dlKey) || completedDownloads.includes(filename);
+                        const compat = fileCompatibility[file.oid];
                         
                         return (
                           <div key={file.oid} className="bg-void border border-glass-border rounded-lg p-3 flex flex-col gap-2">
                             <div className="flex justify-between items-start gap-2">
                               <span className="text-sm font-medium text-txt break-all">{filename}</span>
-                              <span className="text-xs text-txt-secondary whitespace-nowrap">{(file.size / 1024 / 1024 / 1024).toFixed(2)} GB</span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {compat && <CompatibilityBadge compatibility={compat} />}
+                                <span className="text-xs text-txt-secondary whitespace-nowrap">{(file.size / 1024 / 1024 / 1024).toFixed(2)} GB</span>
+                              </div>
                             </div>
                             
                             {isDownloading ? (

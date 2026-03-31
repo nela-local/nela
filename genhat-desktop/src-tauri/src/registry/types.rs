@@ -277,6 +277,11 @@ pub struct TaskRequest {
 pub enum TaskResponse {
     /// Plain text output (chat, summarize, mindmap, enrich, grade).
     Text(String),
+    /// Chat response with optional reasoning/thinking content.
+    ChatWithThinking {
+        content: String,
+        reasoning: Option<String>,
+    },
     /// Path to a generated file (TTS wav, etc.).
     FilePath(String),
     /// Embedding vectors.

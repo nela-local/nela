@@ -201,6 +201,7 @@ fn entry_to_model_def(entry: CustomModelEntry) -> ModelDef {
                 TaskType::Chat,
                 TaskType::Summarize,
                 TaskType::Mindmap,
+                TaskType::Enrich,
                 TaskType::Grade,
                 TaskType::Hyde,
                 TaskType::PodcastScript,
@@ -209,7 +210,9 @@ fn entry_to_model_def(entry: CustomModelEntry) -> ModelDef {
         },
         auto_start: false,
         max_instances: if entry.max_instances == 0 { 2 } else { entry.max_instances },
-        idle_timeout_s: entry.idle_timeout_s,
+        // Default idle timeout of 30s for custom models if not specified.
+        // 0 means immediate reap, which is too aggressive for inference models.
+        idle_timeout_s: if entry.idle_timeout_s == 0 { 30 } else { entry.idle_timeout_s },
         priority: if entry.priority == 0 { 12 } else { entry.priority },
         memory_mb: if entry.memory_mb == 0 { 1600 } else { entry.memory_mb },
         gdrive_id: None,

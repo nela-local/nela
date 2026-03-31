@@ -9,3 +9,4 @@ pub mod rag;
 pub mod podcast;
 pub mod workspace;
 pub mod download;
+pub mod system;

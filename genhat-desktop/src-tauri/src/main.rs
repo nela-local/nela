@@ -149,6 +149,8 @@ fn main() {
             app_lib::commands::workspace::delete_workspace,
             app_lib::commands::workspace::rename_workspace,
             app_lib::commands::workspace::open_workspace_nela,
+            app_lib::commands::workspace::get_rag_model_preferences,
+            app_lib::commands::workspace::save_rag_model_preferences,
             app_lib::commands::inference::route_request,
             app_lib::commands::inference::vision_chat,
             app_lib::commands::inference::vision_chat_stream,
@@ -177,6 +179,11 @@ fn main() {
             app_lib::commands::rag::read_file_text,
             // Podcast commands
             app_lib::commands::podcast::generate_podcast,
+            // System commands
+            app_lib::commands::system::get_system_specs,
+            app_lib::commands::system::check_compatibility,
+            app_lib::commands::system::get_model_tier,
+            app_lib::commands::system::estimate_model_memory,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

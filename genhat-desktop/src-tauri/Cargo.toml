@@ -34,6 +34,7 @@ uuid = { version = "1", features = ["v4"] }
 dashmap = "6"
 crossbeam-channel = "0.5"
 base64 = "0.22"
+sysinfo = "0.30"
 
 # ── RAG pipeline ──
 rusqlite = { version = "0.32", features = ["bundled", "blob"] }

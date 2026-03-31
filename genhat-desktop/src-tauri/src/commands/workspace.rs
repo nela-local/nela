@@ -3,9 +3,9 @@
 use crate::commands::inference::TaskRouterState;
 use crate::commands::rag::RagPipelineState;
 use crate::rag::pipeline::RagPipeline;
-use crate::workspace::{WorkspaceManager, WorkspaceOpenResult, WorkspaceRecord};
+use crate::workspace::{RagModelPreferences, WorkspaceManager, WorkspaceOpenResult, WorkspaceRecord};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 /// Tauri-managed workspace state.
 pub struct WorkspaceState(pub Arc<WorkspaceManager>);
@@ -32,12 +32,13 @@ pub fn clear_active_workspace(state: State<'_, WorkspaceState>) -> Result<(), St
 #[tauri::command]
 pub fn create_workspace(
     name: Option<String>,
+    app: AppHandle,
     state: State<'_, WorkspaceState>,
     rag_state: State<'_, RagPipelineState>,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<WorkspaceRecord, String> {
     let ws = state.0.create_workspace(name)?;
-    reload_rag_for_active_workspace(&state, &rag_state, &router_state)?;
+    reload_rag_for_active_workspace(&app, &state, &rag_state, &router_state)?;
     Ok(ws)
 }
 
@@ -45,12 +46,13 @@ pub fn create_workspace(
 #[tauri::command]
 pub fn open_workspace(
     workspace_id: String,
+    app: AppHandle,
     state: State<'_, WorkspaceState>,
     rag_state: State<'_, RagPipelineState>,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<WorkspaceRecord, String> {
     let ws = state.0.open_workspace(&workspace_id)?;
-    reload_rag_for_active_workspace(&state, &rag_state, &router_state)?;
+    reload_rag_for_active_workspace(&app, &state, &rag_state, &router_state)?;
     Ok(ws)
 }
 
@@ -106,12 +108,20 @@ pub fn save_workspace_as_nela(
 #[tauri::command]
 pub fn delete_workspace(
     workspace_id: String,
+    app: AppHandle,
     state: State<'_, WorkspaceState>,
     rag_state: State<'_, RagPipelineState>,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<WorkspaceRecord, String> {
+    // Stop the enrichment worker BEFORE deleting files to release DB handles
+    if let Ok(pipeline) = rag_state.active_pipeline() {
+        pipeline.stop_enrichment();
+        // Give the worker a moment to stop and release resources
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    
     let active = state.0.delete_workspace(&workspace_id)?;
-    reload_rag_for_active_workspace(&state, &rag_state, &router_state)?;
+    reload_rag_for_active_workspace(&app, &state, &rag_state, &router_state)?;
     Ok(active)
 }
 
@@ -131,16 +141,37 @@ pub fn save_workspace_nela(
 pub fn open_workspace_nela(
     nela_path: String,
     name: Option<String>,
+    app: AppHandle,
     state: State<'_, WorkspaceState>,
     rag_state: State<'_, RagPipelineState>,
     router_state: State<'_, TaskRouterState>,
 ) -> Result<WorkspaceOpenResult, String> {
     let out = state.0.open_workspace_nela(&nela_path, name)?;
-    reload_rag_for_active_workspace(&state, &rag_state, &router_state)?;
+    reload_rag_for_active_workspace(&app, &state, &rag_state, &router_state)?;
     Ok(out)
 }
 
+/// Get RAG model preferences for a workspace.
+#[tauri::command]
+pub fn get_rag_model_preferences(
+    workspace_id: String,
+    state: State<'_, WorkspaceState>,
+) -> Result<RagModelPreferences, String> {
+    state.0.get_rag_model_preferences(&workspace_id)
+}
+
+/// Save RAG model preferences for a workspace.
+#[tauri::command]
+pub fn save_rag_model_preferences(
+    workspace_id: String,
+    prefs: RagModelPreferences,
+    state: State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    state.0.save_rag_model_preferences(&workspace_id, &prefs)
+}
+
 fn reload_rag_for_active_workspace(
+    app: &AppHandle,
     workspace_state: &State<'_, WorkspaceState>,
     rag_state: &State<'_, RagPipelineState>,
     router_state: &State<'_, TaskRouterState>,
@@ -152,6 +183,12 @@ fn reload_rag_for_active_workspace(
     // can fail and block workspace activation.
     let active_rag_dir = rag_state.active_data_dir()?;
     if active_rag_dir == rag_dir {
+        // Emit ready even when keeping existing pipeline
+        let workspace_id = workspace_state.0.active_workspace_id().unwrap_or_default();
+        let _ = app.emit("workspace-ready", serde_json::json!({
+            "workspace_id": workspace_id,
+            "status": "ready"
+        }));
         return Ok(());
     }
 
@@ -159,5 +196,20 @@ fn reload_rag_for_active_workspace(
         RagPipeline::open(&rag_dir, router_state.0.clone())
             .map_err(|e| format!("Failed to re-open RAG pipeline for workspace cache {}: {e}", rag_dir.display()))?,
     );
-    rag_state.replace_pipeline(new_pipeline)
+    
+    // Replace pipeline (this stops the old enrichment worker)
+    rag_state.replace_pipeline(new_pipeline.clone())?;
+    
+    // Start new enrichment worker for the new pipeline
+    RagPipeline::start_enrichment_worker(new_pipeline, app.clone());
+    log::info!("Started new enrichment worker for workspace");
+    
+    // Emit workspace-ready event so frontend knows it's safe to restore state
+    let workspace_id = workspace_state.0.active_workspace_id().unwrap_or_default();
+    let _ = app.emit("workspace-ready", serde_json::json!({
+        "workspace_id": workspace_id,
+        "status": "ready"
+    }));
+    
+    Ok(())
 }

@@ -8,6 +8,18 @@ use zip::write::SimpleFileOptions;
 
 const REGISTRY_VERSION: u32 = 1;
 const NELA_SCHEMA_VERSION: u32 = 1;
+const RAG_MODEL_PREFS_FILE: &str = "rag_model_prefs.json";
+
+/// User preferences for RAG pipeline model selection.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RagModelPreferences {
+    /// Preferred embedding model ID for vector similarity search.
+    #[serde(default)]
+    pub embed_model_id: Option<String>,
+    /// Preferred LLM model ID for enrichment and chat tasks.
+    #[serde(default)]
+    pub llm_model_id: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceRecord {
@@ -108,6 +120,13 @@ impl WorkspaceManager {
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, String> {
         let registry = self.lock_registry()?;
         Ok(registry.workspaces.clone())
+    }
+
+    /// Returns the active workspace ID, if any.
+    pub fn active_workspace_id(&self) -> Option<String> {
+        self.lock_registry()
+            .ok()
+            .and_then(|r| r.active_workspace_id.clone())
     }
 
     pub fn get_active_workspace(&self) -> Result<WorkspaceRecord, String> {
@@ -481,6 +500,51 @@ impl WorkspaceManager {
     pub fn active_rag_dir(&self) -> Result<PathBuf, String> {
         let active = self.get_active_workspace()?;
         Ok(PathBuf::from(active.cache_dir).join("rag"))
+    }
+
+    /// Get the cache directory for a specific workspace by ID.
+    pub fn get_workspace_cache_dir(&self, workspace_id: &str) -> Result<PathBuf, String> {
+        let registry = self.lock_registry()?;
+        let ws = registry
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == workspace_id)
+            .ok_or_else(|| format!("Workspace '{workspace_id}' not found"))?;
+        Ok(PathBuf::from(&ws.cache_dir))
+    }
+
+    /// Load RAG model preferences for a workspace.
+    pub fn get_rag_model_preferences(&self, workspace_id: &str) -> Result<RagModelPreferences, String> {
+        let cache_dir = self.get_workspace_cache_dir(workspace_id)?;
+        let prefs_path = cache_dir.join(RAG_MODEL_PREFS_FILE);
+        
+        if !prefs_path.exists() {
+            return Ok(RagModelPreferences::default());
+        }
+        
+        let text = std::fs::read_to_string(&prefs_path)
+            .map_err(|e| format!("Failed to read RAG model preferences {}: {e}", prefs_path.display()))?;
+        
+        serde_json::from_str(&text)
+            .map_err(|e| format!("Failed to parse RAG model preferences: {e}"))
+    }
+
+    /// Save RAG model preferences for a workspace.
+    pub fn save_rag_model_preferences(
+        &self,
+        workspace_id: &str,
+        prefs: &RagModelPreferences,
+    ) -> Result<(), String> {
+        let cache_dir = self.get_workspace_cache_dir(workspace_id)?;
+        std::fs::create_dir_all(&cache_dir)
+            .map_err(|e| format!("Failed to create workspace cache dir: {e}"))?;
+        
+        let prefs_path = cache_dir.join(RAG_MODEL_PREFS_FILE);
+        let json = serde_json::to_string_pretty(prefs)
+            .map_err(|e| format!("Failed to serialize RAG model preferences: {e}"))?;
+        
+        std::fs::write(&prefs_path, json)
+            .map_err(|e| format!("Failed to write RAG model preferences {}: {e}", prefs_path.display()))
     }
 
     fn load_registry(path: &Path) -> Result<WorkspaceRegistry, String> {

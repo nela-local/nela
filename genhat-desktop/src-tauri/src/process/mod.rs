@@ -59,7 +59,7 @@ impl ProcessManager {
                     def.id,
                     missing.join(", ")
                 );
-                
+                continue;
             }
 
             let backend: Arc<dyn ModelBackend> = Arc::from(backends::create_backend(def));
@@ -79,7 +79,8 @@ impl ProcessManager {
             .filter(|m| m.def.tasks.contains(&TaskType::Chat))
             .max_by_key(|m| m.def.priority)
             .map(|m| m.def.id.clone())
-            .unwrap_or_else(|| "lfm-1_2b".to_string());
+            .or_else(|| managed.keys().next().cloned())
+            .unwrap_or_default();
 
         Self {
             models: Arc::new(RwLock::new(managed)),
@@ -642,17 +643,20 @@ impl ProcessManager {
     /// Find a dynamically-registered model that supports a given task type.
     /// Returns the model_id of the highest-priority match, if any.
     pub async fn find_model_for_task(&self, task: &TaskType) -> Option<String> {
+        self.find_models_for_task(task).await.into_iter().next()
+    }
+
+    /// Find all registered models that support a given task type, sorted by priority (highest first).
+    pub async fn find_models_for_task(&self, task: &TaskType) -> Vec<String> {
         let models = self.models.read().await;
-        let mut best: Option<(&str, u32)> = None;
-        for (id, managed) in models.iter() {
-            if managed.def.tasks.contains(task) {
-                match best {
-                    Some((_, pri)) if managed.def.priority <= pri => {}
-                    _ => best = Some((id.as_str(), managed.def.priority)),
-                }
-            }
-        }
-        best.map(|(id, _)| id.to_string())
+        let mut matches: Vec<(&str, u32)> = models
+            .iter()
+            .filter(|(_, managed)| managed.def.tasks.contains(task))
+            .map(|(id, managed)| (id.as_str(), managed.def.priority_for_task(task)))
+            .collect();
+
+        matches.sort_by(|a, b| b.1.cmp(&a.1));
+        matches.into_iter().map(|(id, _)| id.to_string()).collect()
     }
 
     /// Get a clone of the ModelDef for a specific model id.

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 /// Managed state wrapper for the ProcessManager.
 pub struct ProcessManagerState(pub Arc<ProcessManager>);
@@ -158,8 +158,6 @@ pub async fn switch_model(
     // Build a ModelDef for the new model.
     // Use the absolute path as model_file — Path::join with an absolute path
     // ignores the base, so the backend will use it directly.
-    // NOTE: Enrich is excluded — the dedicated enrichment model (LFM) handles
-    // that in the background so it doesn't block the user's chat model.
     let def = ModelDef {
         id: model_id.clone(),
         name: file_name.clone(),
@@ -170,8 +168,10 @@ pub async fn switch_model(
             TaskType::Chat,
             TaskType::Summarize,
             TaskType::Mindmap,
+            TaskType::Enrich,
             TaskType::Grade,
             TaskType::Hyde,
+            TaskType::PodcastScript,
         ],
         auto_start: false,
         max_instances: 2,
@@ -300,6 +300,7 @@ pub async fn import_downloaded_model(
             TaskType::Chat,
             TaskType::Summarize,
             TaskType::Mindmap,
+            TaskType::Enrich,
             TaskType::Grade,
             TaskType::Hyde,
             TaskType::PodcastScript,
@@ -387,18 +388,85 @@ pub async fn stop_llama(state: State<'_, ProcessManagerState>) -> Result<(), Str
 }
 
 /// Get the port of the running llama-server (for frontend SSE streaming).
+/// Emits `model-loading` events during model initialization.
 #[tauri::command]
 pub async fn get_llama_port(
+    app: AppHandle,
     state: State<'_, ProcessManagerState>,
 ) -> Result<u16, String> {
     let active_id = state.0.active_llm_id().await;
-    // Ensure it's running first
-    let _ = state.0.ensure_running(&active_id, false).await?;
-    state
-        .0
-        .get_llama_port(&active_id)
+    let mut candidates = Vec::new();
+    if !active_id.is_empty() {
+        candidates.push(active_id);
+    }
+
+    for id in state.0.find_models_for_task(&TaskType::Chat).await {
+        if !candidates.contains(&id) {
+            candidates.push(id);
+        }
+    }
+
+    if candidates.is_empty() {
+        return Err("No chat-capable model is registered".to_string());
+    }
+
+    let mut errors = Vec::new();
+    for id in candidates {
+        if let Some(port) = state.0.get_llama_port(&id).await {
+            return Ok(port);
+        }
+
+        // Emit loading event before starting model
+        let _ = app.emit("model-loading", serde_json::json!({
+            "model_id": &id,
+            "status": "starting",
+            "message": format!("Loading model {}...", &id)
+        }));
+        log::info!("Starting model {} for chat...", &id);
+
+        // Increased timeout to 150s to account for large model loading
+        let start = std::time::Instant::now();
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(150),
+            state.0.ensure_running(&id, false),
+        )
         .await
-        .ok_or_else(|| "LLM not running or no port assigned".to_string())
+        {
+            Ok(Ok(_)) => {
+                let elapsed = start.elapsed().as_secs();
+                let _ = app.emit("model-loading", serde_json::json!({
+                    "model_id": &id,
+                    "status": "ready",
+                    "message": format!("Model {} ready ({}s)", &id, elapsed)
+                }));
+                if let Some(port) = state.0.get_llama_port(&id).await {
+                    return Ok(port);
+                }
+                errors.push(format!("{id}: started but no port assigned"));
+            }
+            Ok(Err(e)) => {
+                let _ = app.emit("model-loading", serde_json::json!({
+                    "model_id": &id,
+                    "status": "error",
+                    "message": format!("Failed to start {}: {}", &id, &e)
+                }));
+                errors.push(format!("{id}: {e}"));
+            }
+            Err(_) => {
+                let _ = app.emit("model-loading", serde_json::json!({
+                    "model_id": &id,
+                    "status": "timeout",
+                    "message": format!("{} timed out after 150s", &id)
+                }));
+                errors.push(format!("{id}: timed out while starting"));
+            }
+        }
+    }
+
+    Err(format!(
+        "No runnable chat model available: {}",
+        errors.join(" | ")
+    ))
 }
 
 /// Get estimated total memory usage of all loaded models (MB).

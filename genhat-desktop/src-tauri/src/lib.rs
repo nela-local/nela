@@ -7,6 +7,7 @@
 //!   process/    — Process manager (spawn, health, reap, shutdown)
 //!   router/     — Task routing (maps requests to models)
 //!   commands/   — Tauri IPC command handlers
+//!   system/     — System information and device compatibility
 
 pub mod config;
 pub mod paths;
@@ -20,6 +21,7 @@ pub mod workspace;
 pub mod tts;
 pub mod asr;
 pub mod podcast;
+pub mod system;
 
 #[cfg(windows)]
 pub mod windows_spawn;

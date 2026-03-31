@@ -290,12 +290,21 @@ function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceRecord | null>(null);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [modelLoadingStatus, setModelLoadingStatus] = useState<{
+    loading: boolean;
+    modelId: string;
+    message: string;
+  }>({ loading: false, modelId: "", message: "" });
   const [sessionStoreReady, setSessionStoreReady] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>(() => [createEmptySession()]);
   const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   /** AbortControllers keyed by session ID — persists across renders. */
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  
+  // ── Thinking/Reasoning state ───────────────────────────────────────────────
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [streamingThinking, setStreamingThinking] = useState<string>("");
 
   // ── Vision state ───────────────────────────────────────────────────────────
   const [imagePath, setImagePath] = useState<string | null>(null);
@@ -454,8 +463,11 @@ function App() {
         activeSessionId: safeActive,
         openSessionIds,
         mindmapsBySession,
+        selectedModel,
+        selectedTtsEngine,
+        selectedVisionModel,
       }),
-    [sessions, openSessionIds, mindmapsBySession]
+    [sessions, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel]
   );
 
   const refreshWorkspaceRegistry = useCallback(async () => {
@@ -501,6 +513,45 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Listen for backend events (model loading, workspace ready)
+  useEffect(() => {
+    let unlistenModelLoading: (() => void) | null = null;
+    let unlistenWorkspaceReady: (() => void) | null = null;
+
+    const setupListeners = async () => {
+      // Model loading progress events
+      unlistenModelLoading = await listen<{
+        model_id: string;
+        status: "starting" | "ready" | "error" | "timeout";
+        message: string;
+      }>("model-loading", (event) => {
+        const { status, model_id, message } = event.payload;
+        if (status === "starting") {
+          setModelLoadingStatus({ loading: true, modelId: model_id, message });
+        } else {
+          // Clear loading state on ready, error, or timeout
+          setModelLoadingStatus({ loading: false, modelId: "", message: "" });
+        }
+      });
+
+      // Workspace ready events (emitted after RAG pipeline is reloaded)
+      unlistenWorkspaceReady = await listen<{
+        workspace_id: string;
+        status: string;
+      }>("workspace-ready", (event) => {
+        console.log("Workspace ready:", event.payload.workspace_id);
+        // The workspace is now fully initialized - state restoration can proceed
+      });
+    };
+
+    void setupListeners();
+
+    return () => {
+      unlistenModelLoading?.();
+      unlistenWorkspaceReady?.();
+    };
+  }, []);
+
   // Resolve workspace scope key once so session history is isolated per workspace.
   useEffect(() => {
     let cancelled = false;
@@ -525,23 +576,24 @@ function App() {
 
   useEffect(() => {
     const initializeApp = async () => {
-      // Clear active workspace on app load so startup modal appears
       try {
-        await Api.clearActiveWorkspace();
-      } catch (err) {
-        console.warn("Failed to clear active workspace:", err);
-      }
-      // Load workspaces list only (without the active workspace)
-      try {
-        const all = await Api.listWorkspaces();
+        const [all, active] = await Promise.all([
+          Api.listWorkspaces(),
+          Api.getActiveWorkspace().catch(() => null),
+        ]);
         setWorkspaces(all);
-        setActiveWorkspace(null); // Ensure active workspace is null for startup modal
+        setActiveWorkspace(active);
+        if (active) {
+          const scope = await Api.getWorkspaceScope().catch(() => `workspace:${active.id}`);
+          setWorkspaceScope(scope || `workspace:${active.id}`);
+          await loadRagDocs();
+        }
       } catch (err) {
-        console.warn("Failed to refresh workspace list:", err);
+        console.warn("Failed to initialize workspace state:", err);
       }
     };
     void initializeApp();
-  }, []);
+  }, [loadRagDocs]);
 
   // Restore persisted chat sessions for the active workspace.
   useEffect(() => {
@@ -565,6 +617,9 @@ function App() {
         activeSessionId?: string;
         openSessionIds?: string[];
         mindmapsBySession?: Record<string, unknown>;
+        selectedModel?: string;
+        selectedTtsEngine?: string;
+        selectedVisionModel?: string;
       };
       const loaded = Array.isArray(parsed.sessions)
         ? parsed.sessions.map(normalizeSession)
@@ -590,6 +645,11 @@ function App() {
         setActiveSessionId(nextActive);
         setMindmapsBySession(restoredMindmaps);
       }
+
+      // Restore per-workspace model selections
+      if (parsed.selectedModel) setSelectedModel(parsed.selectedModel);
+      if (parsed.selectedTtsEngine) setSelectedTtsEngine(parsed.selectedTtsEngine);
+      if (parsed.selectedVisionModel) setSelectedVisionModel(parsed.selectedVisionModel);
 
       setActiveMindmapOverlay(null);
     };
@@ -644,6 +704,9 @@ function App() {
         activeSessionId: safeActive,
         openSessionIds,
         mindmapsBySession,
+        selectedModel,
+        selectedTtsEngine,
+        selectedVisionModel,
       })
     );
 
@@ -653,7 +716,7 @@ function App() {
     ).catch((err) => {
       console.warn("Failed to persist workspace frontend state to backend:", err);
     });
-  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, buildWorkspaceFrontendState]);
+  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel, buildWorkspaceFrontendState]);
 
   const switchWorkspaceById = useCallback(async (workspaceId: string) => {
     if (workspaceBusy) return;
@@ -1552,6 +1615,7 @@ function App() {
           } else {
             // Phase 2: Stream the answer from llama-server SSE
             let fullAnswer = "";
+            let fullThinking = "";
             let firstTokenTimeMs: number | null = null;
             await Api.streamChat(
               [
@@ -1565,6 +1629,10 @@ function App() {
                 fullAnswer += chunk;
                 updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + chunk }));
               },
+              (thinkingChunk) => {
+                fullThinking += thinkingChunk;
+                setStreamingThinking((prev) => prev + thinkingChunk);
+              },
               () => {
                 // Stop timer
                 if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
@@ -1574,6 +1642,7 @@ function App() {
                 setGeneralGenerating(false);
                 setGeneralElapsedTime(totalTime);
                 setGeneralGenerationTime(totalTime);
+                setStreamingThinking(""); // Clear streaming thinking
 
                 updateSession(sid, (prev) => {
                   const updated: ChatMessage[] = [
@@ -1581,6 +1650,7 @@ function App() {
                     {
                       role: "assistant",
                       content: fullAnswer,
+                      thinking: fullThinking || undefined,
                       generateTime: totalTime,
                       firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
                     },
@@ -1620,7 +1690,8 @@ function App() {
                 }));
               },
               setup.llama_port,
-              ctrl.signal
+              ctrl.signal,
+              !thinkingEnabled
             );
             return;
           }
@@ -1809,6 +1880,7 @@ function App() {
       }, 100);
 
       let fullResponse = "";
+      let fullThinking = "";
       let textFirstTokenTimeMs: number | null = null;
 
       // Build the messages array from the session's messages (including the new user msg)
@@ -1826,6 +1898,10 @@ function App() {
           updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + chunk }));
           fullResponse += chunk;
         },
+        (thinkingChunk) => {
+          fullThinking += thinkingChunk;
+          setStreamingThinking((prev) => prev + thinkingChunk);
+        },
         () => {
           // Stop timer
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
@@ -1835,6 +1911,7 @@ function App() {
           setGeneralGenerating(false);
           setGeneralElapsedTime(totalTime);
           setGeneralGenerationTime(totalTime);
+          setStreamingThinking(""); // Clear streaming thinking
 
           if (fullResponse) {
             updateSession(sid, (prev) => ({
@@ -1843,6 +1920,7 @@ function App() {
                 {
                   role: "assistant" as const,
                   content: fullResponse,
+                  thinking: fullThinking || undefined,
                   generateTime: totalTime,
                   firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
                 },
@@ -1858,6 +1936,7 @@ function App() {
           // Stop timer on error
           if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
           setGeneralGenerating(false);
+          setStreamingThinking(""); // Clear streaming thinking on error
           console.error("Stream error", err);
           updateSession(sid, (prev) => ({
             messages: [
@@ -1868,7 +1947,8 @@ function App() {
           }));
         },
         undefined,
-        ctrl.signal
+        ctrl.signal,
+        !thinkingEnabled
       );
     } catch (err) {
       // Stop timer on error
@@ -2042,6 +2122,7 @@ function App() {
         onUninstall={handleUninstall}
         onDownloadMissingOptional={downloadMissingOptionalModels}
         onConfirm={confirmAction}
+        workspaceId={activeWorkspace?.id}
       />
 
       <HuggingFaceModal
@@ -2230,6 +2311,12 @@ function App() {
               onRenameWorkspace={(id, name) => renameWorkspaceById(id, name)}
               busy={workspaceBusy}
             />
+            {modelLoadingStatus.loading && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-900/30 border border-amber-500/40 rounded-lg text-amber-300 text-xs">
+                <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                <span>{modelLoadingStatus.message || "Loading model..."}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -2357,6 +2444,9 @@ function App() {
             modeSwitchNotice={modeSwitchNotice}
             saveAudioToSidebar={handleSaveAudioToSidebar}
             session={activeSession}
+            streamingThinking={streamingThinking}
+            thinkingEnabled={thinkingEnabled}
+            onToggleThinking={() => setThinkingEnabled(!thinkingEnabled)}
           />
         )}
 

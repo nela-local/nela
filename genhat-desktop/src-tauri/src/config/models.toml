@@ -45,6 +45,7 @@ temp = "0.7"
 top_p = "0.9"
 top_k = "40"
 repeat_penalty = "1.1"
+cache_type = "q8_0"
 
 # ── LLM: Qwen3.5-0.8B (llama-server) ────────────────────────────────────────
 # Primary model for chat / LLM tasks (highest priority). Thinking disabled for
@@ -75,6 +76,7 @@ top_k = "40"
 repeat_penalty = "1.1"
 flash_attn = "true"
 mlock = "true"
+cache_type = "q8_0"
 chat_template_kwargs = '{"enable_thinking": false}'
 
 [models.task_priorities]
@@ -109,6 +111,7 @@ top_k = "40"
 repeat_penalty = "1.1"
 flash_attn = "true"
 mlock = "true"
+cache_type = "q8_0"
 chat_template_kwargs = '{"enable_thinking": false}'
 
 [models.task_priorities]
@@ -158,6 +161,7 @@ ctx_size = "512"
 port = "0"
 embedding = "true"
 batch_size = "512"
+cache_type = "q8_0"
 
 # ── Embedding: BGE-base-en-v1.5 (llama-server --embedding mode) ──────────────
 # Higher priority than bge-small (768-dim vs 384-dim → better retrieval quality).
@@ -184,6 +188,7 @@ ctx_size = "1024"
 port = "0"
 embedding = "true"
 batch_size = "512"
+cache_type = "q8_0"
 
 # ── Query Router: DistilBERT Classifier (ONNX Runtime in-process) ─────────────
 

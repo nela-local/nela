@@ -2,10 +2,59 @@
 
 use crate::rag::pipeline::{IngestionStatus, RagPipeline, RagResult};
 use crate::commands::models::ProcessManagerState;
+use crate::registry::types::TaskType;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tauri::State;
+
+async fn resolve_runnable_chat_port(
+    pm: &crate::process::ProcessManager,
+) -> Result<(String, u16), String> {
+    let active_id = pm.active_llm_id().await;
+    let mut candidates = Vec::new();
+    if !active_id.is_empty() {
+        candidates.push(active_id);
+    }
+
+    for id in pm.find_models_for_task(&TaskType::Chat).await {
+        if !candidates.contains(&id) {
+            candidates.push(id);
+        }
+    }
+
+    if candidates.is_empty() {
+        return Err("No chat-capable model is registered".to_string());
+    }
+
+    let mut errors = Vec::new();
+    for id in candidates {
+        if let Some(port) = pm.get_llama_port(&id).await {
+            return Ok((id, port));
+        }
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(25),
+            pm.ensure_running(&id, false),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                if let Some(port) = pm.get_llama_port(&id).await {
+                    return Ok((id, port));
+                }
+                errors.push(format!("{id}: started but no port assigned"));
+            }
+            Ok(Err(e)) => errors.push(format!("{id}: {e}")),
+            Err(_) => errors.push(format!("{id}: timed out while starting")),
+        }
+    }
+
+    Err(format!(
+        "No runnable chat model found for streaming: {}",
+        errors.join(" | ")
+    ))
+}
 
 /// Tauri-managed state wrapper for the RAG pipeline.
 pub struct RagPipelineState(pub RwLock<Arc<RagPipeline>>);
@@ -18,11 +67,18 @@ impl RagPipelineState {
             .map_err(|_| "RAG pipeline state lock poisoned".to_string())
     }
 
+    /// Replace the current pipeline with a new one.
+    /// IMPORTANT: This stops the old pipeline's enrichment worker before replacing.
     pub fn replace_pipeline(&self, pipeline: Arc<RagPipeline>) -> Result<(), String> {
         let mut guard = self
             .0
             .write()
             .map_err(|_| "RAG pipeline state lock poisoned".to_string())?;
+        
+        // Stop the old pipeline's enrichment worker before replacing
+        guard.stop_enrichment();
+        log::info!("Stopped old enrichment worker, replacing RAG pipeline");
+        
         *guard = pipeline;
         Ok(())
     }
@@ -185,14 +241,8 @@ pub async fn query_rag_stream(
     // Phase 1: Retrieval (classify → HyDE → search → RRF → grade)
     let retrieval = pipeline.retrieve_for_query(&query, k).await?;
 
-    // Phase 2: Get the llama-server port (ensures it's running)
-    let active_id = pm_state.0.active_llm_id().await;
-    let _ = pm_state.0.ensure_running(&active_id, false).await?;
-    let llama_port = pm_state
-        .0
-        .get_llama_port(&active_id)
-        .await
-        .ok_or_else(|| "LLM not running or no port assigned".to_string())?;
+    // Phase 2: Resolve a runnable chat model + llama-server port
+    let (_model_id, llama_port) = resolve_runnable_chat_port(&pm_state.0).await?;
 
     // Determine the prompt to stream — use raw query for no_retrieval, else augmented prompt
     let prompt = if retrieval.no_retrieval {
@@ -276,14 +326,8 @@ pub async fn query_rag_with_raptor_stream(
         .retrieve_for_raptor_query(doc_id, &query, k)
         .await?;
 
-    // Phase 2: Get the llama-server port
-    let active_id = pm_state.0.active_llm_id().await;
-    let _ = pm_state.0.ensure_running(&active_id, false).await?;
-    let llama_port = pm_state
-        .0
-        .get_llama_port(&active_id)
-        .await
-        .ok_or_else(|| "LLM not running or no port assigned".to_string())?;
+    // Phase 2: Resolve a runnable chat model + llama-server port
+    let (_model_id, llama_port) = resolve_runnable_chat_port(&pm_state.0).await?;
 
     let prompt = if retrieval.no_retrieval {
         query

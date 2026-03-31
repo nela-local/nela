@@ -11,6 +11,8 @@ use async_trait::async_trait;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
+use std::time::Duration;
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -48,6 +50,50 @@ fn resolve_llama_exe() -> Result<PathBuf, String> {
 
     crate::paths::resolve_bundled_binary(os_folder, &exe_names)
         .map_err(|e| format!("llama-server not found. {e}"))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CacheTypeArgStyle {
+    Combined,
+    Split,
+    Unsupported,
+}
+
+fn detect_cache_type_arg_style(exe: &Path) -> CacheTypeArgStyle {
+    static CACHE_STYLE: OnceLock<CacheTypeArgStyle> = OnceLock::new();
+
+    *CACHE_STYLE.get_or_init(|| {
+        let out = Command::new(exe).arg("--help").output();
+        let text = match out {
+            Ok(o) => {
+                let mut s = String::new();
+                s.push_str(&String::from_utf8_lossy(&o.stdout));
+                s.push('\n');
+                s.push_str(&String::from_utf8_lossy(&o.stderr));
+                s
+            }
+            Err(e) => {
+                log::warn!("Could not inspect llama-server --help for cache flags: {e}");
+                String::new()
+            }
+        };
+
+        if text.contains("--cache-type ") {
+            CacheTypeArgStyle::Combined
+        } else if text.contains("--cache-type-k") || text.contains("-ctk,") {
+            CacheTypeArgStyle::Split
+        } else {
+            CacheTypeArgStyle::Unsupported
+        }
+    })
+}
+
+fn http_client_with_timeout(timeout_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))
 }
 
 /// Spawn a llama-server child process with the given model and port.
@@ -121,11 +167,31 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         args.push("--mlock".to_string());
     }
 
-    // Set KV cache quantization type if configured (e.g. "q8_0")
+    // Set KV cache quantization type if configured (e.g. "q8_0").
+    // llama.cpp CLI variants differ by version:
+    //   older/newer: --cache-type-k / --cache-type-v
+    //   some builds: --cache-type
     let cache_type = def.param_or("cache_type", "");
     if !cache_type.is_empty() {
-        args.push("--cache-type".to_string());
-        args.push(cache_type);
+        match detect_cache_type_arg_style(&exe) {
+            CacheTypeArgStyle::Combined => {
+                args.push("--cache-type".to_string());
+                args.push(cache_type);
+            }
+            CacheTypeArgStyle::Split => {
+                args.push("--cache-type-k".to_string());
+                args.push(cache_type.clone());
+                args.push("--cache-type-v".to_string());
+                args.push(cache_type);
+            }
+            CacheTypeArgStyle::Unsupported => {
+                log::warn!(
+                    "cache_type='{}' configured for model '{}' but this llama-server build does not support cache quantization flags; skipping",
+                    cache_type,
+                    def.id
+                );
+            }
+        }
     }
 
     // Chat template kwargs (e.g. '{"enable_thinking": false}' for Qwen)
@@ -392,13 +458,78 @@ impl ModelBackend for LlamaServerBackend {
             }
         }
 
-        let client = reqwest::Client::new();
+        // Control reasoning/thinking behavior based on task type.
+        // For non-chat tasks (enrich, summarize, etc.), disable thinking to improve speed.
+        // For chat tasks, use deepseek format to separate thinking from response.
+        // 
+        // IMPORTANT: When disabling reasoning, we must set ALL THREE:
+        //   - reasoning_budget = 0 (disables generation of thinking tokens)
+        //   - reasoning_format = "none" (prevents parsing of <think> tags)
+        //   - chat_template_kwargs = {"enable_thinking": false} (for Qwen3 models)
+        // Setting only budget=0 may not fully disable reasoning on some models.
+        match request.task_type {
+            crate::registry::types::TaskType::Chat => {
+                // Enable thinking for chat, extract it separately
+                // Check if user wants thinking disabled via extra params
+                let disable_thinking = request.extra.get("disable_thinking")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+                
+                if !disable_thinking {
+                    body["reasoning_format"] = serde_json::json!("deepseek");
+                    body["reasoning_budget"] = serde_json::json!(-1); // Unrestricted
+                    body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": true});
+                } else {
+                    // Fully disable reasoning - budget, format, AND template kwargs
+                    body["reasoning_format"] = serde_json::json!("none");
+                    body["reasoning_budget"] = serde_json::json!(0);
+                    body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
+                }
+            }
+            _ => {
+                // Disable thinking for all non-chat tasks to improve speed
+                body["reasoning_format"] = serde_json::json!("none");
+                body["reasoning_budget"] = serde_json::json!(0);
+                body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
+            }
+        }
+
+        // Increase timeouts significantly - thinking/reasoning models need much more time.
+        // Previous 45s timeout for Enrich tasks was causing requests to be cancelled
+        // mid-generation, leaving the server in a bad state.
+        let timeout_secs = match request.task_type {
+            crate::registry::types::TaskType::Classify => 30,
+            crate::registry::types::TaskType::Grade => 45,
+            crate::registry::types::TaskType::Enrich
+            | crate::registry::types::TaskType::Hyde => 120,
+            crate::registry::types::TaskType::Summarize
+            | crate::registry::types::TaskType::Mindmap
+            | crate::registry::types::TaskType::PodcastScript => 180,
+            _ => 90,
+        };
+        let client = http_client_with_timeout(timeout_secs)?;
         let resp = client
             .post(&url)
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("HTTP request to llama-server failed: {e}"))?;
+            .map_err(|e| {
+                // Provide more helpful error message for timeouts
+                if e.is_timeout() {
+                    format!(
+                        "Request timed out after {}s. The model may be too slow for this task type ({:?}). \
+                         Consider using a faster model or increasing the timeout.",
+                        timeout_secs, request.task_type
+                    )
+                } else if e.is_connect() {
+                    format!(
+                        "Failed to connect to llama-server at port {}. The server may have crashed.",
+                        url.split(':').last().unwrap_or("unknown")
+                    )
+                } else {
+                    format!("HTTP request to llama-server failed: {e}")
+                }
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -415,6 +546,17 @@ impl ModelBackend for LlamaServerBackend {
             .as_str()
             .unwrap_or("")
             .to_string();
+
+        // Check if reasoning content is present (for chat tasks with thinking enabled)
+        if request.task_type == crate::registry::types::TaskType::Chat {
+            let reasoning = json["choices"][0]["message"]["reasoning_content"]
+                .as_str()
+                .map(|s| s.to_string());
+            
+            if reasoning.is_some() && !reasoning.as_ref().unwrap().is_empty() {
+                return Ok(TaskResponse::ChatWithThinking { content, reasoning });
+            }
+        }
 
         Ok(TaskResponse::Text(content))
     }
@@ -505,7 +647,7 @@ impl LlamaServerBackend {
             "max_tokens": 16
         });
 
-        let client = reqwest::Client::new();
+        let client = http_client_with_timeout(15)?;
         let resp = client
             .post(&url)
             .json(&body)
@@ -561,7 +703,7 @@ impl LlamaServerBackend {
             "input": texts
         });
 
-        let client = reqwest::Client::new();
+        let client = http_client_with_timeout(180)?;
         let resp = client
             .post(&url)
             .json(&body)

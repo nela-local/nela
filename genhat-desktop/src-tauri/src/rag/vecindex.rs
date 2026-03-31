@@ -13,6 +13,76 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
 
+/// TurboQuant-style symmetric per-vector int8 quantization.
+///
+/// This compresses each vector from f32 to i8 with a scalar scale factor,
+/// reducing memory and improving cache locality for search.
+#[derive(Clone)]
+struct QuantizedVector {
+    data: Vec<i8>,
+    scale: f32,
+    norm: f32,
+}
+
+impl QuantizedVector {
+    fn from_f32(values: &[f32]) -> Self {
+        let max_abs = values
+            .iter()
+            .map(|v| v.abs())
+            .fold(0.0f32, |a, b| a.max(b));
+
+        if max_abs < 1e-12 {
+            return Self {
+                data: vec![0; values.len()],
+                scale: 1.0,
+                norm: 0.0,
+            };
+        }
+
+        let scale = max_abs / 127.0;
+        let mut data = Vec::with_capacity(values.len());
+        let mut sum_sq = 0.0f32;
+
+        for &v in values {
+            let q = (v / scale).round().clamp(-127.0, 127.0) as i8;
+            data.push(q);
+            let qf = q as f32;
+            sum_sq += qf * qf;
+        }
+
+        let norm = scale * sum_sq.sqrt();
+        Self { data, scale, norm }
+    }
+
+    fn dequantize(&self) -> Vec<f32> {
+        self.data
+            .iter()
+            .map(|&q| (q as f32) * self.scale)
+            .collect()
+    }
+
+    fn cosine_with_query(&self, query: &[f32], query_norm: f32) -> f32 {
+        if self.data.len() != query.len() || self.norm < 1e-12 || query_norm < 1e-12 {
+            return 0.0;
+        }
+
+        let mut dot_q = 0.0f32;
+        for (qv, q) in self.data.iter().zip(query.iter()) {
+            dot_q += (*qv as f32) * *q;
+        }
+        let dot = dot_q * self.scale;
+        dot / (query_norm * self.norm)
+    }
+
+    fn compressed_bytes(&self) -> usize {
+        self.data.len() + std::mem::size_of::<f32>() * 2
+    }
+}
+
+fn l2_norm(values: &[f32]) -> f32 {
+    values.iter().map(|v| v * v).sum::<f32>().sqrt()
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Configuration
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -43,7 +113,7 @@ const KMEANS_MAX_ITER: usize = 20;
 /// Above that threshold, k-means IVF partitioning gives sub-linear search.
 pub struct VectorIndex {
     /// All vectors, keyed by chunk_id.
-    vectors: RwLock<HashMap<i64, Vec<f32>>>,
+    vectors: RwLock<HashMap<i64, QuantizedVector>>,
     /// IVF centroids (one per partition).
     centroids: RwLock<Vec<Vec<f32>>>,
     /// Partition assignments: centroids[i] owns partition_members[i].
@@ -68,8 +138,13 @@ impl VectorIndex {
     pub fn load_from_db(db: &RagDb) -> Result<Self, String> {
         let all_embeddings = db.get_all_embeddings()?;
         let mut map = HashMap::with_capacity(all_embeddings.len());
+        let mut float_bytes = 0usize;
+        let mut quantized_bytes = 0usize;
         for (id, emb) in &all_embeddings {
-            map.insert(*id, emb.clone());
+            float_bytes += emb.len() * std::mem::size_of::<f32>();
+            let q = QuantizedVector::from_f32(emb);
+            quantized_bytes += q.compressed_bytes();
+            map.insert(*id, q);
         }
         let chunk_count = map.len();
 
@@ -77,14 +152,26 @@ impl VectorIndex {
         let media_embeddings = db.get_all_media_embeddings().unwrap_or_default();
         let media_count = media_embeddings.len();
         for (neg_id, emb) in media_embeddings {
-            map.insert(neg_id, emb);
+            float_bytes += emb.len() * std::mem::size_of::<f32>();
+            let q = QuantizedVector::from_f32(&emb);
+            quantized_bytes += q.compressed_bytes();
+            map.insert(neg_id, q);
         }
 
+        let saved_pct = if float_bytes == 0 {
+            0.0
+        } else {
+            100.0 * (1.0 - (quantized_bytes as f64 / float_bytes as f64))
+        };
+
         log::info!(
-            "VectorIndex loaded: {} chunk vectors + {} media vectors = {} total",
+            "VectorIndex loaded: {} chunk vectors + {} media vectors = {} total (vec mem: {:.2} MB -> {:.2} MB, saved {:.1}%)",
             chunk_count,
             media_count,
-            map.len()
+            map.len(),
+            float_bytes as f64 / (1024.0 * 1024.0),
+            quantized_bytes as f64 / (1024.0 * 1024.0),
+            saved_pct
         );
 
         let index = Self {
@@ -103,7 +190,7 @@ impl VectorIndex {
     pub fn insert(&self, chunk_id: i64, embedding: Vec<f32>) {
         {
             let mut vecs = self.vectors.write().unwrap();
-            vecs.insert(chunk_id, embedding);
+            vecs.insert(chunk_id, QuantizedVector::from_f32(&embedding));
         }
         self.pending_inserts.fetch_add(1, Ordering::Relaxed);
     }
@@ -120,11 +207,36 @@ impl VectorIndex {
         self.vectors.read().unwrap().len()
     }
 
+    /// Approximate memory used by in-memory vector payloads (quantized vectors + IVF metadata).
+    pub fn estimated_memory_bytes(&self) -> usize {
+        let vecs = self.vectors.read().unwrap();
+        let vec_bytes: usize = vecs.values().map(|v| v.compressed_bytes()).sum();
+
+        let centroids = self.centroids.read().unwrap();
+        let centroid_bytes: usize = centroids
+            .iter()
+            .map(|c| c.len() * std::mem::size_of::<f32>())
+            .sum();
+
+        let partitions = self.partition_members.read().unwrap();
+        let partition_bytes: usize = partitions
+            .iter()
+            .map(|p| p.len() * std::mem::size_of::<i64>())
+            .sum();
+
+        vec_bytes + centroid_bytes + partition_bytes
+    }
+
     /// Search for the top-k nearest neighbors by cosine similarity.
     /// Uses IVF partitioning when available, falls back to brute-force in memory.
     pub fn search(&self, query: &[f32], top_k: usize) -> Vec<(i64, f32)> {
         let vecs = self.vectors.read().unwrap();
         if vecs.is_empty() {
+            return vec![];
+        }
+
+        let query_norm = l2_norm(query);
+        if query_norm < 1e-12 {
             return vec![];
         }
 
@@ -135,7 +247,7 @@ impl VectorIndex {
             if centroids.is_empty() || vecs.len() < MIN_VECTORS_FOR_IVF {
                 // Brute-force over all in-memory vectors
                 vecs.iter()
-                    .map(|(&id, emb)| (id, cosine_similarity(query, emb)))
+                    .map(|(&id, emb)| (id, emb.cosine_with_query(query, query_norm)))
                     .collect()
             } else {
                 // IVF: search only the nearest partitions
@@ -148,7 +260,7 @@ impl VectorIndex {
                             if seen.insert(chunk_id) {
                                 if let Some(emb) = vecs.get(&chunk_id) {
                                     results
-                                        .push((chunk_id, cosine_similarity(query, emb)));
+                                        .push((chunk_id, emb.cosine_with_query(query, query_norm)));
                                 }
                             }
                         }
@@ -190,9 +302,11 @@ impl VectorIndex {
         let num_cells = IVF_NUM_CELLS.min(vecs.len() / 4).max(2);
 
         // Collect (id, embedding_ref) pairs
-        let items: Vec<(i64, &Vec<f32>)> =
-            vecs.iter().map(|(&id, emb)| (id, emb)).collect();
-        let embeddings: Vec<&Vec<f32>> = items.iter().map(|(_, e)| *e).collect();
+        let items: Vec<(i64, Vec<f32>)> = vecs
+            .iter()
+            .map(|(&id, emb)| (id, emb.dequantize()))
+            .collect();
+        let embeddings: Vec<&Vec<f32>> = items.iter().map(|(_, e)| e).collect();
 
         // K-means clustering
         let (new_centroids, assignments) = kmeans(&embeddings, num_cells, KMEANS_MAX_ITER);

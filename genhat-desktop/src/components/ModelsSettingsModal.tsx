@@ -1,6 +1,7 @@
-import React from "react";
-import { X, Download, Loader2, Trash2, Sparkles } from "lucide-react";
-import type { RegisteredModel } from "../types";
+import React, { useState, useEffect } from "react";
+import { X, Download, Loader2, Trash2, Sparkles, Save, CheckCircle } from "lucide-react";
+import type { RegisteredModel, RagModelPreferences } from "../types";
+import { Api } from "../api";
 import "./ModelsSettingsModal.css";
 
 interface ModelsSettingsModalProps {
@@ -13,6 +14,7 @@ interface ModelsSettingsModalProps {
   onUninstall?: (modelId: string) => void;
   onDownloadMissingOptional?: () => void;
   onConfirm?: (title: string, message: string, confirmLabel?: string) => Promise<boolean>;
+  workspaceId?: string;
 }
 
 const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
@@ -62,11 +64,55 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   onUninstall,
   onDownloadMissingOptional,
   onConfirm,
+  workspaceId,
 }) => {
+  const [ragPrefs, setRagPrefs] = useState<RagModelPreferences>({
+    embed_model_id: null,
+    llm_model_id: null,
+  });
+  const [ragPrefsSaving, setRagPrefsSaving] = useState(false);
+  const [ragPrefsSaved, setRagPrefsSaved] = useState(false);
+
+  // Load RAG preferences when modal opens
+  useEffect(() => {
+    if (isOpen && workspaceId) {
+      Api.getRagModelPreferences(workspaceId)
+        .then(setRagPrefs)
+        .catch((e) => console.error("Failed to load RAG preferences:", e));
+    }
+  }, [isOpen, workspaceId]);
+
+  // Reset saved indicator when preferences change
+  useEffect(() => {
+    setRagPrefsSaved(false);
+  }, [ragPrefs]);
+
+  const handleSaveRagPrefs = async () => {
+    if (!workspaceId) return;
+    setRagPrefsSaving(true);
+    try {
+      await Api.saveRagModelPreferences(workspaceId, ragPrefs);
+      setRagPrefsSaved(true);
+      setTimeout(() => setRagPrefsSaved(false), 2000);
+    } catch (e) {
+      console.error("Failed to save RAG preferences:", e);
+    } finally {
+      setRagPrefsSaving(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const optionalModels = models.filter((model) => model.tasks.some((t) => OPTIONAL_TASKS.has(t)));
   const missingOptional = optionalModels.filter((model) => !model.is_downloaded && model.gdrive_id);
+
+  // Filter models for RAG settings dropdowns
+  const embedModels = models.filter(
+    (m) => m.tasks.includes("embed") && m.is_downloaded
+  );
+  const llmModels = models.filter(
+    (m) => (m.tasks.includes("chat") || m.tasks.includes("enrich")) && m.is_downloaded
+  );
 
   return (
     <div className="settings-modal-overlay" onClick={onClose}>
@@ -94,6 +140,81 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
               Download Missing ({missingOptional.length})
             </button>
           </div>
+
+          {/* RAG Pipeline Settings Section */}
+          {workspaceId && (
+            <div className="settings-group">
+              <div className="settings-group-title">RAG Pipeline Settings</div>
+              <div className="settings-rag-prefs">
+                <div className="settings-rag-field">
+                  <label htmlFor="embed-model-select">Embedding Model</label>
+                  <select
+                    id="embed-model-select"
+                    className="settings-select"
+                    value={ragPrefs.embed_model_id ?? ""}
+                    onChange={(e) =>
+                      setRagPrefs((prev) => ({
+                        ...prev,
+                        embed_model_id: e.target.value || null,
+                      }))
+                    }
+                  >
+                    <option value="">Auto (default)</option>
+                    {embedModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="settings-field-hint">
+                    Model used for generating vector embeddings
+                  </span>
+                </div>
+
+                <div className="settings-rag-field">
+                  <label htmlFor="llm-model-select">LLM Model</label>
+                  <select
+                    id="llm-model-select"
+                    className="settings-select"
+                    value={ragPrefs.llm_model_id ?? ""}
+                    onChange={(e) =>
+                      setRagPrefs((prev) => ({
+                        ...prev,
+                        llm_model_id: e.target.value || null,
+                      }))
+                    }
+                  >
+                    <option value="">Auto (default)</option>
+                    {llmModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="settings-field-hint">
+                    Model used for enrichment and chat tasks
+                  </span>
+                </div>
+
+                <div className="settings-rag-actions">
+                  <button
+                    className="settings-primary"
+                    onClick={handleSaveRagPrefs}
+                    disabled={ragPrefsSaving}
+                  >
+                    {ragPrefsSaving ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : ragPrefsSaved ? (
+                      <CheckCircle size={14} />
+                    ) : (
+                      <Save size={14} />
+                    )}
+                    <span>{ragPrefsSaved ? "Saved" : "Save Preferences"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {GROUPS.map((group) => {
             const groupModels = models.filter(group.match);

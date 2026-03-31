@@ -40,70 +40,105 @@ impl TaskRouter {
     /// from internal RAG pipeline calls.
     pub fn route<'a>(&'a self, request: &'a TaskRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TaskResponse, String>> + Send + 'a>> {
         Box::pin(async move {
-        // Determine the model to use
-        let model_id = self.resolve_model(request).await?;
+        // Determine candidate models (ranked) and try them in order.
+        let candidates = self.resolve_model_candidates(request).await?;
         let is_ephemeral = pool::is_ephemeral_task(&request.task_type);
 
-        log::info!(
-            "Routing task '{}' (req={}) → model '{model_id}' (ephemeral={is_ephemeral})",
+        let mut errors = Vec::new();
+        for model_id in candidates {
+            log::info!(
+                "Routing task '{}' (req={}) → model '{}' (ephemeral={is_ephemeral})",
+                request.task_type,
+                &request.request_id[..8.min(request.request_id.len())],
+                model_id
+            );
+
+            match self
+                .process_manager
+                .ensure_running(&model_id, is_ephemeral)
+                .await
+            {
+                Ok(instance_id) => {
+                    match self
+                        .process_manager
+                        .execute(&model_id, &instance_id, request)
+                        .await
+                    {
+                        Ok(resp) => return Ok(resp),
+                        Err(e) => {
+                            log::warn!(
+                                "Task '{}' failed on model '{}': {}. Trying fallback...",
+                                request.task_type,
+                                model_id,
+                                e
+                            );
+                            errors.push(format!("{model_id}: {e}"));
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Task '{}' could not start model '{}': {}. Trying fallback...",
+                        request.task_type,
+                        model_id,
+                        e
+                    );
+                    errors.push(format!("{model_id}: {e}"));
+                }
+            }
+        }
+
+        Err(format!(
+            "All candidate models failed for task '{}': {}",
             request.task_type,
-            &request.request_id[..8.min(request.request_id.len())]
-        );
-
-        // Ensure model is running
-        let instance_id = self
-            .process_manager
-            .ensure_running(&model_id, is_ephemeral)
-            .await?;
-
-        // Execute
-        self.process_manager
-            .execute(&model_id, &instance_id, request)
-            .await
+            errors.join(" | ")
+        ))
         }) // end Box::pin
     }
 
     /// Resolve which model should handle a request.
     /// Checks the static registry first, then falls back to dynamically
     /// registered models in the ProcessManager.
-    async fn resolve_model(&self, request: &TaskRequest) -> Result<String, String> {
+    async fn resolve_model_candidates(&self, request: &TaskRequest) -> Result<Vec<String>, String> {
         // If the user specified a model override, use it
         if let Some(ref override_id) = request.model_override {
             // Check static registry first
             if self.registry.get(override_id).is_some() {
-                return Ok(override_id.clone());
+                return Ok(vec![override_id.clone()]);
             }
             // Check dynamic models in ProcessManager
             if self.process_manager.model_status(override_id).await.is_some() {
-                return Ok(override_id.clone());
+                return Ok(vec![override_id.clone()]);
             }
             return Err(format!("Model override '{override_id}' not found"));
         }
 
-        // Find the highest-priority model from the static registry
-        // that is actually available (its files exist — i.e. it was
-        // registered in the ProcessManager).
+        // Gather candidates by task priority from the static registry first,
+        // then append any dynamic runtime-only candidates.
         let candidates = self.registry.find_for_task(&request.task_type);
+        let mut resolved = Vec::new();
         for candidate in &candidates {
             // model_status returns None for models not in ProcessManager
             if self.process_manager.model_status(&candidate.id).await.is_some() {
-                return Ok(candidate.id.clone());
+                resolved.push(candidate.id.clone());
             }
         }
 
-        // Fall back to dynamically registered models
-        if let Some(dynamic_id) = self
-            .process_manager
-            .find_model_for_task(&request.task_type)
-            .await
-        {
-            return Ok(dynamic_id);
+        // Include all runtime candidates and deduplicate while preserving order.
+        for dynamic_id in self.process_manager.find_models_for_task(&request.task_type).await {
+            if !resolved.contains(&dynamic_id) {
+                resolved.push(dynamic_id);
+            }
         }
 
-        Err(format!(
-            "No model registered for task type '{}'",
-            request.task_type
-        ))
+        if resolved.is_empty() {
+            Err(format!(
+                "No model registered for task type '{}'",
+                request.task_type
+            ))
+        } else {
+            Ok(resolved)
+        }
     }
 
     /// Get the port of the llama-server instance for a given model
