@@ -63,27 +63,32 @@ fn detect_cache_type_arg_style(exe: &Path) -> CacheTypeArgStyle {
     static CACHE_STYLE: OnceLock<CacheTypeArgStyle> = OnceLock::new();
 
     *CACHE_STYLE.get_or_init(|| {
-        let out = Command::new(exe).arg("--help").output();
-        let text = match out {
-            Ok(o) => {
-                let mut s = String::new();
-                s.push_str(&String::from_utf8_lossy(&o.stdout));
-                s.push('\n');
-                s.push_str(&String::from_utf8_lossy(&o.stderr));
-                s
+        // Instead of running `llama-server --help` (which can hang for 20+ seconds
+        // on macOS due to Metal GPU initialisation), we scan the binary file for
+        // known flag strings.  This is effectively the same as running `strings(1)`
+        // but in-process and instantaneous.
+        match std::fs::read(exe) {
+            Ok(bytes) => {
+                // Search for ASCII flag strings embedded in the binary.
+                let has_split = bytes.windows(14).any(|w| w == b"--cache-type-k")
+                    || bytes.windows(4).any(|w| w == b"-ctk");
+                let has_combined = bytes.windows(14).any(|w| w == b"--cache-type\x00");
+
+                if has_split {
+                    log::info!("Detected split cache-type style (--cache-type-k/v) from binary");
+                    CacheTypeArgStyle::Split
+                } else if has_combined {
+                    log::info!("Detected combined cache-type style (--cache-type) from binary");
+                    CacheTypeArgStyle::Combined
+                } else {
+                    log::warn!("Could not detect cache-type style from binary; assuming split");
+                    CacheTypeArgStyle::Split
+                }
             }
             Err(e) => {
-                log::warn!("Could not inspect llama-server --help for cache flags: {e}");
-                String::new()
+                log::warn!("Could not read llama-server binary for cache flag detection: {e}");
+                CacheTypeArgStyle::Split // safe default for modern builds
             }
-        };
-
-        if text.contains("--cache-type ") {
-            CacheTypeArgStyle::Combined
-        } else if text.contains("--cache-type-k") || text.contains("-ctk,") {
-            CacheTypeArgStyle::Split
-        } else {
-            CacheTypeArgStyle::Unsupported
         }
     })
 }

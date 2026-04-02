@@ -46,6 +46,7 @@ export interface RegisteredModel {
   memory_mb: number;
   priority: number;
   is_downloaded: boolean;
+  model_file?: string;
   gdrive_id?: string | null;
   model_source?: string;
   model_profile?: string | null;

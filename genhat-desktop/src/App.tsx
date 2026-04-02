@@ -1180,15 +1180,15 @@ function App() {
   };
 
   const refreshModels = () => {
-    Api.listRegisteredModels()
-      .then((list) => {
+    Promise.all([Api.listRegisteredModels(), Api.listModels()])
+      .then(([list, legacyFiles]) => {
         setRegisteredModels(list);
         // Vision models
         const vision = list.filter((m) => m.tasks.includes("vision_chat"));
         setVisionModels(vision);
         if (vision.length > 0) setSelectedVisionModel(vision[0].id);
 
-        // Text models
+        // Text models from registry
         const chatModels = list
           .filter((m) => m.tasks.includes("chat"))
           .sort((a, b) => b.priority - a.priority)
@@ -1201,12 +1201,34 @@ function App() {
             is_downloaded: m.is_downloaded,
             gdrive_id: m.gdrive_id,
           }));
-        
-        setModels(chatModels);
-        if (chatModels.length > 0 && !selectedModel) {
-          setSelectedModel(chatModels[0].path);
-          // No need to call switchModel here — the backend already defaults
-          // to the highest-priority chat model from models.toml on startup.
+
+        // Also include unregistered .gguf files from the LLM folder so that
+        // manually placed or failed-to-import models still appear in the dropdown.
+        // switch_model will dynamically register them when selected.
+        const registeredFiles = new Set(
+          list.map((m) => m.id)
+        );
+        const registeredModelFiles = new Set(
+          list.map((m) => m.model_file).filter(Boolean)
+        );
+        const unregistered = legacyFiles
+          .filter(
+            (f) =>
+              !registeredFiles.has(f.path) &&
+              !registeredFiles.has(f.name) &&
+              !registeredModelFiles.has(`LLM/${f.name}`)
+          )
+          .map((f) => ({
+            name: `${f.name} (Unregistered)`,
+            path: f.path,
+            is_downloaded: true,
+            gdrive_id: null as string | null,
+          }));
+
+        const allChatModels = [...chatModels, ...unregistered];
+        setModels(allChatModels);
+        if (allChatModels.length > 0 && !selectedModel) {
+          setSelectedModel(allChatModels[0].path);
         }
 
         // TTS engines from the registry
