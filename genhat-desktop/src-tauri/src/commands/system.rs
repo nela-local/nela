@@ -15,9 +15,16 @@ pub fn get_system_specs() -> DeviceSpecs {
 /// Args:
 ///   - file_size_mb: Size of the model file in megabytes
 ///   - memory_mb: Optional known memory requirement (overrides estimation)
+///   - quantization: Optional quantization type (for logging/future use)
 #[tauri::command]
-pub fn check_compatibility(file_size_mb: u64, memory_mb: Option<u32>) -> ModelCompatibility {
+pub fn check_compatibility(file_size_mb: u64, memory_mb: Option<u32>, quantization: Option<String>) -> ModelCompatibility {
     let specs = get_device_specs();
+    
+    // Log quantization type if provided (for future enhancement)
+    if let Some(ref quant) = quantization {
+        log::debug!("Checking compatibility for {} quantization", quant);
+    }
+    
     check_model_compatibility(&specs, file_size_mb, memory_mb)
 }
 

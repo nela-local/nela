@@ -29,7 +29,18 @@ export interface HFRepoFile {
   oid: string;
   size: number;
   path: string;
+  file_name?: string;
   [key: string]: any;
+}
+
+/** Documented model requirements from README.md */
+export interface DocumentedRequirements {
+  minRAM?: number;        // GB
+  recommendedRAM?: number; // GB
+  minVRAM?: number;       // GB
+  contextLength?: number;
+  source: 'documented' | 'estimated';
+  notes?: string;
 }
 
 /** Device hardware specifications */
@@ -41,13 +52,23 @@ export interface DeviceSpecs {
   cpu_cores: number;
   cpu_model: string;
   os: string;
+  available_disk_gb: number;
+  total_disk_gb: number;
 }
 
 /** Model compatibility rating */
-export type CompatibilityRating = "good" | "medium" | "bad" | "unknown";
+export type CompatibilityRating = "efficient" | "satisfies" | "notrecommended" | "unknown";
 
 /** Model tier classification */
 export type ModelTier = "tiny" | "small" | "medium" | "large" | "verylarge";
+
+/** Detailed breakdown of compatibility factors */
+export interface CompatibilityDetails {
+  ram_check: string;
+  disk_check: string;
+  cpu_check: string;
+  performance_notes: string[];
+}
 
 /** Compatibility check result */
 export interface ModelCompatibility {
@@ -56,6 +77,13 @@ export interface ModelCompatibility {
   estimated_memory_mb: number;
   available_memory_mb: number;
   can_run: boolean;
+  disk_space_sufficient: boolean;
+  required_disk_gb: number;
+  available_disk_gb: number;
+  ram_usage_percent: number;
+  disk_usage_percent: number;
+  cpu_suitable: boolean;
+  details: CompatibilityDetails;
 }
 
 export const Api = {
@@ -601,6 +629,84 @@ export const Api = {
     return files.filter(f => f.type === "file" && f.path.endsWith(".gguf"));
   },
 
+  /**
+   * Try to fetch documented model requirements from README.md
+   */
+  async fetchModelDocumentation(repoId: string): Promise<DocumentedRequirements> {
+    try {
+      const res = await fetch(`https://huggingface.co/${repoId}/raw/main/README.md`);
+      if (!res.ok) {
+        return { source: 'estimated' };
+      }
+      
+      const readme = await res.text();
+      const result: DocumentedRequirements = { source: 'estimated' };
+      
+      // Try to parse various RAM requirement patterns
+      // Patterns like: "RAM: 8GB", "Requires 16GB RAM", "Minimum: 8 GB"
+      const ramPatterns = [
+        /(?:minimum|min|requires?|needs?|ram:?)\s*(?:~|≈)?\s*(\d+(?:\.\d+)?)\s*gb/gi,
+        /(\d+(?:\.\d+)?)\s*gb\s+(?:of\s+)?(?:ram|memory)/gi,
+        /(?:recommended|rec):?\s*(?:~|≈)?\s*(\d+(?:\.\d+)?)\s*gb/gi
+      ];
+      
+      for (const pattern of ramPatterns) {
+        const matches = [...readme.matchAll(pattern)];
+        for (const match of matches) {
+          const value = parseFloat(match[1]);
+          if (value > 0 && value < 1024) { // Sanity check
+            if (!result.minRAM || value < result.minRAM) {
+              result.minRAM = value;
+              result.source = 'documented';
+            }
+          }
+        }
+      }
+      
+      // Try to find recommended RAM
+      const recPatterns = [
+        /recommended:?\s*(?:~|≈)?\s*(\d+(?:\.\d+)?)\s*gb/gi,
+        /suggested:?\s*(?:~|≈)?\s*(\d+(?:\.\d+)?)\s*gb/gi
+      ];
+      
+      for (const pattern of recPatterns) {
+        const match = readme.match(pattern);
+        if (match) {
+          const value = parseFloat(match[1]);
+          if (value > 0 && value < 1024) {
+            result.recommendedRAM = value;
+            result.source = 'documented';
+          }
+        }
+      }
+      
+      // Try to find context length
+      const contextPatterns = [
+        /(?:context|ctx)(?:\s+length)?:?\s*(\d+)k?/gi,
+        /(\d+)k?\s+(?:context|tokens)/gi
+      ];
+      
+      for (const pattern of contextPatterns) {
+        const match = readme.match(pattern);
+        if (match) {
+          let value = parseInt(match[1]);
+          // If it says "8k context", multiply by 1024
+          if (readme.toLowerCase().includes(`${value}k`)) {
+            value *= 1024;
+          }
+          if (value >= 512 && value <= 128000) { // Sanity check
+            result.contextLength = value;
+          }
+        }
+      }
+      
+      return result;
+    } catch (e) {
+      console.error('Failed to fetch model documentation:', e);
+      return { source: 'estimated' };
+    }
+  },
+
   // ── System Info & Compatibility ─────────────────────────────────────────────
 
   /** Get device specifications (RAM, CPU, OS) */
@@ -609,10 +715,11 @@ export const Api = {
   },
 
   /** Check if a model is compatible with the current device */
-  async checkCompatibility(fileSizeMb: number, memoryMb?: number): Promise<ModelCompatibility> {
+  async checkCompatibility(fileSizeMb: number, memoryMb?: number, quantization?: string): Promise<ModelCompatibility> {
     return invoke<ModelCompatibility>("check_compatibility", {
       fileSizeMb,
       memoryMb: memoryMb ?? null,
+      quantization: quantization ?? null,
     });
   },
 
