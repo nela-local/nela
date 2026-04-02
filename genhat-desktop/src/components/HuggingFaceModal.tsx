@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { X, Search, Download, Loader2 } from "lucide-react";
 import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility, type DocumentedRequirements } from "../api";
 import type { ImportModelProfile } from "../types";
+import "./HuggingFaceModal.css";
 
 interface HuggingFaceModalProps {
   isOpen: boolean;
@@ -118,7 +119,7 @@ const CompatibilityDetailModal: React.FC<{
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+        <div className="hf-modal-scrollable compat-detail-scrollable p-6 space-y-6 max-h-[70vh] overflow-y-auto">
           {/* Model Info */}
           <div>
             <h4 className="text-sm font-medium text-txt-secondary mb-2">Model</h4>
@@ -294,15 +295,6 @@ const CompatibilityDetailModal: React.FC<{
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex justify-end gap-3 p-4 border-t border-glass-border bg-void-800">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-void-900 hover:bg-void text-txt border border-glass-border rounded-lg transition-colors"
-          >
-            Close
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -614,7 +606,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
 
         <div className="flex-1 flex overflow-hidden">
           {/* Left panel: Search results */}
-          <div className="w-1/2 border-r border-glass-border overflow-y-auto p-4 flex flex-col gap-2">
+          <div className="hf-modal-scrollable w-1/2 border-r border-glass-border overflow-y-auto p-4 flex flex-col gap-2">
             {isSearching ? (
               <div className="flex justify-center py-8 text-txt-secondary"><Loader2 className="animate-spin" size={24}/></div>
             ) : results.length > 0 ? (
@@ -637,7 +629,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           </div>
 
           {/* Right panel: Repo files */}
-          <div className="w-1/2 overflow-y-auto p-4 bg-void-800/30">
+          <div className="hf-modal-scrollable w-1/2 overflow-y-auto p-4 bg-void-800/30">
             {selectedRepo ? (
               <div className="flex flex-col gap-4">
                 <h3 className="font-semibold text-txt wrap-break-word text-lg">{selectedRepo}</h3>
