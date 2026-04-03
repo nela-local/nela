@@ -184,6 +184,8 @@ fn main() {
             app_lib::commands::system::check_compatibility,
             app_lib::commands::system::get_model_tier,
             app_lib::commands::system::estimate_model_memory,
+            app_lib::commands::system::detect_quantization,
+            app_lib::commands::system::detect_model_params,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

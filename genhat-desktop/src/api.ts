@@ -51,13 +51,16 @@ export interface DeviceSpecs {
   available_ram_gb: number;
   cpu_cores: number;
   cpu_model: string;
+  cpu_has_avx2: boolean;
   os: string;
   available_disk_gb: number;
   total_disk_gb: number;
+  /** The models directory path being used for disk space calculation */
+  models_dir: string;
 }
 
 /** Model compatibility rating */
-export type CompatibilityRating = "efficient" | "satisfies" | "notrecommended" | "unknown";
+export type CompatibilityRating = "efficient" | "usable" | "veryslow" | "notrecommended" | "wontrun" | "unknown";
 
 /** Model tier classification */
 export type ModelTier = "tiny" | "small" | "medium" | "large" | "verylarge";
@@ -68,6 +71,35 @@ export interface CompatibilityDetails {
   disk_check: string;
   cpu_check: string;
   performance_notes: string[];
+}
+
+/** Detailed calculation breakdown for transparency */
+export interface CompatibilityCalculation {
+  model_params: string;
+  quant_level: string;
+  base_fp16_size_gb: number;
+  quant_multiplier: number;
+  estimated_file_size_gb: number;
+  actual_file_size_gb: number;
+  ram_multiplier: number;
+  required_ram_gb: number;
+  available_ram_gb: number;
+  total_ram_gb: number;
+  ram_decision: string;
+  cpu_cores: number;
+  cpu_has_avx2: boolean;
+  cpu_score: number;
+  model_factor: number;
+  quant_boost: number;
+  perf_score: number;
+  perf_classification: string;
+  assumed_context: number;
+}
+
+/** Suggested alternative model */
+export interface AlternativeModel {
+  suggestion: string;
+  reason: string;
 }
 
 /** Compatibility check result */
@@ -84,6 +116,8 @@ export interface ModelCompatibility {
   disk_usage_percent: number;
   cpu_suitable: boolean;
   details: CompatibilityDetails;
+  calculation: CompatibilityCalculation;
+  alternative: AlternativeModel | null;
 }
 
 export const Api = {
@@ -709,17 +743,25 @@ export const Api = {
 
   // ── System Info & Compatibility ─────────────────────────────────────────────
 
-  /** Get device specifications (RAM, CPU, OS) */
+  /** Get device specifications (RAM, CPU, OS, AVX2 support) */
   async getSystemSpecs(): Promise<DeviceSpecs> {
     return invoke<DeviceSpecs>("get_system_specs");
   },
 
   /** Check if a model is compatible with the current device */
-  async checkCompatibility(fileSizeMb: number, memoryMb?: number, quantization?: string): Promise<ModelCompatibility> {
+  async checkCompatibility(
+    fileSizeMb: number, 
+    memoryMb?: number, 
+    quantization?: string,
+    filename?: string,
+    contextLength?: number,
+  ): Promise<ModelCompatibility> {
     return invoke<ModelCompatibility>("check_compatibility", {
       fileSizeMb,
       memoryMb: memoryMb ?? null,
       quantization: quantization ?? null,
+      filename: filename ?? null,
+      contextLength: contextLength ?? null,
     });
   },
 
@@ -731,6 +773,16 @@ export const Api = {
   /** Estimate memory requirements for a model based on its file size */
   async estimateModelMemory(fileSizeMb: number): Promise<number> {
     return invoke<number>("estimate_model_memory", { fileSizeMb });
+  },
+  
+  /** Detect quantization level from filename */
+  async detectQuantization(filename: string): Promise<string> {
+    return invoke<string>("detect_quantization", { filename });
+  },
+  
+  /** Detect model parameter size from filename */
+  async detectModelParams(filename: string): Promise<string> {
+    return invoke<string>("detect_model_params", { filename });
   },
 };
 function convertFileSrc(filePath: string): string {

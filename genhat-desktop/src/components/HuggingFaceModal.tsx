@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { X, Search, Download, Loader2 } from "lucide-react";
+import { X, Search, Download, Loader2, CheckCircle, AlertTriangle, XCircle, Ban, HelpCircle, Cpu, HardDrive, MemoryStick, Zap, Info, Lightbulb } from "lucide-react";
 import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility, type DocumentedRequirements } from "../api";
 import type { ImportModelProfile } from "../types";
 import "./HuggingFaceModal.css";
@@ -51,33 +51,56 @@ function getQuantizationInfo(quant: string | null): { multiplier: number; name: 
   return quantInfo[quant] || { multiplier: 1.30, name: quant.toUpperCase() };
 }
 
-/** Compatibility badge component */
+/** Rating icon component */
+const RatingIcon: React.FC<{ rating: string; size?: number }> = ({ rating, size = 12 }) => {
+  switch (rating) {
+    case 'efficient':
+      return <CheckCircle size={size} />;
+    case 'usable':
+      return <AlertTriangle size={size} />;
+    case 'veryslow':
+      return <AlertTriangle size={size} />;
+    case 'notrecommended':
+      return <XCircle size={size} />;
+    case 'wontrun':
+      return <Ban size={size} />;
+    default:
+      return <HelpCircle size={size} />;
+  }
+};
+
+/** Compatibility badge component - shows rating with icon */
 const CompatibilityBadge: React.FC<{ compatibility: ModelCompatibility; onClick?: () => void }> = ({ compatibility, onClick }) => {
-  const colors = {
+  const colors: Record<string, string> = {
     efficient: "bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30",
-    satisfies: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30",
+    usable: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30",
+    veryslow: "bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30",
     notrecommended: "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30",
+    wontrun: "bg-red-700/20 text-red-500 border-red-700/30 hover:bg-red-700/30",
     unknown: "bg-gray-500/20 text-gray-400 border-gray-500/30 hover:bg-gray-500/30",
   };
-  const labels = {
-    efficient: "✓ Efficient",
-    satisfies: "⚠ Satisfies",
-    notrecommended: "✗ Not Recommended",
-    unknown: "? Unknown",
+  const labels: Record<string, string> = {
+    efficient: "Efficient",
+    usable: "Usable",
+    veryslow: "Very Slow",
+    notrecommended: "Not Recommended",
+    wontrun: "Won't Run",
+    unknown: "Unknown",
   };
   
   return (
     <button
       onClick={onClick}
-      className={`px-2 py-0.5 text-xs font-medium rounded border transition-colors cursor-pointer ${colors[compatibility.rating]}`}
+      className={`px-2 py-0.5 text-xs font-medium rounded border transition-colors cursor-pointer flex items-center gap-1 ${colors[compatibility.rating] || colors.unknown}`}
       title="Click for detailed compatibility analysis"
     >
-      {labels[compatibility.rating]}
+      <RatingIcon rating={compatibility.rating} size={11} />
+      <span>{labels[compatibility.rating] || labels.unknown}</span>
     </button>
   );
 };
 
-/** Detailed compatibility modal */
+/** Detailed compatibility modal - shows full calculation breakdown */
 const CompatibilityDetailModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -89,30 +112,36 @@ const CompatibilityDetailModal: React.FC<{
 }> = ({ isOpen, onClose, compatibility, modelName, deviceSpecs, actualFileSizeBytes, documentedReqs }) => {
   if (!isOpen) return null;
 
-  const ratingColors = {
+  const ratingColors: Record<string, string> = {
     efficient: "text-green-400",
-    satisfies: "text-yellow-400",
+    usable: "text-yellow-400",
+    veryslow: "text-orange-400",
     notrecommended: "text-red-400",
+    wontrun: "text-red-500",
     unknown: "text-gray-400",
   };
 
-  const ratingLabels = {
+  const ratingLabels: Record<string, string> = {
     efficient: "Efficient",
-    satisfies: "Satisfies",
+    usable: "Usable",
+    veryslow: "Very Slow",
     notrecommended: "Not Recommended",
+    wontrun: "Won't Run",
     unknown: "Unknown",
   };
 
   const actualFileSizeGB = actualFileSizeBytes / (1024 * 1024 * 1024);
-  const quant = detectQuantization(modelName);
-  const quantInfo = getQuantizationInfo(quant);
+  const calc = compatibility.calculation;
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-void-900 border border-glass-border rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-glass-border bg-void-800">
-          <h3 className="text-lg font-semibold text-txt">Compatibility Analysis</h3>
+          <h3 className="text-lg font-semibold text-txt flex items-center gap-2">
+            <Info size={18} />
+            Compatibility Analysis
+          </h3>
           <button onClick={onClose} className="text-txt-secondary hover:text-txt transition-colors">
             <X size={20} />
           </button>
@@ -126,33 +155,17 @@ const CompatibilityDetailModal: React.FC<{
             <p className="text-txt font-medium break-all">{modelName}</p>
             <div className="flex flex-col gap-1 mt-2 text-xs">
               <div className="flex justify-between">
-                <span className="text-txt-muted">File Size:</span>
-                <span className="text-txt">{actualFileSizeGB.toFixed(2)} GB</span>
+                <span className="text-txt-muted">Actual File Size:</span>
+                <span className="text-txt font-medium">{actualFileSizeGB.toFixed(2)} GB</span>
               </div>
-              {quant && (
-                <div className="flex justify-between">
-                  <span className="text-txt-muted">Quantization:</span>
-                  <span className="text-txt">{quantInfo.name}</span>
-                </div>
-              )}
               <div className="flex justify-between">
-                <span className="text-txt-muted">RAM Estimate Method:</span>
-                <span className="text-txt">{documentedReqs?.source === 'documented' ? '📄 Documented' : (quant ? 'Quant-aware' : 'File-size based')}</span>
+                <span className="text-txt-muted">Detected Parameters:</span>
+                <span className="text-txt">{calc.model_params}</span>
               </div>
-            </div>
-            <div className="mt-2 p-2 bg-void-800/50 border border-glass-border rounded text-xs text-txt-secondary">
-              {documentedReqs?.source === 'documented' ? (
-                <>
-                  <span className="text-green-400">✓</span> RAM requirements found in model documentation. 
-                  {documentedReqs.minRAM && ` Minimum: ${documentedReqs.minRAM}GB`}
-                  {documentedReqs.recommendedRAM && `, Recommended: ${documentedReqs.recommendedRAM}GB`}
-                </>
-              ) : (
-                <>
-                  <span className="text-yellow-400">ℹ</span> RAM requirements are estimated {quant ? `using ${quantInfo.name} characteristics` : 'from file size'}. 
-                  Actual usage may vary ±20% based on context length and batch size.
-                </>
-              )}
+              <div className="flex justify-between">
+                <span className="text-txt-muted">Quantization:</span>
+                <span className="text-txt">{calc.quant_level}</span>
+              </div>
             </div>
           </div>
 
@@ -160,106 +173,120 @@ const CompatibilityDetailModal: React.FC<{
           <div>
             <h4 className="text-sm font-medium text-txt-secondary mb-2">Overall Rating</h4>
             <div className="flex items-center gap-3">
-              <span className={`text-2xl font-bold ${ratingColors[compatibility.rating]}`}>
-                {ratingLabels[compatibility.rating]}
+              <RatingIcon rating={compatibility.rating} size={24} />
+              <span className={`text-2xl font-bold ${ratingColors[compatibility.rating] || ratingColors.unknown}`}>
+                {ratingLabels[compatibility.rating] || ratingLabels.unknown}
               </span>
-              <span className="text-sm text-txt-secondary">{compatibility.reason}</span>
             </div>
+            <p className="text-sm text-txt-secondary mt-2">{compatibility.reason}</p>
           </div>
 
-          {/* System Requirements Comparison */}
+          {/* Calculation Breakdown */}
           <div>
-            <h4 className="text-sm font-medium text-txt-secondary mb-3">System Requirements vs Your System</h4>
-            <div className="space-y-3">
-              {/* RAM */}
-              <div className="bg-void border border-glass-border rounded-lg p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <span className="text-sm font-medium text-txt">Memory (RAM)</span>
-                  <span className="text-xs text-txt-secondary">
-                    {compatibility.ram_usage_percent.toFixed(1)}% usage
-                  </span>
+            <h4 className="text-sm font-medium text-txt-secondary mb-3 flex items-center gap-2">
+              <Zap size={14} />
+              How We Calculated This
+            </h4>
+            
+            {/* File Size Estimation */}
+            <div className="bg-void border border-glass-border rounded-lg p-4 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <HardDrive size={14} className="text-txt-secondary" />
+                <span className="text-sm font-medium text-txt">1. File Size Estimation</span>
+              </div>
+              <div className="space-y-1 text-xs font-mono bg-void-900 p-3 rounded">
+                <div className="text-txt-muted">Base FP16 size ({calc.model_params}): <span className="text-neon">{calc.base_fp16_size_gb.toFixed(1)} GB</span></div>
+                <div className="text-txt-muted">Quant multiplier ({calc.quant_level}): <span className="text-neon">x{calc.quant_multiplier.toFixed(2)}</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">Estimated size: <span className="text-txt">{calc.estimated_file_size_gb.toFixed(2)} GB</span> <span className="text-txt-muted">(= {calc.base_fp16_size_gb.toFixed(1)} x {calc.quant_multiplier.toFixed(2)})</span></div>
+                <div className="text-txt-muted">Actual size: <span className="text-txt font-bold">{calc.actual_file_size_gb.toFixed(2)} GB</span></div>
+                {Math.abs(calc.estimated_file_size_gb - calc.actual_file_size_gb) > 0.5 && (
+                  <div className="text-txt-muted mt-2 text-[10px] italic">
+                    Note: Difference due to model architecture variations. Actual size used for calculations.
+                  </div>
+                )}
+              </div>
+              
+              {/* Disk Space Info */}
+              <div className="mt-3 text-xs bg-void-800/50 p-3 rounded border border-glass-border">
+                <div className="flex items-center gap-2 text-txt-secondary mb-2">
+                  <HardDrive size={12} />
+                  <span className="font-medium">Download Location</span>
                 </div>
-                <p className="text-sm text-txt-secondary mb-2">{compatibility.details.ram_check}</p>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Required:</span>
-                    <span className="text-txt">{(compatibility.estimated_memory_mb / 1024).toFixed(1)} GB</span>
+                <div className="space-y-1 font-mono">
+                  <div className="text-txt-muted">Models directory: <span className="text-txt break-all">{deviceSpecs.models_dir}</span></div>
+                  <div className="text-txt-muted">Drive: <span className="text-txt">{deviceSpecs.models_dir.slice(0, 2)}</span></div>
+                  <div className="text-txt-muted">Required space: <span className="text-yellow-400">{calc.estimated_file_size_gb.toFixed(2)} GB</span> <span className="text-txt-muted">(estimated file size)</span></div>
+                  <div className="text-txt-muted">Available space: <span className="text-txt">{deviceSpecs.available_disk_gb.toFixed(1)} GB</span></div>
+                  <div className={`font-bold flex items-center gap-1 ${compatibility.disk_space_sufficient ? 'text-green-400' : 'text-red-400'}`}>
+                    {compatibility.disk_space_sufficient ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                    <span>Status: {compatibility.disk_space_sufficient ? 'Sufficient' : 'Insufficient'}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Available:</span>
-                    <span className="text-txt">{deviceSpecs.available_ram_gb.toFixed(1)} GB</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Total:</span>
-                    <span className="text-txt">{deviceSpecs.total_ram_gb.toFixed(1)} GB</span>
-                  </div>
-                </div>
-                {/* Progress bar */}
-                <div className="mt-3 h-2 w-full bg-void-900 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full transition-all ${
-                      compatibility.ram_usage_percent < 60 ? 'bg-green-500' :
-                      compatibility.ram_usage_percent < 80 ? 'bg-yellow-500' : 'bg-red-500'
-                    }`}
-                    style={{ width: `${Math.min(compatibility.ram_usage_percent, 100)}%` }}
-                  />
                 </div>
               </div>
+            </div>
 
-              {/* Disk Space */}
-              <div className="bg-void border border-glass-border rounded-lg p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <span className="text-sm font-medium text-txt">Disk Space</span>
-                  <span className="text-xs text-txt-secondary">
-                    {compatibility.disk_usage_percent.toFixed(1)}% usage
-                  </span>
-                </div>
-                <p className="text-sm text-txt-secondary mb-2">{compatibility.details.disk_check}</p>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Model File Size:</span>
-                    <span className="text-txt">{actualFileSizeGB.toFixed(2)} GB</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Required (2× file):</span>
-                    <span className="text-txt">{compatibility.required_disk_gb.toFixed(2)} GB</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Available:</span>
-                    <span className="text-txt">{compatibility.available_disk_gb.toFixed(1)} GB</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Total Disk:</span>
-                    <span className="text-txt">{deviceSpecs.total_disk_gb.toFixed(1)} GB</span>
-                  </div>
-                </div>
-                {/* Progress bar */}
-                <div className="mt-3 h-2 w-full bg-void-900 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full transition-all ${
-                      compatibility.disk_space_sufficient ? 'bg-green-500' : 'bg-red-500'
-                    }`}
-                    style={{ width: `${Math.min(compatibility.disk_usage_percent, 100)}%` }}
-                  />
+            {/* RAM Estimation */}
+            <div className="bg-void border border-glass-border rounded-lg p-4 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <MemoryStick size={14} className="text-txt-secondary" />
+                <span className="text-sm font-medium text-txt">2. RAM Requirement</span>
+              </div>
+              <div className="space-y-1 text-xs font-mono bg-void-900 p-3 rounded">
+                <div className="text-txt-muted">Actual file size: <span className="text-txt">{calc.actual_file_size_gb.toFixed(2)} GB</span></div>
+                <div className="text-txt-muted">RAM multiplier: <span className="text-neon">x{calc.ram_multiplier.toFixed(1)}</span> {calc.assumed_context >= 8192 ? '(large context)' : '(standard context)'}</div>
+                <div className="text-txt-muted">Context assumed: <span className="text-txt">{calc.assumed_context.toLocaleString()} tokens</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">Required RAM: <span className="text-yellow-400 font-bold">{calc.required_ram_gb.toFixed(1)} GB</span> <span className="text-txt-muted">(= {calc.actual_file_size_gb.toFixed(2)} x {calc.ram_multiplier.toFixed(1)})</span></div>
+                <div className="text-txt-muted">Your total RAM: <span className="text-txt">{calc.total_ram_gb.toFixed(1)} GB</span></div>
+                <div className="text-txt-muted">Your available RAM: <span className="text-txt">{calc.available_ram_gb.toFixed(1)} GB</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className={`font-bold flex items-center gap-1 ${calc.ram_decision === 'OK' ? 'text-green-400' : calc.ram_decision === 'NOT_RECOMMENDED' ? 'text-yellow-400' : 'text-red-400'}`}>
+                  {calc.ram_decision === 'OK' ? <CheckCircle size={12} /> : calc.ram_decision === 'NOT_RECOMMENDED' ? <AlertTriangle size={12} /> : <XCircle size={12} />}
+                  <span>Decision: {calc.ram_decision === 'OK' ? 'OK' : calc.ram_decision === 'NOT_RECOMMENDED' ? 'Not Recommended' : 'Do Not Download'}</span>
                 </div>
               </div>
+            </div>
 
-              {/* CPU */}
-              <div className="bg-void border border-glass-border rounded-lg p-4">
-                <span className="text-sm font-medium text-txt block mb-2">Processor (CPU)</span>
-                <p className="text-sm text-txt-secondary mb-2">{compatibility.details.cpu_check}</p>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Cores:</span>
-                    <span className="text-txt">{deviceSpecs.cpu_cores}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-txt-muted">Model:</span>
-                    <span className="text-txt truncate max-w-[200px]" title={deviceSpecs.cpu_model}>
-                      {deviceSpecs.cpu_model}
-                    </span>
-                  </div>
+            {/* CPU Performance */}
+            <div className="bg-void border border-glass-border rounded-lg p-4 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Cpu size={14} className="text-txt-secondary" />
+                <span className="text-sm font-medium text-txt">3. CPU Performance Score</span>
+              </div>
+              <div className="space-y-1 text-xs font-mono bg-void-900 p-3 rounded">
+                <div className="text-txt-muted">CPU cores: <span className="text-txt">{calc.cpu_cores}</span></div>
+                <div className="text-txt-muted flex items-center gap-1">
+                  AVX2 support: 
+                  <span className={`flex items-center gap-1 ${calc.cpu_has_avx2 ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {calc.cpu_has_avx2 ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                    {calc.cpu_has_avx2 ? 'Yes (x1.0)' : 'No (x0.5)'}
+                  </span>
                 </div>
+                <div className="text-txt-muted">CPU score: <span className="text-txt">{calc.cpu_score.toFixed(1)}</span> <span className="text-txt-muted">(= {calc.cpu_cores} x {calc.cpu_has_avx2 ? '1.0' : '0.5'})</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">Model factor ({calc.model_params}): <span className="text-txt">{calc.model_factor.toFixed(1)}</span></div>
+                <div className="text-txt-muted">Quant boost ({calc.quant_level}): <span className="text-neon">x{calc.quant_boost.toFixed(2)}</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">
+                  Performance score: <span className="text-yellow-400 font-bold">{calc.perf_score.toFixed(2)}</span>
+                  <span className="text-txt-muted ml-2">(= ({calc.cpu_score.toFixed(1)} / {calc.model_factor.toFixed(1)}) x {calc.quant_boost.toFixed(2)})</span>
+                </div>
+                <div className={`font-bold flex items-center gap-1 ${calc.perf_score >= 2 ? 'text-green-400' : calc.perf_score >= 1 ? 'text-yellow-400' : calc.perf_score >= 0.5 ? 'text-orange-400' : 'text-red-400'}`}>
+                  <Zap size={12} />
+                  <span>Classification: {calc.perf_classification}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Scoring Guide */}
+            <div className="text-xs text-txt-muted bg-void-800/50 p-3 rounded border border-glass-border">
+              <div className="font-medium text-txt-secondary mb-1">Performance Score Guide:</div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="flex items-center gap-1"><CheckCircle size={10} className="text-green-400" /> &gt;= 2.0: Efficient (Fast)</span>
+                <span className="flex items-center gap-1"><AlertTriangle size={10} className="text-yellow-400" /> &gt;= 1.0: Usable</span>
+                <span className="flex items-center gap-1"><AlertTriangle size={10} className="text-orange-400" /> &gt;= 0.5: Very Slow</span>
+                <span className="flex items-center gap-1"><XCircle size={10} className="text-red-400" /> &lt; 0.5: Not Recommended</span>
               </div>
             </div>
           </div>
@@ -267,11 +294,14 @@ const CompatibilityDetailModal: React.FC<{
           {/* Performance Notes */}
           {compatibility.details.performance_notes.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium text-txt-secondary mb-2">Performance Notes</h4>
+              <h4 className="text-sm font-medium text-txt-secondary mb-2 flex items-center gap-2">
+                <Info size={14} />
+                Performance Notes
+              </h4>
               <ul className="space-y-2">
                 {compatibility.details.performance_notes.map((note, idx) => (
                   <li key={idx} className="flex items-start gap-2 text-sm text-txt-secondary">
-                    <span className="text-yellow-400 mt-0.5">•</span>
+                    <AlertTriangle size={12} className="text-yellow-400 mt-0.5 shrink-0" />
                     <span>{note}</span>
                   </li>
                 ))}
@@ -279,16 +309,34 @@ const CompatibilityDetailModal: React.FC<{
             </div>
           )}
 
+          {/* Alternative Recommendation */}
+          {compatibility.alternative && (
+            <div className="bg-neon/10 border border-neon/30 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-neon mb-2 flex items-center gap-2">
+                <Lightbulb size={14} />
+                Recommended Alternative
+              </h4>
+              <p className="text-sm text-txt">
+                <span className="font-medium">{compatibility.alternative.suggestion}</span>
+              </p>
+              <p className="text-xs text-txt-secondary mt-1">{compatibility.alternative.reason}</p>
+            </div>
+          )}
+
           {/* Recommendation */}
           <div className="bg-void-800 border border-glass-border rounded-lg p-4">
-            <h4 className="text-sm font-medium text-txt mb-2">Recommendation</h4>
+            <h4 className="text-sm font-medium text-txt mb-2">Summary</h4>
             <p className="text-sm text-txt-secondary">
               {compatibility.rating === "efficient" && 
                 "Your system is well-suited for this model. You can expect smooth performance and quick response times."}
-              {compatibility.rating === "satisfies" && 
-                "Your system meets the minimum requirements. The model should work, but you may experience slower performance during inference."}
+              {compatibility.rating === "usable" && 
+                "This model will work on your system with acceptable performance. You may notice some delays during inference."}
+              {compatibility.rating === "veryslow" && 
+                "This model will run very slowly on your system. Consider a smaller model or lower quantization for better experience."}
               {compatibility.rating === "notrecommended" && 
-                "Your system may struggle with this model. Consider choosing a smaller model or upgrading your hardware for better performance."}
+                "This model is not recommended for your system. Performance will be poor and may cause system instability."}
+              {compatibility.rating === "wontrun" && 
+                "This model cannot run on your system due to insufficient resources. Please choose a smaller model."}
               {compatibility.rating === "unknown" && 
                 "Unable to determine compatibility. Please verify your system specifications."}
             </p>
@@ -350,23 +398,29 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
         
         // Detect quantization for more accurate estimation
         const quant = detectQuantization(filename);
-        const quantInfo = getQuantizationInfo(quant);
         
         // Prefer documented requirements over estimation
-        let estimatedRAMMB: number;
+        let estimatedRAMMB: number | undefined;
+        let contextLength: number | undefined;
         
         if (documentedRequirements?.source === 'documented' && documentedRequirements.minRAM) {
           // Use documented RAM requirement
           estimatedRAMMB = Math.round(documentedRequirements.minRAM * 1024);
-        } else {
-          // Calculate quant-aware RAM estimate
-          const fileSizeGB = file.size / (1024 * 1024 * 1024);
-          const estimatedRAMGB = (fileSizeGB * quantInfo.multiplier) + 0.5;
-          estimatedRAMMB = Math.round(estimatedRAMGB * 1024);
+        }
+        
+        if (documentedRequirements?.contextLength) {
+          contextLength = documentedRequirements.contextLength;
         }
         
         try {
-          const compat = await Api.checkCompatibility(fileSizeMb, estimatedRAMMB, quant || undefined);
+          // Pass filename to backend for better model detection
+          const compat = await Api.checkCompatibility(
+            fileSizeMb, 
+            estimatedRAMMB, 
+            quant || undefined, 
+            filename,
+            contextLength
+          );
           if (isMounted) {
             results[file.oid] = compat;
           }
@@ -562,19 +616,24 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           <div className="flex items-center gap-4">
             {deviceSpecs && (
               <div className="flex gap-3 text-xs">
-                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border">
-                  <span className="text-txt-muted">RAM:</span>{" "}
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5">
+                  <MemoryStick size={12} className="text-txt-muted" />
                   <span className="text-txt">{deviceSpecs.available_ram_gb.toFixed(1)}</span>
                   <span className="text-txt-muted">/{deviceSpecs.total_ram_gb.toFixed(1)} GB</span>
                 </div>
-                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border">
-                  <span className="text-txt-muted">Disk:</span>{" "}
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5" title={`Models dir: ${deviceSpecs.models_dir}`}>
+                  <HardDrive size={12} className="text-txt-muted" />
+                  <span className="text-txt-muted">{deviceSpecs.models_dir.slice(0, 2)}</span>
                   <span className="text-txt">{deviceSpecs.available_disk_gb.toFixed(1)}</span>
                   <span className="text-txt-muted">/{deviceSpecs.total_disk_gb.toFixed(1)} GB</span>
                 </div>
-                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border">
-                  <span className="text-txt-muted">CPU:</span>{" "}
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5">
+                  <Cpu size={12} className="text-txt-muted" />
                   <span className="text-txt">{deviceSpecs.cpu_cores} cores</span>
+                  <span className={`flex items-center gap-0.5 ${deviceSpecs.cpu_has_avx2 ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {deviceSpecs.cpu_has_avx2 ? <CheckCircle size={10} /> : <AlertTriangle size={10} />}
+                    {deviceSpecs.cpu_has_avx2 ? 'AVX2' : 'No AVX2'}
+                  </span>
                 </div>
               </div>
             )}
