@@ -25,32 +25,6 @@ function detectQuantization(filename: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
-/** Get quantization-specific RAM multiplier for more accurate estimation */
-function getQuantizationInfo(quant: string | null): { multiplier: number; name: string } {
-  if (!quant) return { multiplier: 1.30, name: 'Unknown' };
-  
-  const quantInfo: Record<string, { multiplier: number; name: string }> = {
-    'q2_k': { multiplier: 1.15, name: 'Q2_K (Very compressed)' },
-    'q3_k_s': { multiplier: 1.20, name: 'Q3_K_S' },
-    'q3_k_m': { multiplier: 1.25, name: 'Q3_K_M' },
-    'q3_k_l': { multiplier: 1.25, name: 'Q3_K_L' },
-    'q4_0': { multiplier: 1.30, name: 'Q4_0' },
-    'q4_1': { multiplier: 1.30, name: 'Q4_1' },
-    'q4_k_s': { multiplier: 1.28, name: 'Q4_K_S' },
-    'q4_k_m': { multiplier: 1.32, name: 'Q4_K_M (Common)' },
-    'q5_0': { multiplier: 1.35, name: 'Q5_0' },
-    'q5_1': { multiplier: 1.35, name: 'Q5_1' },
-    'q5_k_s': { multiplier: 1.38, name: 'Q5_K_S' },
-    'q5_k_m': { multiplier: 1.42, name: 'Q5_K_M' },
-    'q6_k': { multiplier: 1.48, name: 'Q6_K' },
-    'q8_0': { multiplier: 1.55, name: 'Q8_0 (High quality)' },
-    'f16': { multiplier: 1.60, name: 'F16 (Half precision)' },
-    'f32': { multiplier: 2.00, name: 'F32 (Full precision)' },
-  };
-  
-  return quantInfo[quant] || { multiplier: 1.30, name: quant.toUpperCase() };
-}
-
 /** Rating icon component */
 const RatingIcon: React.FC<{ rating: string; size?: number }> = ({ rating, size = 12 }) => {
   switch (rating) {
@@ -109,7 +83,7 @@ const CompatibilityDetailModal: React.FC<{
   deviceSpecs: DeviceSpecs;
   actualFileSizeBytes: number;
   documentedReqs?: DocumentedRequirements | null;
-}> = ({ isOpen, onClose, compatibility, modelName, deviceSpecs, actualFileSizeBytes, documentedReqs }) => {
+}> = ({ isOpen, onClose, compatibility, modelName, deviceSpecs, actualFileSizeBytes, documentedReqs: _documentedReqs }) => {
   if (!isOpen) return null;
 
   const ratingColors: Record<string, string> = {
@@ -160,11 +134,11 @@ const CompatibilityDetailModal: React.FC<{
               </div>
               <div className="flex justify-between">
                 <span className="text-txt-muted">Detected Parameters:</span>
-                <span className="text-txt">{calc.model_params}</span>
+                <span className="text-txt">{calc?.model_params ?? "Unknown"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-txt-muted">Quantization:</span>
-                <span className="text-txt">{calc.quant_level}</span>
+                <span className="text-txt">{calc?.quant_level ?? "Unknown"}</span>
               </div>
             </div>
           </div>
@@ -182,6 +156,7 @@ const CompatibilityDetailModal: React.FC<{
           </div>
 
           {/* Calculation Breakdown */}
+          {calc && (
           <div>
             <h4 className="text-sm font-medium text-txt-secondary mb-3 flex items-center gap-2">
               <Zap size={14} />
@@ -214,8 +189,8 @@ const CompatibilityDetailModal: React.FC<{
                   <span className="font-medium">Download Location</span>
                 </div>
                 <div className="space-y-1 font-mono">
-                  <div className="text-txt-muted">Models directory: <span className="text-txt break-all">{deviceSpecs.models_dir}</span></div>
-                  <div className="text-txt-muted">Drive: <span className="text-txt">{deviceSpecs.models_dir.slice(0, 2)}</span></div>
+                  <div className="text-txt-muted">Models directory: <span className="text-txt break-all">{deviceSpecs.models_dir ?? "N/A"}</span></div>
+                  <div className="text-txt-muted">Drive: <span className="text-txt">{deviceSpecs.models_dir ? deviceSpecs.models_dir.slice(0, 2) : "N/A"}</span></div>
                   <div className="text-txt-muted">Required space: <span className="text-yellow-400">{calc.estimated_file_size_gb.toFixed(2)} GB</span> <span className="text-txt-muted">(estimated file size)</span></div>
                   <div className="text-txt-muted">Available space: <span className="text-txt">{deviceSpecs.available_disk_gb.toFixed(1)} GB</span></div>
                   <div className={`font-bold flex items-center gap-1 ${compatibility.disk_space_sufficient ? 'text-green-400' : 'text-red-400'}`}>
@@ -290,6 +265,7 @@ const CompatibilityDetailModal: React.FC<{
               </div>
             </div>
           </div>
+          )}
 
           {/* Performance Notes */}
           {compatibility.details.performance_notes.length > 0 && (
@@ -329,7 +305,7 @@ const CompatibilityDetailModal: React.FC<{
             <p className="text-sm text-txt-secondary">
               {compatibility.rating === "efficient" && 
                 "Your system is well-suited for this model. You can expect smooth performance and quick response times."}
-              {compatibility.rating === "usable" && 
+              {(compatibility.rating === "usable" || compatibility.rating === "satisfies") && 
                 "This model will work on your system with acceptable performance. You may notice some delays during inference."}
               {compatibility.rating === "veryslow" && 
                 "This model will run very slowly on your system. Consider a smaller model or lower quantization for better experience."}
@@ -621,9 +597,9 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
                   <span className="text-txt">{deviceSpecs.available_ram_gb.toFixed(1)}</span>
                   <span className="text-txt-muted">/{deviceSpecs.total_ram_gb.toFixed(1)} GB</span>
                 </div>
-                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5" title={`Models dir: ${deviceSpecs.models_dir}`}>
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5" title={`Models dir: ${deviceSpecs.models_dir ?? "N/A"}`}>
                   <HardDrive size={12} className="text-txt-muted" />
-                  <span className="text-txt-muted">{deviceSpecs.models_dir.slice(0, 2)}</span>
+                  <span className="text-txt-muted">{deviceSpecs.models_dir ? deviceSpecs.models_dir.slice(0, 2) : "N/A"}</span>
                   <span className="text-txt">{deviceSpecs.available_disk_gb.toFixed(1)}</span>
                   <span className="text-txt-muted">/{deviceSpecs.total_disk_gb.toFixed(1)} GB</span>
                 </div>

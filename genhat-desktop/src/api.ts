@@ -50,17 +50,24 @@ export interface DeviceSpecs {
   total_ram_gb: number;
   available_ram_gb: number;
   cpu_cores: number;
+  cpu_has_avx2?: boolean;
   cpu_model: string;
-  cpu_has_avx2: boolean;
   os: string;
   available_disk_gb: number;
   total_disk_gb: number;
   /** The models directory path being used for disk space calculation */
-  models_dir: string;
+  models_dir?: string;
 }
 
 /** Model compatibility rating */
-export type CompatibilityRating = "efficient" | "usable" | "veryslow" | "notrecommended" | "wontrun" | "unknown";
+export type CompatibilityRating =
+  | "efficient"
+  | "usable"
+  | "veryslow"
+  | "satisfies"
+  | "notrecommended"
+  | "wontrun"
+  | "unknown";
 
 /** Model tier classification */
 export type ModelTier = "tiny" | "small" | "medium" | "large" | "verylarge";
@@ -71,35 +78,6 @@ export interface CompatibilityDetails {
   disk_check: string;
   cpu_check: string;
   performance_notes: string[];
-}
-
-/** Detailed calculation breakdown for transparency */
-export interface CompatibilityCalculation {
-  model_params: string;
-  quant_level: string;
-  base_fp16_size_gb: number;
-  quant_multiplier: number;
-  estimated_file_size_gb: number;
-  actual_file_size_gb: number;
-  ram_multiplier: number;
-  required_ram_gb: number;
-  available_ram_gb: number;
-  total_ram_gb: number;
-  ram_decision: string;
-  cpu_cores: number;
-  cpu_has_avx2: boolean;
-  cpu_score: number;
-  model_factor: number;
-  quant_boost: number;
-  perf_score: number;
-  perf_classification: string;
-  assumed_context: number;
-}
-
-/** Suggested alternative model */
-export interface AlternativeModel {
-  suggestion: string;
-  reason: string;
 }
 
 /** Compatibility check result */
@@ -116,8 +94,39 @@ export interface ModelCompatibility {
   disk_usage_percent: number;
   cpu_suitable: boolean;
   details: CompatibilityDetails;
-  calculation: CompatibilityCalculation;
-  alternative: AlternativeModel | null;
+  calculation?: {
+    model_params: string;
+    quant_level: string;
+    base_fp16_size_gb: number;
+    quant_multiplier: number;
+    estimated_file_size_gb: number;
+    actual_file_size_gb: number;
+    ram_multiplier: number;
+    assumed_context: number;
+    required_ram_gb: number;
+    total_ram_gb: number;
+    available_ram_gb: number;
+    ram_decision: "OK" | "NOT_RECOMMENDED" | "DO_NOT_DOWNLOAD" | string;
+    cpu_cores: number;
+    cpu_has_avx2: boolean;
+    cpu_score: number;
+    model_factor: number;
+    quant_boost: number;
+    perf_score: number;
+    perf_classification: string;
+  };
+  alternative?: {
+    suggestion: string;
+    reason: string;
+  };
+}
+
+export interface GgufMetadata {
+  [key: string]: unknown;
+}
+
+export interface PerformanceScore {
+  [key: string]: unknown;
 }
 
 export const Api = {
@@ -783,6 +792,36 @@ export const Api = {
   /** Detect model parameter size from filename */
   async detectModelParams(filename: string): Promise<string> {
     return invoke<string>("detect_model_params", { filename });
+  },
+
+  /** Parse GGUF file and extract metadata (params, quant, context) */
+  async parseModelMetadata(modelPath: string): Promise<GgufMetadata> {
+    return invoke<GgufMetadata>("parse_model_metadata", { modelPath });
+  },
+
+  /** Calculate performance score for a model based on GGUF metadata */
+  async calculateModelPerformance(modelPath: string): Promise<PerformanceScore> {
+    return invoke<PerformanceScore>("calculate_model_performance", { modelPath });
+  },
+
+  /** Enhanced compatibility check with performance scoring */
+  async checkCompatibilityWithPerformance(
+    modelPath: string | null,
+    fileSizeMb: number,
+    memoryMb?: number
+  ): Promise<ModelCompatibility> {
+    return invoke<ModelCompatibility>("check_compatibility_with_performance", {
+      modelPath,
+      fileSizeMb,
+      memoryMb: memoryMb ?? null,
+    });
+  },
+
+  /** Batch check compatibility for multiple models */
+  async batchCheckCompatibility(
+    models: Array<[string, number]> // [path, file_size_mb]
+  ): Promise<Array<[string, ModelCompatibility]>> {
+    return invoke("batch_check_compatibility", { models });
   },
 };
 function convertFileSrc(filePath: string): string {
