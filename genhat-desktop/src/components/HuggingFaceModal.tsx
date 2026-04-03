@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { X, Search, Download, Loader2 } from "lucide-react";
-import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility } from "../api";
+import { X, Search, Download, Loader2, CheckCircle, AlertTriangle, XCircle, Ban, HelpCircle, Cpu, HardDrive, MemoryStick, Zap, Info, Lightbulb } from "lucide-react";
+import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility, type DocumentedRequirements } from "../api";
 import type { ImportModelProfile } from "../types";
+import "./HuggingFaceModal.css";
 
 interface HuggingFaceModalProps {
   isOpen: boolean;
@@ -18,28 +19,308 @@ const CATEGORIES: { label: string; folder: string }[] = [
   { label: "STT", folder: "parakeet" },
 ];
 
-/** Compatibility badge component */
-const CompatibilityBadge: React.FC<{ compatibility: ModelCompatibility }> = ({ compatibility }) => {
-  const colors = {
-    good: "bg-green-500/20 text-green-400 border-green-500/30",
-    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    bad: "bg-red-500/20 text-red-400 border-red-500/30",
-    unknown: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+/** Detect quantization level from GGUF filename */
+function detectQuantization(filename: string): string | null {
+  const match = filename.match(/-(q\d+_[km]_[ms]|q\d+_\d+|q\d+_k|f16|f32)\.gguf$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** Rating icon component */
+const RatingIcon: React.FC<{ rating: string; size?: number }> = ({ rating, size = 12 }) => {
+  switch (rating) {
+    case 'efficient':
+      return <CheckCircle size={size} />;
+    case 'usable':
+      return <AlertTriangle size={size} />;
+    case 'veryslow':
+      return <AlertTriangle size={size} />;
+    case 'notrecommended':
+      return <XCircle size={size} />;
+    case 'wontrun':
+      return <Ban size={size} />;
+    default:
+      return <HelpCircle size={size} />;
+  }
+};
+
+/** Compatibility badge component - shows rating with icon */
+const CompatibilityBadge: React.FC<{ compatibility: ModelCompatibility; onClick?: () => void }> = ({ compatibility, onClick }) => {
+  const colors: Record<string, string> = {
+    efficient: "bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30",
+    usable: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30",
+    veryslow: "bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30",
+    notrecommended: "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30",
+    wontrun: "bg-red-700/20 text-red-500 border-red-700/30 hover:bg-red-700/30",
+    unknown: "bg-gray-500/20 text-gray-400 border-gray-500/30 hover:bg-gray-500/30",
   };
-  const labels = {
-    good: "✓ Good",
-    medium: "⚠ Medium",
-    bad: "✗ Slow",
-    unknown: "? Unknown",
+  const labels: Record<string, string> = {
+    efficient: "Efficient",
+    usable: "Usable",
+    veryslow: "Very Slow",
+    notrecommended: "Not Recommended",
+    wontrun: "Won't Run",
+    unknown: "Unknown",
   };
   
   return (
-    <span
-      className={`px-2 py-0.5 text-xs font-medium rounded border ${colors[compatibility.rating]}`}
-      title={compatibility.reason}
+    <button
+      onClick={onClick}
+      className={`px-2 py-0.5 text-xs font-medium rounded border transition-colors cursor-pointer flex items-center gap-1 ${colors[compatibility.rating] || colors.unknown}`}
+      title="Click for detailed compatibility analysis"
     >
-      {labels[compatibility.rating]}
-    </span>
+      <RatingIcon rating={compatibility.rating} size={11} />
+      <span>{labels[compatibility.rating] || labels.unknown}</span>
+    </button>
+  );
+};
+
+/** Detailed compatibility modal - shows full calculation breakdown */
+const CompatibilityDetailModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  compatibility: ModelCompatibility;
+  modelName: string;
+  deviceSpecs: DeviceSpecs;
+  actualFileSizeBytes: number;
+  documentedReqs?: DocumentedRequirements | null;
+}> = ({ isOpen, onClose, compatibility, modelName, deviceSpecs, actualFileSizeBytes, documentedReqs: _documentedReqs }) => {
+  if (!isOpen) return null;
+
+  const ratingColors: Record<string, string> = {
+    efficient: "text-green-400",
+    usable: "text-yellow-400",
+    veryslow: "text-orange-400",
+    notrecommended: "text-red-400",
+    wontrun: "text-red-500",
+    unknown: "text-gray-400",
+  };
+
+  const ratingLabels: Record<string, string> = {
+    efficient: "Efficient",
+    usable: "Usable",
+    veryslow: "Very Slow",
+    notrecommended: "Not Recommended",
+    wontrun: "Won't Run",
+    unknown: "Unknown",
+  };
+
+  const actualFileSizeGB = actualFileSizeBytes / (1024 * 1024 * 1024);
+  const calc = compatibility.calculation;
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-void-900 border border-glass-border rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-glass-border bg-void-800">
+          <h3 className="text-lg font-semibold text-txt flex items-center gap-2">
+            <Info size={18} />
+            Compatibility Analysis
+          </h3>
+          <button onClick={onClose} className="text-txt-secondary hover:text-txt transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="hf-modal-scrollable compat-detail-scrollable p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+          {/* Model Info */}
+          <div>
+            <h4 className="text-sm font-medium text-txt-secondary mb-2">Model</h4>
+            <p className="text-txt font-medium break-all">{modelName}</p>
+            <div className="flex flex-col gap-1 mt-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-txt-muted">Actual File Size:</span>
+                <span className="text-txt font-medium">{actualFileSizeGB.toFixed(2)} GB</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-txt-muted">Detected Parameters:</span>
+                <span className="text-txt">{calc?.model_params ?? "Unknown"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-txt-muted">Quantization:</span>
+                <span className="text-txt">{calc?.quant_level ?? "Unknown"}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Overall Rating */}
+          <div>
+            <h4 className="text-sm font-medium text-txt-secondary mb-2">Overall Rating</h4>
+            <div className="flex items-center gap-3">
+              <RatingIcon rating={compatibility.rating} size={24} />
+              <span className={`text-2xl font-bold ${ratingColors[compatibility.rating] || ratingColors.unknown}`}>
+                {ratingLabels[compatibility.rating] || ratingLabels.unknown}
+              </span>
+            </div>
+            <p className="text-sm text-txt-secondary mt-2">{compatibility.reason}</p>
+          </div>
+
+          {/* Calculation Breakdown */}
+          {calc && (
+          <div>
+            <h4 className="text-sm font-medium text-txt-secondary mb-3 flex items-center gap-2">
+              <Zap size={14} />
+              How We Calculated This
+            </h4>
+            
+            {/* File Size Estimation */}
+            <div className="bg-void border border-glass-border rounded-lg p-4 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <HardDrive size={14} className="text-txt-secondary" />
+                <span className="text-sm font-medium text-txt">1. File Size Estimation</span>
+              </div>
+              <div className="space-y-1 text-xs font-mono bg-void-900 p-3 rounded">
+                <div className="text-txt-muted">Base FP16 size ({calc.model_params}): <span className="text-neon">{calc.base_fp16_size_gb.toFixed(1)} GB</span></div>
+                <div className="text-txt-muted">Quant multiplier ({calc.quant_level}): <span className="text-neon">x{calc.quant_multiplier.toFixed(2)}</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">Estimated size: <span className="text-txt">{calc.estimated_file_size_gb.toFixed(2)} GB</span> <span className="text-txt-muted">(= {calc.base_fp16_size_gb.toFixed(1)} x {calc.quant_multiplier.toFixed(2)})</span></div>
+                <div className="text-txt-muted">Actual size: <span className="text-txt font-bold">{calc.actual_file_size_gb.toFixed(2)} GB</span></div>
+                {Math.abs(calc.estimated_file_size_gb - calc.actual_file_size_gb) > 0.5 && (
+                  <div className="text-txt-muted mt-2 text-[10px] italic">
+                    Note: Difference due to model architecture variations. Actual size used for calculations.
+                  </div>
+                )}
+              </div>
+              
+              {/* Disk Space Info */}
+              <div className="mt-3 text-xs bg-void-800/50 p-3 rounded border border-glass-border">
+                <div className="flex items-center gap-2 text-txt-secondary mb-2">
+                  <HardDrive size={12} />
+                  <span className="font-medium">Download Location</span>
+                </div>
+                <div className="space-y-1 font-mono">
+                  <div className="text-txt-muted">Models directory: <span className="text-txt break-all">{deviceSpecs.models_dir ?? "N/A"}</span></div>
+                  <div className="text-txt-muted">Drive: <span className="text-txt">{deviceSpecs.models_dir ? deviceSpecs.models_dir.slice(0, 2) : "N/A"}</span></div>
+                  <div className="text-txt-muted">Required space: <span className="text-yellow-400">{calc.estimated_file_size_gb.toFixed(2)} GB</span> <span className="text-txt-muted">(estimated file size)</span></div>
+                  <div className="text-txt-muted">Available space: <span className="text-txt">{deviceSpecs.available_disk_gb.toFixed(1)} GB</span></div>
+                  <div className={`font-bold flex items-center gap-1 ${compatibility.disk_space_sufficient ? 'text-green-400' : 'text-red-400'}`}>
+                    {compatibility.disk_space_sufficient ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                    <span>Status: {compatibility.disk_space_sufficient ? 'Sufficient' : 'Insufficient'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* RAM Estimation */}
+            <div className="bg-void border border-glass-border rounded-lg p-4 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <MemoryStick size={14} className="text-txt-secondary" />
+                <span className="text-sm font-medium text-txt">2. RAM Requirement</span>
+              </div>
+              <div className="space-y-1 text-xs font-mono bg-void-900 p-3 rounded">
+                <div className="text-txt-muted">Actual file size: <span className="text-txt">{calc.actual_file_size_gb.toFixed(2)} GB</span></div>
+                <div className="text-txt-muted">RAM multiplier: <span className="text-neon">x{calc.ram_multiplier.toFixed(1)}</span> {calc.assumed_context >= 8192 ? '(large context)' : '(standard context)'}</div>
+                <div className="text-txt-muted">Context assumed: <span className="text-txt">{calc.assumed_context.toLocaleString()} tokens</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">Required RAM: <span className="text-yellow-400 font-bold">{calc.required_ram_gb.toFixed(1)} GB</span> <span className="text-txt-muted">(= {calc.actual_file_size_gb.toFixed(2)} x {calc.ram_multiplier.toFixed(1)})</span></div>
+                <div className="text-txt-muted">Your total RAM: <span className="text-txt">{calc.total_ram_gb.toFixed(1)} GB</span></div>
+                <div className="text-txt-muted">Your available RAM: <span className="text-txt">{calc.available_ram_gb.toFixed(1)} GB</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className={`font-bold flex items-center gap-1 ${calc.ram_decision === 'OK' ? 'text-green-400' : calc.ram_decision === 'NOT_RECOMMENDED' ? 'text-yellow-400' : 'text-red-400'}`}>
+                  {calc.ram_decision === 'OK' ? <CheckCircle size={12} /> : calc.ram_decision === 'NOT_RECOMMENDED' ? <AlertTriangle size={12} /> : <XCircle size={12} />}
+                  <span>Decision: {calc.ram_decision === 'OK' ? 'OK' : calc.ram_decision === 'NOT_RECOMMENDED' ? 'Not Recommended' : 'Do Not Download'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CPU Performance */}
+            <div className="bg-void border border-glass-border rounded-lg p-4 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Cpu size={14} className="text-txt-secondary" />
+                <span className="text-sm font-medium text-txt">3. CPU Performance Score</span>
+              </div>
+              <div className="space-y-1 text-xs font-mono bg-void-900 p-3 rounded">
+                <div className="text-txt-muted">CPU cores: <span className="text-txt">{calc.cpu_cores}</span></div>
+                <div className="text-txt-muted flex items-center gap-1">
+                  AVX2 support: 
+                  <span className={`flex items-center gap-1 ${calc.cpu_has_avx2 ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {calc.cpu_has_avx2 ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                    {calc.cpu_has_avx2 ? 'Yes (x1.0)' : 'No (x0.5)'}
+                  </span>
+                </div>
+                <div className="text-txt-muted">CPU score: <span className="text-txt">{calc.cpu_score.toFixed(1)}</span> <span className="text-txt-muted">(= {calc.cpu_cores} x {calc.cpu_has_avx2 ? '1.0' : '0.5'})</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">Model factor ({calc.model_params}): <span className="text-txt">{calc.model_factor.toFixed(1)}</span></div>
+                <div className="text-txt-muted">Quant boost ({calc.quant_level}): <span className="text-neon">x{calc.quant_boost.toFixed(2)}</span></div>
+                <div className="border-t border-glass-border my-2"></div>
+                <div className="text-txt-muted">
+                  Performance score: <span className="text-yellow-400 font-bold">{calc.perf_score.toFixed(2)}</span>
+                  <span className="text-txt-muted ml-2">(= ({calc.cpu_score.toFixed(1)} / {calc.model_factor.toFixed(1)}) x {calc.quant_boost.toFixed(2)})</span>
+                </div>
+                <div className={`font-bold flex items-center gap-1 ${calc.perf_score >= 2 ? 'text-green-400' : calc.perf_score >= 1 ? 'text-yellow-400' : calc.perf_score >= 0.5 ? 'text-orange-400' : 'text-red-400'}`}>
+                  <Zap size={12} />
+                  <span>Classification: {calc.perf_classification}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Scoring Guide */}
+            <div className="text-xs text-txt-muted bg-void-800/50 p-3 rounded border border-glass-border">
+              <div className="font-medium text-txt-secondary mb-1">Performance Score Guide:</div>
+              <div className="grid grid-cols-2 gap-1">
+                <span className="flex items-center gap-1"><CheckCircle size={10} className="text-green-400" /> &gt;= 2.0: Efficient (Fast)</span>
+                <span className="flex items-center gap-1"><AlertTriangle size={10} className="text-yellow-400" /> &gt;= 1.0: Usable</span>
+                <span className="flex items-center gap-1"><AlertTriangle size={10} className="text-orange-400" /> &gt;= 0.5: Very Slow</span>
+                <span className="flex items-center gap-1"><XCircle size={10} className="text-red-400" /> &lt; 0.5: Not Recommended</span>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* Performance Notes */}
+          {compatibility.details.performance_notes.length > 0 && (
+            <div>
+              <h4 className="text-sm font-medium text-txt-secondary mb-2 flex items-center gap-2">
+                <Info size={14} />
+                Performance Notes
+              </h4>
+              <ul className="space-y-2">
+                {compatibility.details.performance_notes.map((note, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-sm text-txt-secondary">
+                    <AlertTriangle size={12} className="text-yellow-400 mt-0.5 shrink-0" />
+                    <span>{note}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Alternative Recommendation */}
+          {compatibility.alternative && (
+            <div className="bg-neon/10 border border-neon/30 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-neon mb-2 flex items-center gap-2">
+                <Lightbulb size={14} />
+                Recommended Alternative
+              </h4>
+              <p className="text-sm text-txt">
+                <span className="font-medium">{compatibility.alternative.suggestion}</span>
+              </p>
+              <p className="text-xs text-txt-secondary mt-1">{compatibility.alternative.reason}</p>
+            </div>
+          )}
+
+          {/* Recommendation */}
+          <div className="bg-void-800 border border-glass-border rounded-lg p-4">
+            <h4 className="text-sm font-medium text-txt mb-2">Summary</h4>
+            <p className="text-sm text-txt-secondary">
+              {compatibility.rating === "efficient" && 
+                "Your system is well-suited for this model. You can expect smooth performance and quick response times."}
+              {(compatibility.rating === "usable" || compatibility.rating === "satisfies") && 
+                "This model will work on your system with acceptable performance. You may notice some delays during inference."}
+              {compatibility.rating === "veryslow" && 
+                "This model will run very slowly on your system. Consider a smaller model or lower quantization for better experience."}
+              {compatibility.rating === "notrecommended" && 
+                "This model is not recommended for your system. Performance will be poor and may cause system instability."}
+              {compatibility.rating === "wontrun" && 
+                "This model cannot run on your system due to insufficient resources. Please choose a smaller model."}
+              {compatibility.rating === "unknown" && 
+                "Unable to determine compatibility. Please verify your system specifications."}
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </div>
   );
 };
 
@@ -65,6 +346,13 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
   // Device specs and compatibility
   const [deviceSpecs, setDeviceSpecs] = useState<DeviceSpecs | null>(null);
   const [fileCompatibility, setFileCompatibility] = useState<Record<string, ModelCompatibility>>({});
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedCompatibility, setSelectedCompatibility] = useState<{
+    compatibility: ModelCompatibility;
+    modelName: string;
+    fileSizeBytes: number;
+  } | null>(null);
+  const [documentedRequirements, setDocumentedRequirements] = useState<DocumentedRequirements | null>(null);
 
   // Fetch device specs on mount
   useEffect(() => {
@@ -81,9 +369,34 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
     const checkCompatibility = async () => {
       const results: Record<string, ModelCompatibility> = {};
       for (const file of repoFiles) {
+        const filename = file.file_name || file.path.split('/').pop() || file.path;
         const fileSizeMb = Math.round(file.size / (1024 * 1024));
+        
+        // Detect quantization for more accurate estimation
+        const quant = detectQuantization(filename);
+        
+        // Prefer documented requirements over estimation
+        let estimatedRAMMB: number | undefined;
+        let contextLength: number | undefined;
+        
+        if (documentedRequirements?.source === 'documented' && documentedRequirements.minRAM) {
+          // Use documented RAM requirement
+          estimatedRAMMB = Math.round(documentedRequirements.minRAM * 1024);
+        }
+        
+        if (documentedRequirements?.contextLength) {
+          contextLength = documentedRequirements.contextLength;
+        }
+        
         try {
-          const compat = await Api.checkCompatibility(fileSizeMb);
+          // Pass filename to backend for better model detection
+          const compat = await Api.checkCompatibility(
+            fileSizeMb, 
+            estimatedRAMMB, 
+            quant || undefined, 
+            filename,
+            contextLength
+          );
           if (isMounted) {
             results[file.oid] = compat;
           }
@@ -98,7 +411,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
     
     checkCompatibility();
     return () => { isMounted = false; };
-  }, [repoFiles, deviceSpecs]);
+  }, [repoFiles, deviceSpecs, documentedRequirements]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -154,10 +467,19 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
     setIsFetchingFiles(true);
     setRepoFiles([]);
     setCurrentPage(1);
+    setDocumentedRequirements(null);
+    
     try {
-      const files = await Api.getHuggingFaceRepoFiles(repoId);
+      // Fetch files and documentation in parallel
+      const [files, docReqs] = await Promise.all([
+        Api.getHuggingFaceRepoFiles(repoId),
+        Api.fetchModelDocumentation(repoId)
+      ]);
+      
       const ggufs = files.filter(f => f.path.endsWith(".gguf"));
       setRepoFiles(ggufs);
+      setDocumentedRequirements(docReqs);
+      
       const mmproj = ggufs
         .map((f) => f.file_name || f.path.split("/").pop() || f.path)
         .find((name) => name.toLowerCase().includes("mmproj"));
@@ -269,10 +591,26 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           </h2>
           <div className="flex items-center gap-4">
             {deviceSpecs && (
-              <div className="text-xs text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border">
-                <span className="text-txt-muted">RAM:</span>{" "}
-                <span className="text-txt">{deviceSpecs.available_ram_gb.toFixed(1)}</span>
-                <span className="text-txt-muted">/{deviceSpecs.total_ram_gb.toFixed(1)} GB available</span>
+              <div className="flex gap-3 text-xs">
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5">
+                  <MemoryStick size={12} className="text-txt-muted" />
+                  <span className="text-txt">{deviceSpecs.available_ram_gb.toFixed(1)}</span>
+                  <span className="text-txt-muted">/{deviceSpecs.total_ram_gb.toFixed(1)} GB</span>
+                </div>
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5" title={`Models dir: ${deviceSpecs.models_dir ?? "N/A"}`}>
+                  <HardDrive size={12} className="text-txt-muted" />
+                  <span className="text-txt-muted">{deviceSpecs.models_dir ? deviceSpecs.models_dir.slice(0, 2) : "N/A"}</span>
+                  <span className="text-txt">{deviceSpecs.available_disk_gb.toFixed(1)}</span>
+                  <span className="text-txt-muted">/{deviceSpecs.total_disk_gb.toFixed(1)} GB</span>
+                </div>
+                <div className="text-txt-secondary bg-void-900 px-3 py-1.5 rounded-lg border border-glass-border flex items-center gap-1.5">
+                  <Cpu size={12} className="text-txt-muted" />
+                  <span className="text-txt">{deviceSpecs.cpu_cores} cores</span>
+                  <span className={`flex items-center gap-0.5 ${deviceSpecs.cpu_has_avx2 ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {deviceSpecs.cpu_has_avx2 ? <CheckCircle size={10} /> : <AlertTriangle size={10} />}
+                    {deviceSpecs.cpu_has_avx2 ? 'AVX2' : 'No AVX2'}
+                  </span>
+                </div>
               </div>
             )}
             <button onClick={onClose} className="text-txt-secondary hover:text-txt transition-colors">
@@ -303,7 +641,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
 
         <div className="flex-1 flex overflow-hidden">
           {/* Left panel: Search results */}
-          <div className="w-1/2 border-r border-glass-border overflow-y-auto p-4 flex flex-col gap-2">
+          <div className="hf-modal-scrollable w-1/2 border-r border-glass-border overflow-y-auto p-4 flex flex-col gap-2">
             {isSearching ? (
               <div className="flex justify-center py-8 text-txt-secondary"><Loader2 className="animate-spin" size={24}/></div>
             ) : results.length > 0 ? (
@@ -326,7 +664,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           </div>
 
           {/* Right panel: Repo files */}
-          <div className="w-1/2 overflow-y-auto p-4 bg-void-800/30">
+          <div className="hf-modal-scrollable w-1/2 overflow-y-auto p-4 bg-void-800/30">
             {selectedRepo ? (
               <div className="flex flex-col gap-4">
                 <h3 className="font-semibold text-txt wrap-break-word text-lg">{selectedRepo}</h3>
@@ -396,7 +734,19 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
                             <div className="flex justify-between items-start gap-2">
                               <span className="text-sm font-medium text-txt break-all">{filename}</span>
                               <div className="flex items-center gap-2 shrink-0">
-                                {compat && <CompatibilityBadge compatibility={compat} />}
+                                {compat && deviceSpecs && (
+                                  <CompatibilityBadge 
+                                    compatibility={compat} 
+                                    onClick={() => {
+                                      setSelectedCompatibility({ 
+                                        compatibility: compat, 
+                                        modelName: filename,
+                                        fileSizeBytes: file.size 
+                                      });
+                                      setDetailModalOpen(true);
+                                    }}
+                                  />
+                                )}
                                 <span className="text-xs text-txt-secondary whitespace-nowrap">{(file.size / 1024 / 1024 / 1024).toFixed(2)} GB</span>
                               </div>
                             </div>
@@ -471,6 +821,19 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           </div>
         </div>
       </div>
+
+      {/* Compatibility Detail Modal */}
+      {selectedCompatibility && deviceSpecs && (
+        <CompatibilityDetailModal
+          isOpen={detailModalOpen}
+          onClose={() => setDetailModalOpen(false)}
+          compatibility={selectedCompatibility.compatibility}
+          modelName={selectedCompatibility.modelName}
+          deviceSpecs={deviceSpecs}
+          actualFileSizeBytes={selectedCompatibility.fileSizeBytes}
+          documentedReqs={documentedRequirements}
+        />
+      )}
     </div>
   );
 }

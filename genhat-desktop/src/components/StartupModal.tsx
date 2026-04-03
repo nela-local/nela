@@ -116,7 +116,11 @@ const StartupModal: React.FC<StartupModalProps> = ({
                 }
               >
                 <ArrowRight size={16} />
-                <span>{canContinueWorkspace ? "Continue Workspace" : "No Existing Workspace"}</span>
+                <span>
+                  {canContinueWorkspace
+                    ? `Continue ${continueWorkspaceName ?? "Workspace"}`
+                    : "No Existing Workspace"}
+                </span>
               </button>
 
               <button

@@ -1,0 +1,86 @@
+/* HuggingFace Modal Scrollbar Styling */
+
+/* Custom scrollbar for webkit browsers (Chrome, Safari, Edge) */
+.hf-modal-scrollable::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.hf-modal-scrollable::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+}
+
+.hf-modal-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.3);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.hf-modal-scrollable::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.5);
+}
+
+.hf-modal-scrollable::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 212, 255, 0.7);
+}
+
+/* For Firefox */
+.hf-modal-scrollable {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.3) rgba(255, 255, 255, 0.03);
+}
+
+/* Compatibility detail modal scrollbar */
+.compat-detail-scrollable::-webkit-scrollbar {
+  width: 6px;
+}
+
+.compat-detail-scrollable::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 3px;
+}
+
+.compat-detail-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.25);
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+
+.compat-detail-scrollable::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.45);
+}
+
+.compat-detail-scrollable::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 212, 255, 0.65);
+}
+
+/* For Firefox */
+.compat-detail-scrollable {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.25) rgba(255, 255, 255, 0.02);
+}
+
+/* Hover effect for scrollable areas */
+.hf-modal-scrollable:hover::-webkit-scrollbar-thumb,
+.compat-detail-scrollable:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.4);
+}
+
+/* Glow effect when scrolling */
+@keyframes scrollbar-glow {
+  0% {
+    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+  }
+}
+
+.hf-modal-scrollable::-webkit-scrollbar-thumb:active,
+.compat-detail-scrollable::-webkit-scrollbar-thumb:active {
+  animation: scrollbar-glow 0.5s ease-in-out;
+}

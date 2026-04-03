@@ -289,6 +289,7 @@ function App() {
   const [workspaceScope, setWorkspaceScope] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceRecord | null>(null);
+  const [startupContinueWorkspace, setStartupContinueWorkspace] = useState<WorkspaceRecord | null>(null);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [modelLoadingStatus, setModelLoadingStatus] = useState<{
     loading: boolean;
@@ -552,26 +553,10 @@ function App() {
     };
   }, []);
 
-  // Resolve workspace scope key once so session history is isolated per workspace.
+  // Start from a neutral scope and let startup actions choose the real workspace scope.
   useEffect(() => {
-    let cancelled = false;
-    Api.getWorkspaceScope()
-      .then((scope) => {
-        if (!cancelled) {
-          setSessionStoreReady(false);
-          setWorkspaceScope(scope || "workspace:default");
-        }
-      })
-      .catch((err) => {
-        console.warn("Failed to resolve workspace scope, using fallback:", err);
-        if (!cancelled) {
-          setWorkspaceScope("workspace:default");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    setSessionStoreReady(false);
+    setWorkspaceScope("workspace:none");
   }, []);
 
   useEffect(() => {
@@ -582,12 +567,10 @@ function App() {
           Api.getActiveWorkspace().catch(() => null),
         ]);
         setWorkspaces(all);
-        setActiveWorkspace(active);
-        if (active) {
-          const scope = await Api.getWorkspaceScope().catch(() => `workspace:${active.id}`);
-          setWorkspaceScope(scope || `workspace:${active.id}`);
-          await loadRagDocs();
-        }
+        setStartupContinueWorkspace(
+          active && all.some((workspace) => workspace.id === active.id) ? active : null
+        );
+        setActiveWorkspace(null);
       } catch (err) {
         console.warn("Failed to initialize workspace state:", err);
       }
@@ -908,12 +891,19 @@ function App() {
         setActiveMindmapOverlay(null);
         setRagDocs([]);
 
-        const scope = await Api.getWorkspaceScope();
-        setActiveWorkspace(nextActiveFromBackend);
-        setWorkspaceScope(scope || `workspace:${nextActiveFromBackend.id}`);
-
-        await refreshWorkspaceRegistry();
-        await loadRagDocs();
+        if (nextActiveFromBackend) {
+          const scope = await Api.getWorkspaceScope();
+          setActiveWorkspace(nextActiveFromBackend);
+          setWorkspaceScope(scope || `workspace:${nextActiveFromBackend.id}`);
+          await refreshWorkspaceRegistry();
+          await loadRagDocs();
+        } else {
+          setActiveWorkspace(null);
+          setStartupContinueWorkspace(null);
+          setWorkspaceScope("workspace:none");
+          await refreshWorkspaceListOnly();
+          setSessionStoreReady(true);
+        }
       } catch (err) {
         console.error("Failed to delete workspace:", err);
         setSessionStoreReady(true);
@@ -2046,14 +2036,6 @@ function App() {
   };
 
   const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
-  const mostRecentWorkspace = workspaces.length > 0
-    ? [...workspaces].sort((a, b) => {
-        const timeA = a.last_opened_at || a.created_at || 0;
-        const timeB = b.last_opened_at || b.created_at || 0;
-        return timeB - timeA;
-      })[0]
-    : null;
-
   const handleStartupAction = async (action: () => Promise<void>) => {
     await action();
     if (downloadOptionalOnStart) {
@@ -2061,9 +2043,14 @@ function App() {
     }
   };
 
+  const canContinueStartupWorkspace = !!(
+    startupContinueWorkspace &&
+    workspaces.some((workspace) => workspace.id === startupContinueWorkspace.id)
+  );
+
   const continueExistingWorkspace = () => {
-    if (!mostRecentWorkspace) return;
-    void handleStartupAction(() => switchWorkspaceById(mostRecentWorkspace.id));
+    if (!startupContinueWorkspace || !canContinueStartupWorkspace) return;
+    void handleStartupAction(() => switchWorkspaceById(startupContinueWorkspace.id));
   };
 
   const createWorkspaceFromStartup = () => {
@@ -2111,8 +2098,8 @@ function App() {
       {showStartupModal && (
         <StartupModal
           onContinueWorkspace={continueExistingWorkspace}
-          canContinueWorkspace={!!mostRecentWorkspace}
-          continueWorkspaceName={mostRecentWorkspace?.name ?? null}
+          canContinueWorkspace={canContinueStartupWorkspace}
+          continueWorkspaceName={startupContinueWorkspace?.name ?? null}
           onNewProject={createWorkspaceFromStartup}
           onImportProject={importWorkspaceFromStartup}
           downloadOptionalOnStart={downloadOptionalOnStart}

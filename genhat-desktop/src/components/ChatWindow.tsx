@@ -612,7 +612,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           const isNew = idx >= prevMsgCount;
           return (
             <React.Fragment key={idx}>
-              <div className={`${isNew ? "animate-msg-fade" : ""} flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+              <div className={`${isNew ? "animate-msg-fade" : ""} flex gap-3 mb-6 max-w-3xl mx-auto ${msg.role === "user" ? "justify-end" : ""}`}>
                 {msg.role === "user" ? (
                   <>
                     <div className="flex flex-col items-end flex-1 min-w-0">
