@@ -259,6 +259,29 @@ export const Api = {
     return invoke("transcribe_audio", { audioPath });
   },
 
+  /**
+   * Transcribe audio from base64-encoded WAV data.
+   * Used for real-time voice input from the browser's microphone.
+   */
+  async transcribeAudioBase64(audioBase64: string): Promise<string> {
+    return invoke<string>("transcribe_audio_base64", { audioBase64 });
+  },
+
+  /**
+   * Generate a speech chunk for streaming TTS.
+   * Returns a base64-encoded WAV audio chunk.
+   */
+  async generateSpeechChunk(
+    text: string,
+    options?: { voice?: string; speed?: number }
+  ): Promise<string> {
+    return invoke<string>("generate_speech_chunk", {
+      text,
+      voice: options?.voice ?? null,
+      speed: options?.speed ?? null,
+    });
+  },
+
   // ── Vision ─────────────────────────────────────────────────────────────────
 
   /** Read an image file and return it as a base64-encoded data URL (for preview). */

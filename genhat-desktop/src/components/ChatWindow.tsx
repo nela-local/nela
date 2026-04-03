@@ -17,6 +17,8 @@ interface ChatWindowProps {
 import { MessageSquare, Eye, Volume2, Mic, FileText, Share2 } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
+import VoiceInputButton from "./VoiceInputButton";
+import SpeakButton from "./SpeakButton";
 import { Api } from "../api";
 import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode } from "../types";
 
@@ -503,6 +505,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               rows={1}
               className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
             />
+            {/* Voice input button - allows speaking instead of typing */}
+            <VoiceInputButton
+              onTranscript={(text) => {
+                setInputObj((prev) => (prev ? prev + " " + text : text));
+              }}
+              disabled={isLoading}
+            />
             {onToggleThinking && (
               <button
                 className={`glass-btn flex items-center gap-1.5 h-10 px-2.5 rounded-xl border transition-all duration-200 ${thinkingEnabled ? "bg-neon/10 border-neon/30 text-neon" : "bg-glass-bg border-glass-border text-txt-muted hover:text-txt hover:border-glass-border-hover"}`}
@@ -645,6 +654,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         {mediaAssets[idx] && <MediaGallery assets={mediaAssets[idx]} />}
                         <div className="flex items-center gap-1 mt-2 pt-1.5">
                           <CopyMsgButton text={msg.content} />
+                          {/* Read response aloud button */}
+                          <SpeakButton text={msg.content} compact />
                           {msg.generateTime !== undefined && (
                             <span className="text-[0.7rem] text-txt-muted ml-1" title={msg.firstTokenTime !== undefined ? `Generated in ${msg.generateTime}s\nFirst token in ${msg.firstTokenTime}s` : `Generated in ${msg.generateTime}s`}>
                               Generated in {msg.generateTime}s {msg.firstTokenTime !== undefined && `• First token in ${msg.firstTokenTime}s`}
@@ -815,6 +826,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             placeholder={placeholder}
             rows={1}
             className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+          />
+          {/* Voice input button - allows speaking instead of typing */}
+          <VoiceInputButton
+            onTranscript={(text) => {
+              setInputObj((prev) => (prev ? prev + " " + text : text));
+            }}
+            disabled={isLoading}
           />
           <div className="relative" ref={modeMenuRef}>
             <button

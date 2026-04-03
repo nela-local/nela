@@ -125,6 +125,8 @@ fn main() {
             app_lib::commands::download::download_custom_file,
             app_lib::commands::download::check_custom_file_exists,
             app_lib::commands::audio::generate_speech,
+            app_lib::commands::audio::transcribe_audio_base64,
+            app_lib::commands::audio::generate_speech_chunk,
             // New unified commands
             app_lib::commands::models::list_registered_models,
             app_lib::commands::models::get_model_status,
