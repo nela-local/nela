@@ -443,14 +443,14 @@ pub fn get_device_specs() -> DeviceSpecs {
     let mut sys = System::new_all();
     sys.refresh_all();
 
-    let total_ram_kb = sys.total_memory();
-    let available_ram_kb = sys.available_memory();
+    let total_ram_bytes = sys.total_memory();
+    let available_ram_bytes = sys.available_memory();
 
-    // Convert from KB to MB and GB
-    let total_ram_mb = total_ram_kb / 1024;
-    let available_ram_mb = available_ram_kb / 1024;
-    let total_ram_gb = total_ram_mb as f64 / 1024.0;
-    let available_ram_gb = available_ram_mb as f64 / 1024.0;
+    // Convert from bytes to MB and GB
+    let total_ram_mb = total_ram_bytes / (1024 * 1024);
+    let available_ram_mb = available_ram_bytes / (1024 * 1024);
+    let total_ram_gb = total_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    let available_ram_gb = available_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
     let cpu_model = sys
         .cpus()
