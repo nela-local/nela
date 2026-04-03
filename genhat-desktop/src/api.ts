@@ -21,7 +21,7 @@ export interface HFModel {
   downloads?: number;
   likes?: number;
   tags?: string[];
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface HFRepoFile {
@@ -30,7 +30,7 @@ export interface HFRepoFile {
   size: number;
   path: string;
   file_name?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /** Documented model requirements from README.md */
