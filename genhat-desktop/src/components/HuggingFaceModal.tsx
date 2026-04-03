@@ -82,8 +82,7 @@ const CompatibilityDetailModal: React.FC<{
   modelName: string;
   deviceSpecs: DeviceSpecs;
   actualFileSizeBytes: number;
-  documentedReqs?: DocumentedRequirements | null;
-}> = ({ isOpen, onClose, compatibility, modelName, deviceSpecs, actualFileSizeBytes, documentedReqs: _documentedReqs }) => {
+}> = ({ isOpen, onClose, compatibility, modelName, deviceSpecs, actualFileSizeBytes }) => {
   if (!isOpen) return null;
 
   const ratingColors: Record<string, string> = {
@@ -503,7 +502,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           try {
             const exists = await Api.checkCustomFileExists(selectedFolder, filename);
             return exists ? `${selectedFolder}/${filename}` : null;
-          } catch (e) {
+          } catch {
             return null;
           }
         })
@@ -831,7 +830,6 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           modelName={selectedCompatibility.modelName}
           deviceSpecs={deviceSpecs}
           actualFileSizeBytes={selectedCompatibility.fileSizeBytes}
-          documentedReqs={documentedRequirements}
         />
       )}
     </div>
