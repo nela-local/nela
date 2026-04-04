@@ -161,10 +161,10 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         args.push(batch_size);
     }
 
-    // Enable Flash Attention if configured (requires value: on/off/auto)
+    // Enable Flash Attention if configured (valid values: enabled/disabled/auto/true/false)
     if def.param_or("flash_attn", "false") == "true" {
         args.push("--flash-attn".to_string());
-        args.push("on".to_string());
+        args.push("enabled".to_string());
     }
 
     // Enable mlock (lock model in RAM, prevent swap) if configured
@@ -261,7 +261,11 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
 /// Also monitors whether the process is still alive — exits early if it crashes.
 async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{port}/health");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
     loop {
@@ -271,12 +275,14 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
             ));
         }
 
-        // Check if the process has exited (crashed on startup)
+        // Check if the process has exited (crashed on startup).
+        // Use waitpid(WNOHANG) to detect zombies that kill(pid,0) misses.
         #[cfg(unix)]
         {
-            // kill(pid, 0) checks if process exists without sending a signal
-            let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
-            if !alive {
+            let mut status: libc::c_int = 0;
+            let ret = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
+            if ret > 0 {
+                // Process has exited — it's a zombie we just reaped
                 let log_path = std::env::temp_dir().join(format!("genhat-llama-server-{port}.log"));
                 let hint = if log_path.exists() {
                     format!(" Check log: {}", log_path.display())
@@ -286,7 +292,22 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
                 return Err(format!(
                     "llama-server (pid={pid}) crashed before becoming ready.{hint}"
                 ));
+            } else if ret < 0 {
+                // ECHILD — not our child or already reaped; fall back to kill check
+                let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+                if !alive {
+                    let log_path = std::env::temp_dir().join(format!("genhat-llama-server-{port}.log"));
+                    let hint = if log_path.exists() {
+                        format!(" Check log: {}", log_path.display())
+                    } else {
+                        String::new()
+                    };
+                    return Err(format!(
+                        "llama-server (pid={pid}) crashed before becoming ready.{hint}"
+                    ));
+                }
             }
+            // ret == 0 means process is still running — continue polling
         }
 
         match client.get(&url).send().await {

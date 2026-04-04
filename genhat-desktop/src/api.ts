@@ -338,6 +338,16 @@ export const Api = {
     return invoke<string>("transcribe_audio_base64", { audioBase64 });
   },
 
+  /** Start recording from the native microphone (bypasses WebView limitations). */
+  async startMicRecording(): Promise<void> {
+    return invoke<void>("start_mic_recording");
+  },
+
+  /** Stop native mic recording and return base64-encoded 16 kHz mono WAV. */
+  async stopMicRecording(): Promise<string> {
+    return invoke<string>("stop_mic_recording");
+  },
+
   /**
    * Generate a speech chunk for streaming TTS.
    * Returns a base64-encoded WAV audio chunk.

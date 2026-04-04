@@ -152,6 +152,13 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
     try {
       cleanup();
 
+      // Check if mediaDevices API is available (may be undefined in Tauri WebView)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error(
+          "Microphone access is not available. Please ensure microphone permissions are granted in System Settings > Privacy & Security > Microphone."
+        );
+      }
+
       // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -178,11 +185,9 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
       processorRef.current = processor;
 
       processor.onaudioprocess = (e) => {
-        if (!state.isPaused) {
-          const inputData = e.inputBuffer.getChannelData(0);
-          // Copy the data (it gets reused by the audio API)
-          chunksRef.current.push(new Float32Array(inputData));
-        }
+        const inputData = e.inputBuffer.getChannelData(0);
+        // Copy the data (it gets reused by the audio API)
+        chunksRef.current.push(new Float32Array(inputData));
       };
 
       source.connect(processor);

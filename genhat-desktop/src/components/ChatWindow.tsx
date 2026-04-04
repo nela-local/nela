@@ -1,26 +1,11 @@
 import React, { useState, useEffect, useRef, memo } from "react";
-// ...existing code...
-// Add prop for saving audio
-import type { ChatSession } from "../types";
-
-interface SaveAudioHandler {
-  (msgIdx: number): void;
-}
-
-// ...existing code...
-// Add saveAudioToSidebar prop
-interface ChatWindowProps {
-  // ...existing code...
-  saveAudioToSidebar?: SaveAudioHandler;
-  session?: ChatSession;
-}
 import { MessageSquare, Eye, Volume2, Mic, FileText, Share2 } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
 import VoiceInputButton from "./VoiceInputButton";
 import SpeakButton from "./SpeakButton";
 import { Api } from "../api";
-import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode } from "../types";
+import type { ChatMessage, MediaAsset, IngestionStatus, ChatMode, ChatSession } from "../types";
 
 const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   text: MessageSquare,
@@ -128,6 +113,8 @@ interface ChatWindowProps {
   streamingThinking?: string;
   thinkingEnabled?: boolean;
   onToggleThinking?: () => void;
+  saveAudioToSidebar?: (msgIdx: number) => void;
+  session?: ChatSession;
 }
 
 /** Inline gallery for extracted images/tables attached to an assistant message. */

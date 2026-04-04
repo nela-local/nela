@@ -5,6 +5,7 @@
 //! Slim bootstrap: loads config, initializes the process control module,
 //! registers Tauri commands, and handles app lifecycle.
 
+use app_lib::commands::audio::MicRecorderState;
 use app_lib::commands::inference::TaskRouterState;
 use app_lib::commands::models::ProcessManagerState;
 use app_lib::commands::rag::RagPipelineState;
@@ -110,6 +111,7 @@ fn main() {
             app.manage(RagPipelineState(RwLock::new(rag_pipeline)));
             app.manage(WorkspaceState(workspace_manager));
             app.manage(DownloadState::default());
+            app.manage(MicRecorderState::default());
 
             Ok(())
         })
@@ -127,6 +129,8 @@ fn main() {
             app_lib::commands::audio::generate_speech,
             app_lib::commands::audio::transcribe_audio_base64,
             app_lib::commands::audio::generate_speech_chunk,
+            app_lib::commands::audio::start_mic_recording,
+            app_lib::commands::audio::stop_mic_recording,
             // New unified commands
             app_lib::commands::models::list_registered_models,
             app_lib::commands::models::get_model_status,

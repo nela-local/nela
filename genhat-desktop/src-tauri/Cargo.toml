@@ -59,6 +59,9 @@ hound = "3"
 realfft = "3"
 symphonia = { version = "0.5", features = ["mp3", "aac", "flac", "ogg", "pcm", "wav"] }
 
+# ── Native microphone recording (WebView doesn't expose navigator.mediaDevices) ──
+cpal = "0.15"
+
 # ── KittenTTS text preprocessing ──
 regex = "1"
 fancy-regex = "0.14"

@@ -1,15 +1,13 @@
 /**
  * VoiceInputButton — Microphone button for real-time speech-to-text input.
  *
- * When clicked:
- * 1. Starts recording audio from the microphone
- * 2. On stop, transcribes the audio using Parakeet ASR
- * 3. Calls onTranscript with the resulting text
+ * Records audio via the native Rust backend (cpal) because the Tauri WebView
+ * on macOS does not expose navigator.mediaDevices. When the user stops
+ * recording, the audio is sent to Parakeet ASR for transcription.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Mic, MicOff, Loader2, Square } from "lucide-react";
-import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { Api } from "../api";
 
 interface VoiceInputButtonProps {
@@ -26,55 +24,90 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
   disabled = false,
   className = "",
 }) => {
-  const { state, startRecording, stopRecording, cancelRecording } = useAudioRecorder();
+  const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duration, setDuration] = useState(0);
+  const timerRef = useRef<number | null>(null);
+  const startTimeRef = useRef(0);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
 
   const handleClick = useCallback(async () => {
     setError(null);
 
-    if (state.isRecording) {
+    if (isRecording) {
       // Stop recording and transcribe
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setIsRecording(false);
       setIsTranscribing(true);
       try {
-        const audioBlob = await stopRecording();
-        if (audioBlob) {
-          // Convert blob to base64
-          const reader = new FileReader();
-          const base64Promise = new Promise<string>((resolve, reject) => {
-            reader.onloadend = () => {
-              const dataUrl = reader.result as string;
-              // Strip the data URL prefix (data:audio/wav;base64,)
-              const base64 = dataUrl.split(",")[1];
-              resolve(base64);
-            };
-            reader.onerror = reject;
-          });
-          reader.readAsDataURL(audioBlob);
-
-          const base64Audio = await base64Promise;
-          const transcript = await Api.transcribeAudioBase64(base64Audio);
-          
-          if (transcript && transcript.trim()) {
-            onTranscript(transcript.trim());
-          }
+        const base64Audio = await Api.stopMicRecording();
+        const transcript = await Api.transcribeAudioBase64(base64Audio);
+        if (transcript && transcript.trim()) {
+          onTranscript(transcript.trim());
         }
       } catch (err) {
         console.error("Transcription error:", err);
-        setError(err instanceof Error ? err.message : "Transcription failed");
+        const msg =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+              ? err
+              : "Transcription failed";
+        setError(msg);
       } finally {
         setIsTranscribing(false);
+        setDuration(0);
       }
     } else {
-      // Start recording
-      await startRecording();
+      // Start recording via native backend
+      try {
+        await Api.startMicRecording();
+        setIsRecording(true);
+        startTimeRef.current = Date.now();
+        timerRef.current = window.setInterval(() => {
+          setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+        }, 1000);
+      } catch (err) {
+        console.error("Recording start error:", err);
+        const msg =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+              ? err
+              : "Failed to start recording";
+        setError(msg);
+      }
     }
-  }, [state.isRecording, startRecording, stopRecording, onTranscript]);
+  }, [isRecording, onTranscript]);
 
-  const handleCancel = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    cancelRecording();
-  }, [cancelRecording]);
+  const handleCancel = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setIsRecording(false);
+      setDuration(0);
+      // Stop the native recording but discard the result
+      try {
+        await Api.stopMicRecording();
+      } catch {
+        // ignore — already stopped or never started
+      }
+    },
+    []
+  );
 
   // Format duration as MM:SS
   const formatDuration = (seconds: number): string => {
@@ -92,18 +125,18 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
           glass-btn flex items-center justify-center w-9 h-9 
           bg-glass-bg border border-glass-border 
           cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm
-          ${state.isRecording 
+          ${isRecording 
             ? "text-danger border-danger/50 bg-danger/10 shadow-[0_0_12px_rgba(239,68,68,0.2)] animate-pulse" 
             : "text-txt-muted hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)]"
           }
           ${isTranscribing ? "opacity-75" : ""}
           disabled:opacity-40 disabled:cursor-not-allowed
         `}
-        title={state.isRecording ? "Stop recording" : "Start voice input"}
+        title={isRecording ? "Stop recording" : "Start voice input"}
       >
         {isTranscribing ? (
           <Loader2 className="w-5 h-5 animate-spin" />
-        ) : state.isRecording ? (
+        ) : isRecording ? (
           <MicOff className="w-5 h-5" />
         ) : (
           <Mic className="w-5 h-5" />
@@ -111,11 +144,11 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
       </button>
 
       {/* Recording indicator & duration */}
-      {state.isRecording && (
+      {isRecording && (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex items-center gap-2 py-1 px-2 rounded-lg bg-void-700/90 border border-glass-border text-xs whitespace-nowrap">
           <span className="w-2 h-2 rounded-full bg-danger animate-pulse" />
           <span className="text-txt-secondary">
-            {formatDuration(state.duration)}
+            {formatDuration(duration)}
           </span>
           <button
             onClick={handleCancel}
@@ -137,15 +170,8 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = ({
 
       {/* Error message */}
       {error && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 py-1 px-2 rounded-lg bg-danger/20 border border-danger/30 text-xs text-danger whitespace-nowrap">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 py-1 px-2 rounded-lg bg-danger/20 border border-danger/30 text-xs text-danger whitespace-nowrap max-w-[250px] text-wrap">
           {error}
-        </div>
-      )}
-
-      {/* Microphone error */}
-      {state.error && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 py-1 px-2 rounded-lg bg-danger/20 border border-danger/30 text-xs text-danger whitespace-nowrap max-w-[200px] truncate">
-          {state.error}
         </div>
       )}
     </div>
