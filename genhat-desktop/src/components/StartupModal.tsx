@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Plus, FileUp } from "lucide-react";
+import { ArrowRight, Plus, FileUp, Sparkles } from "lucide-react";
 import "./StartupModal.css";
 
 interface StartupModalProps {
@@ -8,6 +8,7 @@ interface StartupModalProps {
   continueWorkspaceName?: string | null;
   onNewProject: () => void;
   onImportProject: () => void;
+  onStartTour?: () => void;
   downloadOptionalOnStart: boolean;
   onToggleDownloadOptional: (value: boolean) => void;
   optionalMissingCount?: number;
@@ -59,6 +60,7 @@ const StartupModal: React.FC<StartupModalProps> = ({
   continueWorkspaceName = null,
   onNewProject,
   onImportProject,
+  onStartTour,
   downloadOptionalOnStart,
   onToggleDownloadOptional,
   optionalMissingCount = 0,
@@ -142,6 +144,19 @@ const StartupModal: React.FC<StartupModalProps> = ({
                 <FileUp size={16} />
                 <span>Import Project</span>
               </button>
+
+              {onStartTour && (
+                <button
+                  className="startup-action startup-btn-secondary"
+                  onClick={onStartTour}
+                  disabled={busy}
+                  title="Take a quick tour of the app"
+                  data-tour="startup-start-tour"
+                >
+                  <Sparkles size={16} />
+                  <span>Start Tour</span>
+                </button>
+              )}
             </div>
           </div>
 

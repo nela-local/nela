@@ -57,7 +57,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const useExternalInstallFlow = typeof onAdd === "function" && (type === "llm" || type === "vision");
 
   return (
-    <div className="model-selector-container" ref={containerRef}>
+    <div className="model-selector-container" ref={containerRef} data-tour={`model-selector-${type}`}>
       <button
         className={`model-selector-btn ${isOpen ? "active" : ""}`}
         onClick={() => setIsOpen(!isOpen)}

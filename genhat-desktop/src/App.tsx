@@ -45,6 +45,8 @@ import ModelsSettingsModal from "./components/ModelsSettingsModal";
 import HuggingFaceModal from "./components/HuggingFaceModal";
 import ActiveModelParamsDock, { type RuntimeParamsTarget } from "./components/ActiveModelParamsDock";
 import AppModal, { type AppModalKind } from "./components/AppModal";
+import ToursModal from "./components/ToursModal";
+import { useTour } from "./hooks/useTour";
 import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
@@ -298,6 +300,18 @@ function App() {
     showCancel: false,
   });
   const modalResolveRef = useRef<((value: boolean) => void) | null>(null);
+
+  // ── Tours ─────────────────────────────────────────────────────────────────
+  const { startTour, setBindings } = useTour();
+  const [toursOpen, setToursOpen] = useState(false);
+  const [suppressStartupModal, setSuppressStartupModal] = useState(false);
+
+  useEffect(() => {
+    setBindings({
+      openSettings: () => setSettingsOpen(true),
+      openTours: () => setToursOpen(true),
+    });
+  }, [setBindings]);
 
   // ── TTS engine state (registered models with TTS task) ─────────────────
   const [ttsEngines, setTtsEngines] = useState<RegisteredModel[]>([]);
@@ -2289,6 +2303,15 @@ function App() {
     void handleStartupAction(openWorkspaceFromFile);
   };
 
+  const startTourFromStartup = () => {
+    setSuppressStartupModal(true);
+    startTour("getting-started", {
+      source: "startup",
+      onExit: () => setSuppressStartupModal(false),
+      onComplete: () => setSuppressStartupModal(false),
+    });
+  };
+
   const mindmaps = activeSessionMindmaps
     .map((map) => ({
       id: map.id,
@@ -2314,8 +2337,8 @@ function App() {
     }));
   };
 
-  // Show startup modal if no active workspace yet
-  const showStartupModal = !activeWorkspace;
+  // Show startup modal if no active workspace yet (unless we're running the tour from it)
+  const showStartupModal = !activeWorkspace && !suppressStartupModal;
   const optionalMissingCount = getOptionalModels(registeredModels)
     .filter((model) => model.gdrive_id && !model.is_downloaded)
     .length;
@@ -2332,6 +2355,7 @@ function App() {
           continueWorkspaceName={startupContinueWorkspace?.name ?? null}
           onNewProject={createWorkspaceFromStartup}
           onImportProject={importWorkspaceFromStartup}
+          onStartTour={startTourFromStartup}
           downloadOptionalOnStart={downloadOptionalOnStart}
           onToggleDownloadOptional={setDownloadOptionalOnStart}
           optionalMissingCount={optionalMissingCount}
@@ -2373,6 +2397,8 @@ function App() {
         defaultImportProfile={hfModalPreset.profile}
       />
 
+      <ToursModal isOpen={toursOpen} onClose={() => setToursOpen(false)} />
+
       {/* Main app content stays visible in background behind startup modal */}
       <div className="flex h-full w-full relative z-10">
           <SidebarNav
@@ -2381,6 +2407,7 @@ function App() {
         onImportProject={() => void openWorkspaceFromFile()}
         onExportProject={() => void saveWorkspaceFile()}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenTours={() => setToursOpen(true)}
         onOpenHuggingFaceSearch={handleAddModel}
         workspaceBusy={workspaceBusy}
         canExport={!!activeWorkspace}

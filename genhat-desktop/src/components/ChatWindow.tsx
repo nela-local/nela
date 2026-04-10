@@ -469,6 +469,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                   onClick={() => setShowAttachMenu(!showAttachMenu)}
                   title={chatMode === "vision" ? "Upload image" : "Add documents to knowledge base"}
                   disabled={isLoading}
+                  data-tour="attach-button"
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                     style={{ transform: showAttachMenu ? "rotate(45deg)" : "none", transition: "transform 0.2s" }}>
@@ -491,6 +492,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               placeholder={placeholder}
               rows={1}
               className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+              data-tour="chat-input"
             />
             {/* Voice input button - allows speaking instead of typing */}
             <VoiceInputButton
@@ -519,6 +521,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 onClick={() => setShowModeMenu((v) => !v)}
                 title="Switch mode"
                 disabled={isLoading}
+                data-tour="mode-switch"
               >
                 <CurrentModeIcon size={16} strokeWidth={1.9} />
                 <span className="text-[0.74rem] font-medium leading-none">{currentModeLabel}</span>
@@ -791,6 +794,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                 onClick={() => setShowAttachMenu(!showAttachMenu)}
                 title={chatMode === "vision" ? "Upload image" : "Add documents to knowledge base"}
                 disabled={isLoading}
+                data-tour="attach-button"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                   style={{ transform: showAttachMenu ? "rotate(45deg)" : "none", transition: "transform 0.2s" }}>
@@ -813,6 +817,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             placeholder={placeholder}
             rows={1}
             className="flex-1 bg-transparent border-none outline-none text-txt text-[0.92rem] py-2 px-1 min-h-[40px] max-h-[200px] resize-none leading-relaxed font-inherit placeholder:text-txt-muted"
+            data-tour="chat-input"
           />
           {/* Voice input button - allows speaking instead of typing */}
           <VoiceInputButton
@@ -827,6 +832,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
               onClick={() => setShowModeMenu((v) => !v)}
               title="Switch mode"
               disabled={isLoading}
+              data-tour="mode-switch"
             >
               <CurrentModeIcon size={16} strokeWidth={1.9} />
               <span className="text-[0.74rem] font-medium leading-none">{currentModeLabel}</span>

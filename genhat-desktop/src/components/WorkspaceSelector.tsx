@@ -41,7 +41,7 @@ const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
   }, [open]);
 
   return (
-    <div className="workspace-selector-container" ref={containerRef}>
+    <div className="workspace-selector-container" ref={containerRef} data-tour="workspace-selector">
       <button
         className={`workspace-selector-btn ${open ? "active" : ""}`}
         onClick={() => !busy && setOpen((v) => !v)}

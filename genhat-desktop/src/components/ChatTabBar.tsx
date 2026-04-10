@@ -211,7 +211,10 @@ const ChatTabBar: React.FC<ChatTabBarProps> = memo(({
   };
 
   return (
-    <div className="chat-tab-bar flex items-center h-[40px] bg-void-800 border-b border-glass-border shrink-0 relative select-none">
+    <div
+      className="chat-tab-bar flex items-center h-[40px] bg-void-800 border-b border-glass-border shrink-0 relative select-none"
+      data-tour="chat-tabs"
+    >
       {/* Left scroll arrow */}
       {showLeftArrow && (
         <button
