@@ -9,6 +9,8 @@ interface HuggingFaceModalProps {
   isOpen: boolean;
   onClose: () => void;
   onModelImported?: () => void;
+  defaultFolder?: string;
+  defaultImportProfile?: "none" | ImportModelProfile;
 }
 
 const CATEGORIES: { label: string; folder: string }[] = [
@@ -323,7 +325,13 @@ const CompatibilityDetailModal: React.FC<{
   );
 };
 
-export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: HuggingFaceModalProps) {
+export default function HuggingFaceModal({
+  isOpen,
+  onClose,
+  onModelImported,
+  defaultFolder,
+  defaultImportProfile,
+}: HuggingFaceModalProps) {
   const [query, setQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<HFModel[]>([]);
@@ -332,8 +340,8 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
   const [isFetchingFiles, setIsFetchingFiles] = useState(false);
   const [repoFiles, setRepoFiles] = useState<HFRepoFile[]>([]);
   
-  const [selectedFolder, setSelectedFolder] = useState<string>("LLM");
-  const [importProfile, setImportProfile] = useState<"none" | ImportModelProfile>("llm");
+  const [selectedFolder, setSelectedFolder] = useState<string>(defaultFolder ?? "LLM");
+  const [importProfile, setImportProfile] = useState<"none" | ImportModelProfile>(defaultImportProfile ?? "llm");
   const [mmprojFile, setMmprojFile] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   
@@ -352,6 +360,12 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
     fileSizeBytes: number;
   } | null>(null);
   const [documentedRequirements, setDocumentedRequirements] = useState<DocumentedRequirements | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelectedFolder(defaultFolder ?? "LLM");
+    setImportProfile(defaultImportProfile ?? "llm");
+  }, [isOpen, defaultFolder, defaultImportProfile]);
 
   // Fetch device specs on mount
   useEffect(() => {
