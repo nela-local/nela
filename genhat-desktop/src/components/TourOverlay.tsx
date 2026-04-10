@@ -1,12 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useTour, TourUtils, type TourPlacement } from "../hooks/useTour";
+import { useTour, type TourPlacement, type TourTarget } from "../hooks/useTour";
 import "./TourOverlay.css";
 
 type Rect = { left: number; top: number; width: number; height: number; right: number; bottom: number };
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function resolveTarget(target: TourTarget): HTMLElement | null {
+  if (typeof target === "string") return document.querySelector(target) as HTMLElement | null;
+  try {
+    return target();
+  } catch {
+    return null;
+  }
 }
 
 function pickPlacement(rect: Rect, preferred: TourPlacement): Exclude<TourPlacement, "auto"> {
@@ -48,14 +57,14 @@ export default function TourOverlay() {
 
   const targetEl = useMemo(() => {
     if (!activeStep) return null;
-    return TourUtils.resolveTarget(activeStep.target);
+    return resolveTarget(activeStep.target);
   }, [activeStep, tick]);
 
   useLayoutEffect(() => {
     if (status !== "running" || !activeStep) return;
 
     const update = () => {
-      const el = TourUtils.resolveTarget(activeStep.target);
+      const el = resolveTarget(activeStep.target);
       if (!el) {
         setTargetRect(null);
         return;

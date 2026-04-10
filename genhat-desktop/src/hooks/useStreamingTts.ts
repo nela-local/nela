@@ -73,7 +73,7 @@ export function useStreamingTts(
   const speedRef = useRef<number | undefined>(undefined);
 
   // Play the next audio chunk from the queue
-  const playNextChunk = useCallback(() => {
+  const playNextChunk = useCallback(function playNextChunkImpl() {
     if (isStoppedRef.current || isPausedRef.current) {
       isPlayingChunkRef.current = false;
       return;
@@ -114,7 +114,7 @@ export function useStreamingTts(
 
         // Play next chunk if available
         if (audioQueueRef.current.length > 0) {
-          playNextChunk();
+          playNextChunkImpl();
         } else if (generationDoneRef.current) {
           // Generation finished and queue is empty — all done
           setState((prev) => ({

@@ -304,12 +304,10 @@ export function TourProvider({
   return <TourContext.Provider value={value}>{children}</TourContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTour(): TourContextValue {
   const ctx = useContext(TourContext);
   if (!ctx) throw new Error("useTour must be used within <TourProvider>");
   return ctx;
 }
 
-export const TourUtils = {
-  resolveTarget,
-};
