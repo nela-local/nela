@@ -628,9 +628,35 @@ impl ProcessManager {
                     model_source,
                     model_profile,
                     engine_adapter,
+                    params: m.def.params.clone(),
                 }
             })
             .collect()
+    }
+
+    /// Replace a model's runtime params and restart if currently loaded.
+    pub async fn update_model_params(
+        &self,
+        model_id: &str,
+        params: HashMap<String, String>,
+    ) -> Result<(), String> {
+        let was_running = {
+            let mut models = self.models.write().await;
+            let managed = models
+                .get_mut(model_id)
+                .ok_or_else(|| format!("Model '{model_id}' not found"))?;
+            managed.def.params = params;
+            !managed.instances.is_empty()
+        };
+
+        // Llama startup flags (for example, ctx_size/flash_attn) are applied on process spawn,
+        // so restart a loaded model to make changes effective immediately.
+        if was_running {
+            self.stop_model(model_id).await?;
+            let _ = self.ensure_running(model_id, false).await?;
+        }
+
+        Ok(())
     }
 
     /// Get the status of a specific model.
@@ -714,9 +740,6 @@ impl ProcessManager {
         models
             .values()
             .map(|m| {
-                let models_dir = crate::paths::resolve_models_dir();
-                let model_path = models_dir.join(&m.def.model_file);
-                
                 let instance_count = m
                     .instances
                     .iter()

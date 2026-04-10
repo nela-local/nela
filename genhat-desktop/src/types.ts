@@ -5,6 +5,18 @@ export interface ModelFile {
   gdrive_id?: string | null;
 }
 
+export interface DiscoveredModelUnit {
+  key: string;
+  category: string;
+  repo_id: string;
+  container_rel_path: string;
+  llm_rel_path: string;
+  llm_abs_path: string;
+  llm_file_name: string;
+  mmproj_rel_path?: string;
+  supports_vision: boolean;
+}
+
 export interface WorkspaceRecord {
   id: string;
   name: string;
@@ -40,6 +52,7 @@ export interface ChatMessage {
 export interface RegisteredModel {
   id: string;
   name: string;
+  backend?: string;
   tasks: string[];
   status: string;
   instance_count: number;
@@ -51,6 +64,7 @@ export interface RegisteredModel {
   model_source?: string;
   model_profile?: string | null;
   engine_adapter?: string | null;
+  params?: Record<string, string>;
 }
 
 export type ImportModelProfile = "llm" | "vlm";

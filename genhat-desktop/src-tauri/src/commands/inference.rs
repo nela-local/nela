@@ -8,6 +8,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
+fn parse_bool_param(value: &str, default: bool) -> bool {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
 /// Managed state wrapper for the TaskRouter.
 pub struct TaskRouterState(pub Arc<TaskRouter>);
 
@@ -105,7 +113,7 @@ pub async fn vision_chat(
 /// rather than being hardcoded.
 #[tauri::command]
 pub async fn vision_chat_stream(
-    image_path: String,
+    image_path: Option<String>,
     prompt: String,
     max_tokens: Option<String>,
     model_id: Option<String>,
@@ -113,7 +121,6 @@ pub async fn vision_chat_stream(
     router_state: State<'_, TaskRouterState>,
 ) -> Result<(), String> {
     let models_dir = get_models_dir();
-    let max_tokens = max_tokens.unwrap_or_else(|| "256".to_string());
 
     // Look up the vision model definition — use override if provided
     let def = if let Some(ref id) = model_id {
@@ -139,12 +146,28 @@ pub async fn vision_chat_stream(
         ));
     }
 
+    let max_tokens = max_tokens
+        .or_else(|| {
+            def.params
+                .get("max_tokens")
+                .cloned()
+                .filter(|v| !v.trim().is_empty())
+        })
+        .unwrap_or_else(|| "1024".to_string());
+
+    let image_min_tokens = def.params.get("image_min_tokens").map(|s| s.as_str());
+    let image_max_tokens = def.params.get("image_max_tokens").map(|s| s.as_str());
+    let use_jinja = parse_bool_param(&def.param_or("use_jinja", "true"), true);
+
     execute_vision_streaming(
         model_file,
         &mmproj_file,
-        &image_path,
+        image_path.as_deref(),
         &prompt,
         &max_tokens,
+        image_min_tokens,
+        image_max_tokens,
+        use_jinja,
         &models_dir,
         app,
     )

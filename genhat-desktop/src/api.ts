@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ChatMessage,
+  DiscoveredModelUnit,
   ModelFile,
   RegisteredModel,
   IngestionStatus,
@@ -145,6 +146,24 @@ export const Api = {
   /** List all registered models with their current status and supported tasks. */
   async listRegisteredModels(): Promise<RegisteredModel[]> {
     return invoke<RegisteredModel[]>("list_registered_models");
+  },
+
+  /** Scan model folders and return discovered repo-container model units. */
+  async discoverLocalModelUnits(): Promise<DiscoveredModelUnit[]> {
+    return invoke<DiscoveredModelUnit[]>("discover_local_model_units");
+  },
+
+  /** Force runtime sync from disk-scanned model units. */
+  async syncDiscoveredModels(): Promise<RegisteredModel[]> {
+    return invoke<RegisteredModel[]>("sync_discovered_models");
+  },
+
+  /** Update runtime params for a registered model. */
+  async updateModelParams(
+    modelId: string,
+    params: Record<string, string>
+  ): Promise<RegisteredModel> {
+    return invoke<RegisteredModel>("update_model_params", { modelId, params });
   },
 
   async downloadModel(modelId: string): Promise<void> {
@@ -380,12 +399,12 @@ export const Api = {
    * Frontend should `listen("vision-stream", handler)` before calling this.
    */
   async visionChatStream(
-    imagePath: string,
+    imagePath: string | undefined,
     prompt: string,
     modelId?: string
   ): Promise<void> {
     await invoke("vision_chat_stream", {
-      imagePath,
+      imagePath: imagePath ?? null,
       prompt,
       modelId: modelId || null,
     });
@@ -557,7 +576,14 @@ export const Api = {
     onError: (err: unknown) => void,
     port?: number,
     signal?: AbortSignal,
-    disableThinking?: boolean
+    disableThinking?: boolean,
+    generationOptions?: {
+      maxTokens?: number;
+      temperature?: number;
+      topP?: number;
+      topK?: number;
+      repeatPenalty?: number;
+    }
   ) {
     try {
       const apiMessages = messages.map(({ role, content }) => ({ role, content }));
@@ -568,16 +594,20 @@ export const Api = {
       const requestBody: Record<string, unknown> = {
         messages: apiMessages,
         stream: true,
-        max_tokens: 2048,
-        temperature: 0.7,
+        max_tokens: generationOptions?.maxTokens ?? 2048,
+        temperature: generationOptions?.temperature ?? 0.7,
+        top_p: generationOptions?.topP ?? 0.95,
+        top_k: generationOptions?.topK ?? 40,
+        repeat_penalty: generationOptions?.repeatPenalty ?? 1.1,
       };
 
-      // Add reasoning control - enable thinking for chat unless explicitly disabled
+      // Reasoning is OFF by default; callers can enable by passing disableThinking=false.
       // IMPORTANT: When disabling, set ALL THREE:
       //   - reasoning_budget = 0 (disables generation of thinking tokens)
       //   - reasoning_format = "none" (prevents parsing of <think> tags)
       //   - chat_template_kwargs = {"enable_thinking": false} (for Qwen3 models)
-      if (!disableThinking) {
+      const shouldDisableThinking = disableThinking ?? true;
+      if (!shouldDisableThinking) {
         requestBody.reasoning_format = "deepseek";
         requestBody.reasoning_budget = -1; // Unrestricted
         requestBody.chat_template_kwargs = { enable_thinking: true };
@@ -662,15 +692,35 @@ export const Api = {
   /**
    * Invokes the Taurus backend to download an arbitrary file to a specified folder.
    */
-  async downloadCustomFile(url: string, folder: string, filename: string): Promise<void> {
-    return invoke<void>("download_custom_file", { url, folder, filename });
+  async downloadCustomFile(
+    url: string,
+    folder: string,
+    filename: string,
+    options?: { repoId?: string; relativePath?: string }
+  ): Promise<void> {
+    return invoke<void>("download_custom_file", {
+      url,
+      folder,
+      filename,
+      repoId: options?.repoId ?? null,
+      relativePath: options?.relativePath ?? null,
+    });
   },
   
   /**
    * Checks if a custom downloaded file already exists on disk.
    */
-  async checkCustomFileExists(folder: string, filename: string): Promise<boolean> {
-    return invoke<boolean>("check_custom_file_exists", { folder, filename });
+  async checkCustomFileExists(
+    folder: string,
+    filename: string,
+    options?: { repoId?: string; relativePath?: string }
+  ): Promise<boolean> {
+    return invoke<boolean>("check_custom_file_exists", {
+      folder,
+      filename,
+      repoId: options?.repoId ?? null,
+      relativePath: options?.relativePath ?? null,
+    });
   },
 
   /** Import a downloaded GGUF into runtime and persist custom registration. */

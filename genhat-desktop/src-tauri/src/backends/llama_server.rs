@@ -603,7 +603,7 @@ impl ModelBackend for LlamaServerBackend {
 
         // Control reasoning/thinking behavior based on task type.
         // For non-chat tasks (enrich, summarize, etc.), disable thinking to improve speed.
-        // For chat tasks, use deepseek format to separate thinking from response.
+        // For chat tasks, keep thinking OFF by default; callers may explicitly opt in.
         // 
         // IMPORTANT: When disabling reasoning, we must set ALL THREE:
         //   - reasoning_budget = 0 (disables generation of thinking tokens)
@@ -612,13 +612,23 @@ impl ModelBackend for LlamaServerBackend {
         // Setting only budget=0 may not fully disable reasoning on some models.
         match request.task_type {
             crate::registry::types::TaskType::Chat => {
-                // Enable thinking for chat, extract it separately
-                // Check if user wants thinking disabled via extra params
-                let disable_thinking = request.extra.get("disable_thinking")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false);
-                
-                if !disable_thinking {
+                // Backward compatibility:
+                // - `enable_thinking=true` explicitly enables reasoning.
+                // - `disable_thinking=false` also enables reasoning.
+                // - If neither is provided, reasoning remains disabled by default.
+                let enable_thinking = request
+                    .extra
+                    .get("enable_thinking")
+                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    .unwrap_or_else(|| {
+                        !request
+                            .extra
+                            .get("disable_thinking")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                            .unwrap_or(true)
+                    });
+
+                if enable_thinking {
                     body["reasoning_format"] = serde_json::json!("deepseek");
                     body["reasoning_budget"] = serde_json::json!(-1); // Unrestricted
                     body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": true});

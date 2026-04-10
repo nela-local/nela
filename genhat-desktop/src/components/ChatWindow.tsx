@@ -257,7 +257,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   modeSwitchNotice = null,
   saveAudioToSidebar = () => {},
   streamingThinking = "",
-  thinkingEnabled = true,
+  thinkingEnabled = false,
   onToggleThinking,
 }) => {
   const [inputObj, setInputObj] = useState("");

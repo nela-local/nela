@@ -104,6 +104,18 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
+/// Dot product between two vectors.
+pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+    }
+    dot
+}
+
 // ── Connection Pool Initializer ──
 
 /// Configures each pooled SQLite connection with WAL mode and synchronous=NORMAL.
@@ -460,7 +472,7 @@ impl RagDb {
             .filter_map(|r| r.ok())
             .map(|(id, blob)| {
                 let emb = bytes_to_embedding(&blob);
-                let sim = cosine_similarity(query_embedding, &emb);
+                let sim = dot_product(query_embedding, &emb);
                 (id, sim)
             })
             .collect();
@@ -792,7 +804,7 @@ impl RagDb {
             .filter_map(|r| r.ok())
             .map(|(id, blob)| {
                 let emb = bytes_to_embedding(&blob);
-                let sim = cosine_similarity(query_embedding, &emb);
+                let sim = dot_product(query_embedding, &emb);
                 (id, sim)
             })
             .collect();

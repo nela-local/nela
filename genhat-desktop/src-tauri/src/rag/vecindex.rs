@@ -1,6 +1,6 @@
 //! In-memory IVF (Inverted File) vector index for fast approximate nearest neighbor search.
 //!
-//! Replaces brute-force O(N) cosine scan in SQLite with:
+//! Replaces brute-force O(N) scan in SQLite with:
 //!   - In-memory pre-loaded embeddings (no SQL/blob overhead per search)
 //!   - IVF partitioning for sub-linear search when >128 vectors
 //!   - Automatic index rebuild after threshold insertions
@@ -8,7 +8,7 @@
 //! For small corpora (<128 vectors), falls back to exact brute-force in-memory
 //! search which is still much faster than the SQL-based scan.
 
-use crate::rag::db::{cosine_similarity, RagDb};
+use crate::rag::db::{dot_product, RagDb};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
@@ -21,7 +21,6 @@ use std::sync::RwLock;
 struct QuantizedVector {
     data: Vec<i8>,
     scale: f32,
-    norm: f32,
 }
 
 impl QuantizedVector {
@@ -35,23 +34,18 @@ impl QuantizedVector {
             return Self {
                 data: vec![0; values.len()],
                 scale: 1.0,
-                norm: 0.0,
             };
         }
 
         let scale = max_abs / 127.0;
         let mut data = Vec::with_capacity(values.len());
-        let mut sum_sq = 0.0f32;
 
         for &v in values {
             let q = (v / scale).round().clamp(-127.0, 127.0) as i8;
             data.push(q);
-            let qf = q as f32;
-            sum_sq += qf * qf;
         }
 
-        let norm = scale * sum_sq.sqrt();
-        Self { data, scale, norm }
+        Self { data, scale }
     }
 
     fn dequantize(&self) -> Vec<f32> {
@@ -61,8 +55,8 @@ impl QuantizedVector {
             .collect()
     }
 
-    fn cosine_with_query(&self, query: &[f32], query_norm: f32) -> f32 {
-        if self.data.len() != query.len() || self.norm < 1e-12 || query_norm < 1e-12 {
+    fn dot_with_query(&self, query: &[f32]) -> f32 {
+        if self.data.len() != query.len() {
             return 0.0;
         }
 
@@ -70,17 +64,12 @@ impl QuantizedVector {
         for (qv, q) in self.data.iter().zip(query.iter()) {
             dot_q += (*qv as f32) * *q;
         }
-        let dot = dot_q * self.scale;
-        dot / (query_norm * self.norm)
+        dot_q * self.scale
     }
 
     fn compressed_bytes(&self) -> usize {
-        self.data.len() + std::mem::size_of::<f32>() * 2
+        self.data.len() + std::mem::size_of::<f32>()
     }
-}
-
-fn l2_norm(values: &[f32]) -> f32 {
-    values.iter().map(|v| v * v).sum::<f32>().sqrt()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -227,16 +216,11 @@ impl VectorIndex {
         vec_bytes + centroid_bytes + partition_bytes
     }
 
-    /// Search for the top-k nearest neighbors by cosine similarity.
+    /// Search for the top-k nearest neighbors by dot-product similarity.
     /// Uses IVF partitioning when available, falls back to brute-force in memory.
     pub fn search(&self, query: &[f32], top_k: usize) -> Vec<(i64, f32)> {
         let vecs = self.vectors.read().unwrap();
         if vecs.is_empty() {
-            return vec![];
-        }
-
-        let query_norm = l2_norm(query);
-        if query_norm < 1e-12 {
             return vec![];
         }
 
@@ -247,7 +231,7 @@ impl VectorIndex {
             if centroids.is_empty() || vecs.len() < MIN_VECTORS_FOR_IVF {
                 // Brute-force over all in-memory vectors
                 vecs.iter()
-                    .map(|(&id, emb)| (id, emb.cosine_with_query(query, query_norm)))
+                    .map(|(&id, emb)| (id, emb.dot_with_query(query)))
                     .collect()
             } else {
                 // IVF: search only the nearest partitions
@@ -259,8 +243,7 @@ impl VectorIndex {
                         for &chunk_id in &partitions[ci] {
                             if seen.insert(chunk_id) {
                                 if let Some(emb) = vecs.get(&chunk_id) {
-                                    results
-                                        .push((chunk_id, emb.cosine_with_query(query, query_norm)));
+                                    results.push((chunk_id, emb.dot_with_query(query)));
                                 }
                             }
                         }
@@ -360,7 +343,7 @@ fn kmeans(embeddings: &[&Vec<f32>], k: usize, max_iter: usize) -> (Vec<Vec<f32>>
             let mut best = 0;
             let mut best_sim = f32::NEG_INFINITY;
             for (c, centroid) in centroids.iter().enumerate() {
-                let sim = cosine_similarity(emb, centroid);
+                let sim = dot_product(emb, centroid);
                 if sim > best_sim {
                     best_sim = sim;
                     best = c;
@@ -404,7 +387,7 @@ fn nearest_centroids(query: &[f32], centroids: &[Vec<f32>], n: usize) -> Vec<usi
     let mut scored: Vec<(usize, f32)> = centroids
         .iter()
         .enumerate()
-        .map(|(i, c)| (i, cosine_similarity(query, c)))
+        .map(|(i, c)| (i, dot_product(query, c)))
         .collect();
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.iter().take(n).map(|(i, _)| *i).collect()

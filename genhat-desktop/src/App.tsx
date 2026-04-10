@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -11,8 +11,8 @@ import {
   Trash2,
   Loader2,
   CheckCircle2,
-  ChevronDown,
   Share2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Api } from "./api";
 import type {
@@ -42,12 +42,43 @@ import MindMapOverlay from "./components/MindMapOverlay";
 import StartupModal from "./components/StartupModal";
 import ModelsSettingsModal from "./components/ModelsSettingsModal";
 import HuggingFaceModal from "./components/HuggingFaceModal";
+import ActiveModelParamsDock, { type RuntimeParamsTarget } from "./components/ActiveModelParamsDock";
 import AppModal, { type AppModalKind } from "./components/AppModal";
 import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
 const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
+
+const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
+
+const modelRefBasename = (raw: string): string => {
+  const normalized = normalizeModelRef(raw);
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] ?? normalized;
+};
+
+const findRegisteredModelByIdentifier = (
+  models: RegisteredModel[],
+  identifier: string | null | undefined
+): RegisteredModel | undefined => {
+  if (!identifier) return undefined;
+
+  const exact = models.find((model) => model.id === identifier);
+  if (exact) return exact;
+
+  const normalizedIdentifier = normalizeModelRef(identifier);
+  const identifierBase = modelRefBasename(identifier);
+
+  return models.find((model) => {
+    if (!model.model_file) return false;
+    const normalizedFile = normalizeModelRef(model.model_file);
+    return (
+      normalizedFile === normalizedIdentifier ||
+      modelRefBasename(normalizedFile) === identifierBase
+    );
+  });
+};
 
 /** Extensions the DocumentViewer can render (non-PDF). */
 const VIEWABLE_EXTS = new Set([
@@ -243,6 +274,7 @@ function App() {
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [registeredModels, setRegisteredModels] = useState<RegisteredModel[]>([]);
+  const [sessionModelParamOverrides, setSessionModelParamOverrides] = useState<Record<string, Record<string, string>>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hfModalOpen, setHfModalOpen] = useState(false);
   const [downloadOptionalOnStart, setDownloadOptionalOnStart] = useState(() => {
@@ -304,7 +336,7 @@ function App() {
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   
   // ── Thinking/Reasoning state ───────────────────────────────────────────────
-  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [streamingThinking, setStreamingThinking] = useState<string>("");
 
   // ── Vision state ───────────────────────────────────────────────────────────
@@ -326,6 +358,7 @@ function App() {
 
   // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
   const [docPanelOpen, setDocPanelOpen] = useState(false);
+  const [paramsDockOpen, setParamsDockOpen] = useState(true);
   const [modeSwitchNotice, setModeSwitchNotice] = useState<string | null>(null);
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -333,6 +366,151 @@ function App() {
 
   /** Get the currently active session object (read-only snapshot). */
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+
+  const parseModelParamNumber = useCallback((raw: string | undefined): number | undefined => {
+    if (!raw) return undefined;
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }, []);
+
+  const getModelParams = useCallback(
+    (modelIdentifier: string | null | undefined): Record<string, string> => {
+      if (!modelIdentifier) return {};
+      const registered = findRegisteredModelByIdentifier(registeredModels, modelIdentifier);
+      const persisted = registered?.params ?? {};
+      const override =
+        sessionModelParamOverrides[registered?.id ?? modelIdentifier] ??
+        sessionModelParamOverrides[modelIdentifier] ??
+        {};
+      return {
+        ...persisted,
+        ...override,
+      };
+    },
+    [registeredModels, sessionModelParamOverrides]
+  );
+
+  const getChatGenerationOptions = useCallback(
+    (modelIdentifier: string | null | undefined) => {
+      const params = getModelParams(modelIdentifier);
+      return {
+        maxTokens: parseModelParamNumber(params.max_tokens),
+        temperature: parseModelParamNumber(params.temp),
+        topP: parseModelParamNumber(params.top_p),
+        topK: parseModelParamNumber(params.top_k),
+        repeatPenalty: parseModelParamNumber(params.repeat_penalty),
+      };
+    },
+    [getModelParams, parseModelParamNumber]
+  );
+
+  const activeRuntimeParamTarget = useMemo<RuntimeParamsTarget | null>(() => {
+    const createTarget = (
+      identifier: string | null | undefined,
+      fallbackBackend: string,
+      fallbackName?: string
+    ): RuntimeParamsTarget | null => {
+      if (!identifier) return null;
+
+      const resolved = findRegisteredModelByIdentifier(registeredModels, identifier);
+      const discoveredName =
+        fallbackName ||
+        models.find((model) => model.path === identifier)?.name ||
+        identifier;
+
+      return {
+        key: `${chatMode}:${resolved?.id ?? identifier}`,
+        identifier,
+        displayName: discoveredName.replace(/\s*\(Unregistered\)$/i, ""),
+        backend: resolved?.backend ?? fallbackBackend,
+        modelFile: resolved?.model_file,
+        memoryMb: resolved?.memory_mb,
+        params: getModelParams(identifier),
+        isRegistered: !!resolved,
+      };
+    };
+
+    if (chatMode === "text" || chatMode === "mindmap") {
+      return createTarget(selectedModel, "LlamaServer");
+    }
+
+    if (chatMode === "audio") {
+      const selectedEngine = ttsEngines.find((engine) => engine.id === selectedTtsEngine);
+      return createTarget(selectedTtsEngine, selectedEngine?.backend ?? "KittenTts", selectedEngine?.name);
+    }
+
+    if (chatMode === "vision") {
+      const selectedVision = visionModels.find((model) => model.id === selectedVisionModel);
+      return createTarget(selectedVisionModel, selectedVision?.backend ?? "LlamaServer", selectedVision?.name);
+    }
+
+    return null;
+  }, [
+    chatMode,
+    getModelParams,
+    models,
+    registeredModels,
+    selectedModel,
+    selectedTtsEngine,
+    selectedVisionModel,
+    ttsEngines,
+    visionModels,
+  ]);
+
+  useEffect(() => {
+    if (!activeRuntimeParamTarget) {
+      setParamsDockOpen(false);
+      return;
+    }
+
+    // Re-open the panel when a new active model target is detected.
+    setParamsDockOpen(true);
+  }, [activeRuntimeParamTarget?.key]);
+
+  const handleApplyRuntimeParams = async (nextParams: Record<string, string>) => {
+    if (!activeRuntimeParamTarget) return;
+
+    const targetIdentifier = activeRuntimeParamTarget.identifier;
+    let resolved = findRegisteredModelByIdentifier(registeredModels, targetIdentifier);
+
+    // Auto-bind path-only models (for manually placed/HF-downloaded GGUF files)
+    // by forcing a model switch first, then refreshing the registry.
+    if (!resolved && (chatMode === "text" || chatMode === "mindmap" || chatMode === "vision")) {
+      try {
+        await Api.switchModel(targetIdentifier);
+        const refreshed = await refreshModels();
+        resolved = findRegisteredModelByIdentifier(refreshed, targetIdentifier);
+      } catch (err) {
+        console.warn("Failed to auto-bind model before applying params", err);
+      }
+    }
+
+    if (resolved) {
+      await Api.updateModelParams(resolved.id, nextParams);
+      setSessionModelParamOverrides((prev) => {
+        const next = { ...prev };
+        delete next[targetIdentifier];
+        delete next[resolved.id];
+        return next;
+      });
+
+      await refreshModels();
+
+      if (
+        (chatMode === "text" || chatMode === "mindmap") &&
+        selectedModel === targetIdentifier
+      ) {
+        setSelectedModel(resolved.id);
+      }
+      return;
+    }
+
+    // Fallback for models that still cannot be bound: keep session-local overrides.
+    setSessionModelParamOverrides((prev) => ({
+      ...prev,
+      [targetIdentifier]: { ...nextParams },
+    }));
+  };
 
   /** Immutably update a specific session by ID. */
   const updateSession = useCallback(
@@ -1169,72 +1347,121 @@ function App() {
     setAppModal((prev) => ({ ...prev, open: false }));
   };
 
-  const refreshModels = () => {
-    Promise.all([Api.listRegisteredModels(), Api.listModels()])
-      .then(([list, legacyFiles]) => {
-        setRegisteredModels(list);
-        // Vision models
-        const vision = list.filter((m) => m.tasks.includes("vision_chat"));
-        setVisionModels(vision);
-        if (vision.length > 0) setSelectedVisionModel(vision[0].id);
+  const refreshModels = useCallback(async (): Promise<RegisteredModel[]> => {
+    try {
+      const [list, discoveredUnits] = await Promise.all([
+        Api.listRegisteredModels(),
+        Api.discoverLocalModelUnits().catch(() => []),
+      ]);
+      setRegisteredModels(list);
 
-        // Text models from registry
-        const chatModels = list
-          .filter((m) => m.tasks.includes("chat"))
-          .sort((a, b) => b.priority - a.priority)
-          .map((m) => ({
-            name:
-              m.model_source === "custom"
-                ? `${m.name} (Custom${m.model_profile ? ` ${m.model_profile.toUpperCase()}` : ""})`
-                : m.name,
-            path: m.id,
-            is_downloaded: m.is_downloaded,
-            gdrive_id: m.gdrive_id,
-          }));
+      // Vision models
+      const vision = list.filter((m) => m.tasks.includes("vision_chat"));
+      setVisionModels(vision);
+      if (vision.length > 0) {
+        setSelectedVisionModel((prev) => prev || vision[0].id);
+      }
 
-        // Also include unregistered .gguf files from the LLM folder so that
-        // manually placed or failed-to-import models still appear in the dropdown.
-        // switch_model will dynamically register them when selected.
-        const registeredFiles = new Set(
-          list.map((m) => m.id)
-        );
-        const registeredModelFiles = new Set(
-          list.map((m) => m.model_file).filter(Boolean)
-        );
-        const unregistered = legacyFiles
-          .filter(
-            (f) =>
-              !registeredFiles.has(f.path) &&
-              !registeredFiles.has(f.name) &&
-              !registeredModelFiles.has(`LLM/${f.name}`)
-          )
-          .map((f) => ({
-            name: `${f.name} (Unregistered)`,
-            path: f.path,
-            is_downloaded: true,
-            gdrive_id: null as string | null,
-          }));
+      // Text models from registry
+      const chatModels = list
+        .filter((m) => m.tasks.includes("chat"))
+        .sort((a, b) => b.priority - a.priority)
+        .map((m) => ({
+          name:
+            m.model_source === "custom"
+              ? `${m.name} (Custom${m.model_profile ? ` ${m.model_profile.toUpperCase()}` : ""})`
+              : m.name,
+          path: m.id,
+          is_downloaded: m.is_downloaded,
+          gdrive_id: m.gdrive_id,
+        }));
 
-        const allChatModels = [...chatModels, ...unregistered];
-        setModels(allChatModels);
-        if (allChatModels.length > 0 && !selectedModel) {
-          setSelectedModel(allChatModels[0].path);
+      // Also include any discovered local model files that are not currently
+      // runtime-registered, so manual file drops still appear for selection.
+      const registeredTokens = new Set<string>();
+      const registeredRepoIds = new Set<string>();
+      for (const model of list) {
+        registeredTokens.add(normalizeModelRef(model.id));
+        if (model.model_file) {
+          registeredTokens.add(normalizeModelRef(model.model_file));
+          registeredTokens.add(modelRefBasename(model.model_file));
         }
-
-        // TTS engines from the registry
-        const tts = list.filter((m) => m.tasks.includes("tts"));
-        setTtsEngines(tts);
-        if (tts.length > 0 && !selectedTtsEngine) {
-          setSelectedTtsEngine(tts[0].id);
+        const repoId = model.params?.hf_repo_id;
+        if (repoId) {
+          registeredRepoIds.add(repoId.toLowerCase());
         }
-      })
-      .catch(console.error);
-  };
+      }
+
+      const unregistered = discoveredUnits
+        .filter((unit) => {
+          const normalizedRel = normalizeModelRef(unit.llm_rel_path);
+          const normalizedAbs = normalizeModelRef(unit.llm_abs_path);
+          const basename = modelRefBasename(unit.llm_rel_path);
+          const byPath =
+            registeredTokens.has(normalizedRel) ||
+            registeredTokens.has(normalizedAbs) ||
+            registeredTokens.has(basename);
+          const byRepo = registeredRepoIds.has(unit.repo_id.toLowerCase());
+          return !byPath && !byRepo;
+        })
+        .map((unit) => ({
+          name: `${unit.repo_id} (${unit.llm_file_name}) (Unregistered)`,
+          path: unit.llm_abs_path,
+          is_downloaded: true,
+          gdrive_id: null as string | null,
+        }))
+        .filter(
+          (entry, index, all) =>
+            all.findIndex((candidate) => candidate.path === entry.path) === index
+        );
+
+      const allChatModels = [...chatModels, ...unregistered];
+      setModels(allChatModels);
+      if (allChatModels.length > 0) {
+        setSelectedModel((prev) => prev || allChatModels[0].path);
+      }
+
+      // TTS engines from the registry
+      const tts = list.filter((m) => m.tasks.includes("tts"));
+      setTtsEngines(tts);
+      if (tts.length > 0) {
+        setSelectedTtsEngine((prev) => prev || tts[0].id);
+      }
+
+      return list;
+    } catch (error) {
+      console.error(error);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTtsEngine) return;
+    const engine = registeredModels.find((m) => m.id === selectedTtsEngine);
+    if (!engine) return;
+
+    const configuredVoice = engine.params?.voice;
+    if (configuredVoice && KITTEN_TTS_VOICES.includes(configuredVoice as KittenTtsVoice)) {
+      setTtsVoice(configuredVoice as KittenTtsVoice);
+    }
+
+    const configuredSpeed = parseModelParamNumber(engine.params?.speed);
+    if (configuredSpeed !== undefined) {
+      const clamped = Math.max(0.5, Math.min(2.0, configuredSpeed));
+      setTtsSpeed(clamped);
+    }
+  }, [selectedTtsEngine, registeredModels, parseModelParamNumber]);
 
   const handleModelChange = async (path: string) => {
     try {
       setSelectedModel(path);
       await Api.switchModel(path);
+
+      const refreshed = await refreshModels();
+      const resolved = findRegisteredModelByIdentifier(refreshed, path);
+      if (resolved) {
+        setSelectedModel(resolved.id);
+      }
     } catch (err) {
       console.error(err);
       showError("Failed to switch model");
@@ -1482,6 +1709,7 @@ function App() {
     // Create a fresh AbortController for this session's request
     const ctrl = new AbortController();
     abortControllersRef.current.set(sid, ctrl);
+    const generationOptions = getChatGenerationOptions(selectedModel);
 
     try {
       // ── Mindmap Mode (RAG-grounded when relevant) ──────────────────────
@@ -1703,7 +1931,8 @@ function App() {
               },
               setup.llama_port,
               ctrl.signal,
-              !thinkingEnabled
+              !thinkingEnabled,
+              generationOptions
             );
             return;
           }
@@ -1778,17 +2007,6 @@ function App() {
 
       // ── Vision Mode (streaming via Tauri events) ────────────────────────
       if (chatMode === "vision") {
-        if (!currentVisionImagePath) {
-          updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              { role: "assistant" as const, content: "Please select an image first." },
-            ],
-            loading: false,
-          }));
-          return;
-        }
-
         try {
           // Start timer
           setGeneralGenerating(true);
@@ -1854,9 +2072,10 @@ function App() {
           visionUnlistenRef.current = unlisten;
 
           // Start the streaming vision chat
+          const visionPrompt = text || (currentVisionImagePath ? "What's in this image?" : "Hello! Let's chat.");
           await Api.visionChatStream(
-            currentVisionImagePath,
-            text || "What's in this image?",
+            currentVisionImagePath || undefined,
+            visionPrompt,
             selectedVisionModel || undefined
           );
         } catch (e) {
@@ -1960,7 +2179,8 @@ function App() {
         },
         undefined,
         ctrl.signal,
-        !thinkingEnabled
+        !thinkingEnabled,
+        generationOptions
       );
     } catch (err) {
       // Stop timer on error
@@ -2091,6 +2311,8 @@ function App() {
   const optionalMissingCount = getOptionalModels(registeredModels)
     .filter((model) => model.gdrive_id && !model.is_downloaded)
     .length;
+  const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
+  const showRightSidebar = showParamsDock || docPanelOpen;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -2125,6 +2347,7 @@ function App() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         models={registeredModels}
+        onModelsUpdated={refreshModels}
         downloads={downloads}
         onDownload={handleDownloadModel}
         onCancelDownload={handleCancelDownload}
@@ -2358,36 +2581,7 @@ function App() {
                     downloads={downloads}
                   />
 
-                {selectedTtsEngine === "kitten-tts" && (
-                  <>
-                    <div className="relative flex items-center">
-                      <select
-                        value={ttsVoice}
-                        onChange={(e) => setTtsVoice(e.target.value as KittenTtsVoice)}
-                        className="bg-void-700 text-txt border border-glass-border rounded-lg py-1.5 pl-3.5 pr-8 font-inherit text-sm outline-none cursor-pointer appearance-none transition-all duration-200 min-w-[100px] hover:border-neon"
-                        disabled={activeSession?.loading ?? false}
-                      >
-                        {KITTEN_TTS_VOICES.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
-                      <ChevronDown size={14} className="absolute right-2.5 pointer-events-none text-txt-muted" />
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <label className="text-[0.78rem] text-txt-secondary min-w-[32px] text-right select-none" title="Speaking speed">
-                        {ttsSpeed.toFixed(1)}x
-                      </label>
-                      <input
-                        type="range" min="0.5" max="2.0" step="0.1"
-                        value={ttsSpeed}
-                        onChange={(e) => setTtsSpeed(parseFloat(e.target.value))}
-                        className="w-[72px] h-1 accent-neon cursor-pointer"
-                        disabled={activeSession?.loading ?? false}
-                      />
-                    </div>
-                  </>
-                )}
+                {selectedTtsEngine === "kitten-tts"}
               </div>
             )}
             {chatMode === "vision" && visionModels.length > 0 && (
@@ -2403,6 +2597,17 @@ function App() {
                   onConfirm={confirmAction}
                   downloads={downloads}
                 />
+            )}
+
+            {activeRuntimeParamTarget && (
+              <button
+                className={`glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md ${paramsDockOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
+                onClick={() => setParamsDockOpen((open) => !open)}
+                title="Toggle runtime parameter panel"
+              >
+                <SlidersHorizontal size={14} />
+                {paramsDockOpen ? "Hide Params" : "Show Params"}
+              </button>
             )}
           </div>
         </header>
@@ -2485,8 +2690,20 @@ function App() {
         )}
       </main>
 
-      {/* ══════════ RIGHT SIDEBAR — Knowledge Base ══════════ */}
-      <aside className={`kb-sidebar overflow-hidden bg-void-800 flex flex-col shrink-0 ${docPanelOpen ? "w-[320px] min-w-[320px] border-l border-glass-border" : "w-0 min-w-0 border-l-0"}`}>
+      {/* ══════════ RIGHT SIDEBAR — Runtime Params / Knowledge Base ══════════ */}
+      {showRightSidebar && (
+        <aside className={`kb-sidebar overflow-hidden bg-void-800 flex shrink-0 ${showParamsDock && docPanelOpen ? "w-[640px] min-w-[640px]" : "w-[320px] min-w-[320px]"} border-l border-glass-border`}>
+          {showParamsDock && activeRuntimeParamTarget && (
+            <div className="w-[320px] min-w-[320px] h-full">
+              <ActiveModelParamsDock
+                target={activeRuntimeParamTarget}
+                onApply={handleApplyRuntimeParams}
+                onClose={() => setParamsDockOpen(false)}
+              />
+            </div>
+          )}
+
+      <div className={`overflow-hidden bg-void-800 flex flex-col shrink-0 ${docPanelOpen ? "w-[320px] min-w-[320px]" : "w-0 min-w-0"} ${showParamsDock && docPanelOpen ? "border-l border-glass-border" : "border-l-0"}`}>
         <div className={`kb-sidebar-inner flex flex-col h-full w-[320px] ${docPanelOpen ? "opacity-100" : "opacity-0"}`}>
           {/* Header */}
           <div className="flex items-center justify-between py-3.5 px-4 border-b border-glass-border shrink-0">
@@ -2601,7 +2818,9 @@ function App() {
             </div>
           )}
         </div>
-      </aside>
+      </div>
+        </aside>
+      )}
     </div>
 
     </div>

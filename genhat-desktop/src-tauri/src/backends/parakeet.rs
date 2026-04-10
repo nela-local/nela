@@ -39,6 +39,7 @@ impl super::ModelBackend for ParakeetBackend {
     async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
         // model_file points to the model directory (e.g. "parakeet")
         let model_dir = models_dir.join(&def.model_file);
+        let overrides = def.params.clone();
 
         if !model_dir.exists() {
             return Err(format!(
@@ -52,7 +53,7 @@ impl super::ModelBackend for ParakeetBackend {
         // Heavy synchronous I/O — offload to a blocking thread so the async
         // runtime stays responsive and the frontend doesn't hang.
         let handle = tokio::task::spawn_blocking(move || {
-            let engine = ParakeetEngine::load(&model_dir)?;
+            let engine = ParakeetEngine::load_with_overrides(&model_dir, &overrides)?;
             log::info!("[Parakeet] Engine loaded and ready");
             Ok::<ModelHandle, String>(ModelHandle::InMemory(InMemoryHandle {
                 model: Arc::new(engine),

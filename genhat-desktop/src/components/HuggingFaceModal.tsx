@@ -480,9 +480,8 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
       setDocumentedRequirements(docReqs);
       
       const mmproj = ggufs
-        .map((f) => f.file_name || f.path.split("/").pop() || f.path)
-        .find((name) => name.toLowerCase().includes("mmproj"));
-      setMmprojFile(mmproj || "");
+        .find((f) => (f.file_name || f.path.split("/").pop() || f.path).toLowerCase().includes("mmproj"));
+      setMmprojFile(mmproj?.path || "");
     } catch (err) {
       console.error(err);
     } finally {
@@ -499,9 +498,16 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
       const checks = await Promise.all(
         repoFiles.map(async (file) => {
           const filename = file.file_name || file.path.split('/').pop() || file.path;
+          const useContainer = selectedFolder === "LLM" || selectedFolder === "LiquidAI-VLM";
+          const key = selectedRepo && useContainer
+            ? `${selectedFolder}/${selectedRepo}/${file.path}`
+            : `${selectedFolder}/${filename}`;
           try {
-            const exists = await Api.checkCustomFileExists(selectedFolder, filename);
-            return exists ? `${selectedFolder}/${filename}` : null;
+            const exists = await Api.checkCustomFileExists(selectedFolder, filename, {
+              repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
+              relativePath: useContainer ? file.path : undefined,
+            });
+            return exists ? key : null;
           } catch {
             return null;
           }
@@ -528,9 +534,15 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
     setActionError(null);
     try {
       const filename = file.file_name || file.path.split('/').pop() || file.path;
-      await Api.downloadCustomFile(url, selectedFolder, filename);
+      const useContainer = selectedFolder === "LLM" || selectedFolder === "LiquidAI-VLM";
+
+      await Api.downloadCustomFile(url, selectedFolder, filename, {
+        repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
+        relativePath: useContainer ? file.path : undefined,
+      });
 
       if (importProfile === "none") {
+        onModelImported?.();
         return;
       }
 
@@ -540,15 +552,18 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           throw new Error("VLM import requires an mmproj companion file name.");
         }
 
-        if (companion === filename) {
+        if (companion === file.path || companion === filename) {
           throw new Error("mmproj companion file must be different from the model file.");
         }
 
-        const companionExists = await Api.checkCustomFileExists(selectedFolder, companion);
+        const companionExists = await Api.checkCustomFileExists(selectedFolder, companion, {
+          repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
+          relativePath: useContainer ? companion : undefined,
+        });
         if (!companionExists) {
           const companionInRepo = repoFiles.find((repoFile) => {
             const candidate = repoFile.file_name || repoFile.path.split("/").pop() || repoFile.path;
-            return candidate === companion;
+            return repoFile.path === companion || candidate === companion;
           });
 
           if (!companionInRepo) {
@@ -556,23 +571,17 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
           }
 
           const companionUrl = `https://huggingface.co/${selectedRepo}/resolve/main/${companionInRepo.path}`;
-          await Api.downloadCustomFile(companionUrl, selectedFolder, companion);
+          const companionFilename = companionInRepo.file_name || companionInRepo.path.split('/').pop() || companionInRepo.path;
+          await Api.downloadCustomFile(companionUrl, selectedFolder, companionFilename, {
+            repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
+            relativePath: useContainer ? companionInRepo.path : undefined,
+          });
         }
       }
 
-      if (importProfile === "llm" || importProfile === "vlm") {
-        await Api.importDownloadedModel({
-          folder: selectedFolder,
-          filename,
-          profile: importProfile,
-          mmproj_file:
-            importProfile === "vlm" && mmprojFile.trim()
-              ? `${selectedFolder}/${mmprojFile.trim()}`
-              : undefined,
-          engine_adapter: "llama_cpp",
-        });
-        onModelImported?.();
-      }
+      // The backend now discovers model capabilities from physical files.
+      // Trigger a refresh so newly downloaded components appear immediately.
+      onModelImported?.();
     } catch(err) {
       console.error(err);
       setActionError(err instanceof Error ? err.message : String(err));
@@ -682,7 +691,7 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-txt-secondary">Import profile (required for model usage):</label>
+                  <label className="text-sm font-medium text-txt-secondary">Download mode (LLM/VLM capability):</label>
                   <select
                     value={importProfile}
                     onChange={(e) => setImportProfile(e.target.value as "none" | ImportModelProfile)}
@@ -696,11 +705,11 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
 
                 {importProfile === "vlm" && (
                   <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-txt-secondary">VLM mmproj file name:</label>
+                    <label className="text-sm font-medium text-txt-secondary">VLM mmproj file path in repo:</label>
                     <input
                       value={mmprojFile}
                       onChange={(e) => setMmprojFile(e.target.value)}
-                      placeholder="mmproj-....gguf"
+                      placeholder="e.g. mmproj.gguf or subdir/mmproj.gguf"
                       className="bg-void-900 border border-glass-border rounded-lg px-3 py-2 text-txt focus:outline-none focus:border-neon"
                     />
                   </div>
@@ -722,7 +731,10 @@ export default function HuggingFaceModal({ isOpen, onClose, onModelImported }: H
                     <div className="flex flex-col gap-2">
                       {repoFiles.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((file) => {
                         const filename = file.file_name || file.path.split('/').pop() || file.path;
-                        const dlKey = `${selectedFolder}/${filename}`;
+                        const useContainer = selectedFolder === "LLM" || selectedFolder === "LiquidAI-VLM";
+                        const dlKey = selectedRepo && useContainer
+                          ? `${selectedFolder}/${selectedRepo}/${file.path}`
+                          : `${selectedFolder}/${filename}`;
                         const dlState = downloads[dlKey] || downloads[filename];
                         const isDownloading = dlState !== undefined;
                         const isCompleted = completedDownloads.includes(dlKey) || completedDownloads.includes(filename);

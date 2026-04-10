@@ -122,6 +122,8 @@ fn main() {
             // Legacy-compatible commands
             app_lib::commands::models::list_models,
             app_lib::commands::models::list_vision_models,
+            app_lib::commands::models::discover_local_model_units,
+            app_lib::commands::models::sync_discovered_models,
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,
             app_lib::commands::download::download_model,
@@ -136,6 +138,7 @@ fn main() {
             app_lib::commands::audio::stop_mic_recording,
             // New unified commands
             app_lib::commands::models::list_registered_models,
+            app_lib::commands::models::update_model_params,
             app_lib::commands::models::get_model_status,
             app_lib::commands::models::start_model,
             app_lib::commands::models::stop_model,

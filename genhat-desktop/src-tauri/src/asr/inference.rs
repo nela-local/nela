@@ -18,6 +18,7 @@ use ort::session::Session;
 use realfft::num_complex::Complex;
 use realfft::RealFftPlanner;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -229,9 +230,33 @@ impl ParakeetEngine {
     /// Load the Parakeet TDT model (3 ONNX files), vocabulary, and
     /// pre-compute DSP tables.
     pub fn load(model_dir: &Path) -> Result<Self, String> {
+        let config = Self::load_config(model_dir)?;
+        Self::load_with_config(model_dir, config)
+    }
+
+    /// Load the engine with selected runtime config overrides.
+    ///
+    /// Supported overrides include:
+    /// - `max_symbols_per_step`
+    /// - `preemphasis`
+    /// - `dither`
+    /// - `n_mels`
+    /// - `n_fft`
+    /// - `hop_length`
+    /// - `win_length`
+    pub fn load_with_overrides(
+        model_dir: &Path,
+        overrides: &HashMap<String, String>,
+    ) -> Result<Self, String> {
+        let mut config = Self::load_config(model_dir)?;
+        Self::apply_overrides(&mut config, overrides);
+        Self::load_with_config(model_dir, config)
+    }
+
+    fn load_config(model_dir: &Path) -> Result<ParakeetConfig, String> {
         // ── 1. Configuration ──────────────────────────────────────────────
         let config_path = model_dir.join("config.json");
-        let config: ParakeetConfig = if config_path.exists() {
+        let config = if config_path.exists() {
             let text = std::fs::read_to_string(&config_path)
                 .map_err(|e| format!("Failed to read config.json: {e}"))?;
             serde_json::from_str(&text)
@@ -240,6 +265,41 @@ impl ParakeetEngine {
             log::info!("[Parakeet] No config.json found, using defaults for TDT 0.6B");
             ParakeetConfig::default()
         };
+        Ok(config)
+    }
+
+    fn apply_overrides(config: &mut ParakeetConfig, overrides: &HashMap<String, String>) {
+        let parse_usize = |key: &str| -> Option<usize> {
+            overrides.get(key).and_then(|value| value.parse::<usize>().ok())
+        };
+        let parse_f32 = |key: &str| -> Option<f32> {
+            overrides.get(key).and_then(|value| value.parse::<f32>().ok())
+        };
+
+        if let Some(value) = parse_usize("max_symbols_per_step") {
+            config.max_symbols_per_step = value;
+        }
+        if let Some(value) = parse_f32("preemphasis") {
+            config.preemphasis = value;
+        }
+        if let Some(value) = parse_f32("dither") {
+            config.dither = value;
+        }
+        if let Some(value) = parse_usize("n_mels") {
+            config.n_mels = value;
+        }
+        if let Some(value) = parse_usize("n_fft") {
+            config.n_fft = value;
+        }
+        if let Some(value) = parse_usize("hop_length") {
+            config.hop_length = value;
+        }
+        if let Some(value) = parse_usize("win_length") {
+            config.win_length = value;
+        }
+    }
+
+    fn load_with_config(model_dir: &Path, config: ParakeetConfig) -> Result<Self, String> {
 
         // ── 2. Load 3 ONNX sessions ──────────────────────────────────────
         let encoder_path = model_dir.join(&config.encoder_file);
