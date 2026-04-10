@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle, Cpu, Loader2, Save, SlidersHorizontal, X } from "lucide-react";
 import { Api, type CompatibilityRating } from "../api";
 import { KITTEN_TTS_VOICES } from "../types";
+import "./ActiveModelParamsDock.css";
 
 export interface RuntimeParamsTarget {
   key: string;
@@ -369,7 +370,7 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
                 </label>
                 <select
                   id={`runtime-param-${target.key}-${control.key}`}
-                  className="bg-void-800 border border-glass-border rounded-md px-2.5 py-1.5 text-[0.76rem] text-txt"
+                  className="runtime-param-select"
                   value={rawValue}
                   onChange={(e) => setValue(control.key, e.target.value)}
                 >
