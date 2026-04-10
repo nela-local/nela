@@ -36,3 +36,50 @@
   background: #0a0f14;
   color: #e7f6ff;
 }
+
+/* ── Scrollbar (match Void Glass theme) ─────────────────────────────────── */
+
+/* Firefox */
+.runtime-params-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.35) rgba(255, 255, 255, 0.03);
+}
+
+/* WebKit (Chrome / Edge / Tauri WebView) */
+.runtime-params-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.runtime-params-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+}
+
+.runtime-params-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 212, 255, 0.35) 0%,
+    rgba(0, 212, 255, 0.18) 100%
+  );
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  border-radius: 10px;
+  background-clip: padding-box;
+}
+
+.runtime-params-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 212, 255, 0.5) 0%,
+    rgba(0, 212, 255, 0.26) 100%
+  );
+  border-color: rgba(0, 212, 255, 0.35);
+}
+
+.runtime-params-scroll::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 212, 255, 0.7) 0%,
+    rgba(0, 212, 255, 0.35) 100%
+  );
+  border-color: rgba(0, 212, 255, 0.5);
+}

@@ -1,4 +1,3 @@
-import React from "react";
 import type { TourDefinition } from "./hooks/useTour";
 
 export const TOURS: TourDefinition[] = [

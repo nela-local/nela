@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTour, TourUtils, type TourPlacement } from "../hooks/useTour";
 import "./TourOverlay.css";
@@ -11,7 +11,6 @@ function clamp(value: number, min: number, max: number) {
 
 function pickPlacement(rect: Rect, preferred: TourPlacement): Exclude<TourPlacement, "auto"> {
   if (preferred !== "auto") return preferred;
-  const margin = 12;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 

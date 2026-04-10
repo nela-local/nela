@@ -1,4 +1,3 @@
-import React from "react";
 import { X } from "lucide-react";
 import { useTour } from "../hooks/useTour";
 import "./ToursModal.css";
