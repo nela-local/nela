@@ -49,6 +49,9 @@ fn main() {
                 );
             }
 
+            // 2b. Kill stale llama-server processes from previous app runs
+            app_lib::backends::llama_server::kill_stale_llama_servers();
+
             // 3. Initialize the process manager
             let process_manager = Arc::new(ProcessManager::new(&registry, models_dir));
 

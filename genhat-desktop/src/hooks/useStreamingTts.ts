@@ -67,12 +67,17 @@ export function useStreamingTts(
   const currentIndexRef = useRef<number>(0);
   const isStoppedRef = useRef<boolean>(false);
   const isPausedRef = useRef<boolean>(false);
+  const isPlayingChunkRef = useRef<boolean>(false);
+  const generationDoneRef = useRef<boolean>(false);
   const voiceRef = useRef<string | undefined>(undefined);
   const speedRef = useRef<number | undefined>(undefined);
 
   // Play the next audio chunk from the queue
   const playNextChunk = useCallback(() => {
-    if (isStoppedRef.current || isPausedRef.current) return;
+    if (isStoppedRef.current || isPausedRef.current) {
+      isPlayingChunkRef.current = false;
+      return;
+    }
 
     if (audioQueueRef.current.length > 0) {
       const audioUrl = audioQueueRef.current.shift()!;
@@ -84,20 +89,34 @@ export function useStreamingTts(
 
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
+      isPlayingChunkRef.current = true;
 
-      audio.onended = () => {
+      // Guard: when audio.play() rejects, onerror often fires too.
+      // Without this flag both handlers would increment the index and
+      // call playNextChunk(), skipping a chunk and creating two
+      // concurrent playback chains that corrupt each other's state.
+      let handled = false;
+
+      const advance = (success: boolean) => {
+        if (handled) return;
+        handled = true;
+        isPlayingChunkRef.current = false;
+
+        if (success) {
+          options?.onChunkComplete?.(currentIndexRef.current + 1, sentencesRef.current.length);
+        }
+
         currentIndexRef.current++;
         setState((prev) => ({
           ...prev,
           currentChunkIndex: currentIndexRef.current,
         }));
-        options?.onChunkComplete?.(currentIndexRef.current, sentencesRef.current.length);
-        
+
         // Play next chunk if available
         if (audioQueueRef.current.length > 0) {
           playNextChunk();
-        } else if (currentIndexRef.current >= sentencesRef.current.length) {
-          // All chunks played
+        } else if (generationDoneRef.current) {
+          // Generation finished and queue is empty — all done
           setState((prev) => ({
             ...prev,
             isPlaying: false,
@@ -105,20 +124,25 @@ export function useStreamingTts(
           }));
           options?.onEnd?.();
         }
+        // else: more chunks are still being generated —
+        // generateRemainingChunks will call playNextChunk when the
+        // next chunk arrives.
       };
+
+      audio.onended = () => advance(true);
 
       audio.onerror = () => {
-        const error = "Failed to play audio chunk";
-        setState((prev) => ({ ...prev, error }));
-        options?.onError?.(error);
+        console.warn("[TTS] Audio element error, skipping chunk", currentIndexRef.current);
+        advance(false);
       };
 
-      setState((prev) => ({ ...prev, isSpeaking: true }));
+      setState((prev) => ({ ...prev, isSpeaking: true, error: null }));
       audio.play().catch((err) => {
-        console.error("Audio play error:", err);
-        // Try playing next chunk
-        playNextChunk();
+        console.warn("[TTS] audio.play() rejected:", err);
+        advance(false);
       });
+    } else {
+      isPlayingChunkRef.current = false;
     }
   }, [options]);
 
@@ -139,8 +163,10 @@ export function useStreamingTts(
         if (!isStoppedRef.current && audioUrl) {
           audioQueueRef.current.push(audioUrl);
           
-          // Start playing if this is the first chunk
-          if (generateIndex === 0 && !isPausedRef.current) {
+          // Start playing if nothing is currently playing
+          // This handles both the first chunk AND resuming after a stall
+          // (where onended fired but the queue was empty at that time)
+          if (!isPausedRef.current && !isPlayingChunkRef.current) {
             playNextChunk();
           }
         }
@@ -152,11 +178,26 @@ export function useStreamingTts(
       generateIndex++;
     }
 
-    // If all chunks are generated but nothing is playing yet, start playing
-    if (!isStoppedRef.current && audioQueueRef.current.length > 0 && !audioRef.current?.currentTime) {
+    // Mark generation complete so playNextChunk knows there are no more
+    // chunks coming after the queue empties.
+    generationDoneRef.current = true;
+
+    if (isStoppedRef.current) return;
+
+    // Safety net: if the queue still has items but nothing is playing, kick off
+    if (audioQueueRef.current.length > 0 && !isPlayingChunkRef.current) {
       playNextChunk();
     }
-  }, [generateSpeechChunk, playNextChunk]);
+    // If queue is empty and nothing is playing, we're done
+    else if (audioQueueRef.current.length === 0 && !isPlayingChunkRef.current) {
+      setState((prev) => ({
+        ...prev,
+        isPlaying: false,
+        isSpeaking: false,
+      }));
+      options?.onEnd?.();
+    }
+  }, [generateSpeechChunk, playNextChunk, options]);
 
   const speak = useCallback(async (text: string, voice?: string, speed?: number) => {
     // Stop any current playback
@@ -170,6 +211,8 @@ export function useStreamingTts(
     // Reset state
     isStoppedRef.current = false;
     isPausedRef.current = false;
+    isPlayingChunkRef.current = false;
+    generationDoneRef.current = false;
     currentIndexRef.current = 0;
     voiceRef.current = voice;
     speedRef.current = speed;
@@ -220,6 +263,8 @@ export function useStreamingTts(
   const stop = useCallback(() => {
     isStoppedRef.current = true;
     isPausedRef.current = false;
+    isPlayingChunkRef.current = false;
+    generationDoneRef.current = false;
     
     if (audioRef.current) {
       audioRef.current.pause();

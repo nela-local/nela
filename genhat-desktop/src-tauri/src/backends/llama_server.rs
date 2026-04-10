@@ -15,6 +15,66 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+/// Kill any stale llama-server processes from previous app runs.
+/// Called at startup to reclaim GPU/memory resources leaked by zombie processes.
+#[cfg(unix)]
+pub fn kill_stale_llama_servers() {
+    // Get our own PID so we don't kill our own children (they haven't been spawned yet at startup)
+    let my_pid = std::process::id();
+
+    // Find all llama-server processes owned by the current user
+    let output = match Command::new("pgrep").args(["-f", "llama-server"]).output() {
+        Ok(o) => o,
+        Err(_) => return, // pgrep not available, skip cleanup
+    };
+
+    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .filter(|&pid| pid != my_pid)
+        .collect();
+
+    if pids.is_empty() {
+        return;
+    }
+
+    log::info!(
+        "Found {} stale llama-server process(es) from previous runs; killing them",
+        pids.len()
+    );
+
+    for pid in &pids {
+        unsafe {
+            libc::kill(*pid as i32, libc::SIGKILL);
+        }
+    }
+
+    // Give the OS a moment to reap
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Count how many are still alive (UE state processes can't be killed)
+    let still_alive: Vec<&u32> = pids
+        .iter()
+        .filter(|&&pid| unsafe { libc::kill(pid as i32, 0) } == 0)
+        .collect();
+
+    if still_alive.is_empty() {
+        log::info!("All stale llama-server processes cleaned up");
+    } else {
+        log::warn!(
+            "{} llama-server process(es) are in uninterruptible state and cannot be killed. \
+             A reboot may be required to reclaim Metal GPU resources: PIDs {:?}",
+            still_alive.len(),
+            still_alive
+        );
+    }
+}
+
+#[cfg(not(unix))]
+pub fn kill_stale_llama_servers() {
+    // No-op on non-Unix platforms; Windows uses taskkill in stop()
+}
+
 #[derive(Debug)]
 pub struct LlamaServerBackend;
 
@@ -258,7 +318,8 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
 }
 
 /// Wait for llama-server to become ready by polling its /health endpoint.
-/// Also monitors whether the process is still alive — exits early if it crashes.
+/// Also monitors whether the process is still alive — exits early if it crashes
+/// or appears stuck (zero RSS after a grace period, indicating a Metal GPU hang).
 async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{port}/health");
     let client = reqwest::Client::builder()
@@ -266,10 +327,20 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .unwrap_or_default();
-    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    let start_time = Instant::now();
+    let deadline = start_time + std::time::Duration::from_secs(timeout_secs);
+
+    // Grace period before we start checking if the process is stuck (no RSS).
+    // Metal GPU init can take a few seconds even on a healthy start.
+    let stuck_check_after = std::time::Duration::from_secs(15);
 
     loop {
         if Instant::now() > deadline {
+            // Timeout — kill the process since it's likely stuck
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
             return Err(format!(
                 "llama-server on port {port} did not become ready within {timeout_secs}s"
             ));
@@ -308,6 +379,30 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
                 }
             }
             // ret == 0 means process is still running — continue polling
+
+            // Detect stuck processes (e.g. hung in Metal GPU init): after the grace
+            // period, check if the process has any resident memory. A stuck process
+            // will have near-zero RSS because it never got past initialization.
+            if start_time.elapsed() > stuck_check_after {
+                if let Ok(rss) = get_process_rss(pid) {
+                    // A model that's actually loading will have at least a few MB of RSS.
+                    // Stuck processes typically show 0 or near-0 (just the process table entry).
+                    if rss < 1024 {
+                        log::warn!(
+                            "llama-server pid={pid} appears stuck (RSS={rss} KB after {:?}); killing",
+                            start_time.elapsed()
+                        );
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGKILL);
+                        }
+                        return Err(format!(
+                            "llama-server (pid={pid}) appears stuck during initialization (RSS={rss} KB). \
+                             This is usually caused by stale processes holding Metal GPU resources. \
+                             Try restarting the app or rebooting if the problem persists."
+                        ));
+                    }
+                }
+            }
         }
 
         match client.get(&url).send().await {
@@ -320,6 +415,19 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
             }
         }
     }
+}
+
+/// Get the resident set size (RSS) of a process in KB.
+#[cfg(unix)]
+fn get_process_rss(pid: u32) -> Result<u64, String> {
+    // On macOS, use `ps -o rss= -p <pid>` to get RSS in KB
+    let output = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .map_err(|e| format!("Failed to run ps: {e}"))?;
+    
+    let rss_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    rss_str.parse::<u64>().map_err(|e| format!("Failed to parse RSS '{rss_str}': {e}"))
 }
 
 #[async_trait]
@@ -351,8 +459,17 @@ impl ModelBackend for LlamaServerBackend {
             work_dir,
         });
 
-        // Wait for the server to be ready (up to 120s for large models with big ctx)
-        wait_for_ready(port, pid, 120).await?;
+        // Wait for the server to be ready (up to 120s for large models with big ctx).
+        // If this fails, the process may already be killed by wait_for_ready, but we
+        // also do an explicit cleanup to prevent zombie accumulation.
+        if let Err(e) = wait_for_ready(port, pid, 120).await {
+            // Ensure the process is dead
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            return Err(e);
+        }
 
         Ok(handle)
     }

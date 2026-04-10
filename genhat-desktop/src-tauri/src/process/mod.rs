@@ -331,6 +331,9 @@ impl ProcessManager {
             return Ok(loading_id);
         }
 
+        // Clean up any Error instances before counting — they are dead weight.
+        managed.instances.retain(|i| !matches!(i.status, ModelStatus::Error(_)));
+
         // 2. Check concurrency limit
         let active_count = managed
             .instances
@@ -432,12 +435,16 @@ impl ProcessManager {
                 Ok(instance_id)
             }
             Err(e) => {
-                // Remove the failed instance
+                // Set instance to Error (not remove) so concurrent waiters see the real error.
                 let mut models = self.models.write().await;
                 if let Some(managed) = models.get_mut(model_id) {
-                    managed
+                    if let Some(inst) = managed
                         .instances
-                        .retain(|i| i.instance_id != instance_id);
+                        .iter_mut()
+                        .find(|i| i.instance_id == instance_id)
+                    {
+                        inst.status = ModelStatus::Error(e.to_string());
+                    }
                 }
                 Err(format!("Failed to start model '{model_id}': {e}"))
             }
@@ -735,6 +742,16 @@ impl ProcessManager {
                 let mut to_remove = Vec::new();
 
                 for (idx, inst) in managed.instances.iter().enumerate() {
+                    // Reap failed (Error) instances immediately
+                    if matches!(inst.status, ModelStatus::Error(_)) {
+                        log::info!(
+                            "Reaping failed instance '{}' of '{model_id}'",
+                            &inst.instance_id[..8]
+                        );
+                        to_remove.push(idx);
+                        continue;
+                    }
+
                     if inst.ephemeral
                         && inst.active_requests == 0
                         && inst.last_activity.elapsed().as_secs() >= timeout_s
