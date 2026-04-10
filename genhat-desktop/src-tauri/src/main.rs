@@ -5,6 +5,7 @@
 //! Slim bootstrap: loads config, initializes the process control module,
 //! registers Tauri commands, and handles app lifecycle.
 
+use app_lib::commands::audio::MicRecorderState;
 use app_lib::commands::inference::TaskRouterState;
 use app_lib::commands::models::ProcessManagerState;
 use app_lib::commands::rag::RagPipelineState;
@@ -47,6 +48,9 @@ fn main() {
                     e
                 );
             }
+
+            // 2b. Kill stale llama-server processes from previous app runs
+            app_lib::backends::llama_server::kill_stale_llama_servers();
 
             // 3. Initialize the process manager
             let process_manager = Arc::new(ProcessManager::new(&registry, models_dir));
@@ -110,6 +114,7 @@ fn main() {
             app.manage(RagPipelineState(RwLock::new(rag_pipeline)));
             app.manage(WorkspaceState(workspace_manager));
             app.manage(DownloadState::default());
+            app.manage(MicRecorderState::default());
 
             Ok(())
         })
@@ -117,6 +122,8 @@ fn main() {
             // Legacy-compatible commands
             app_lib::commands::models::list_models,
             app_lib::commands::models::list_vision_models,
+            app_lib::commands::models::discover_local_model_units,
+            app_lib::commands::models::sync_discovered_models,
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,
             app_lib::commands::download::download_model,
@@ -125,8 +132,13 @@ fn main() {
             app_lib::commands::download::download_custom_file,
             app_lib::commands::download::check_custom_file_exists,
             app_lib::commands::audio::generate_speech,
+            app_lib::commands::audio::transcribe_audio_base64,
+            app_lib::commands::audio::generate_speech_chunk,
+            app_lib::commands::audio::start_mic_recording,
+            app_lib::commands::audio::stop_mic_recording,
             // New unified commands
             app_lib::commands::models::list_registered_models,
+            app_lib::commands::models::update_model_params,
             app_lib::commands::models::get_model_status,
             app_lib::commands::models::start_model,
             app_lib::commands::models::stop_model,

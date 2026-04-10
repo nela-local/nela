@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use std::fs::File;
 use std::io::Write;
+use std::path::{Component, PathBuf};
 use tauri::{Emitter, State};
 
 
@@ -11,6 +12,36 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+fn sanitize_relative_path(input: &str) -> Result<PathBuf, String> {
+    let raw = input.replace('\\', "/");
+    let mut out = PathBuf::new();
+
+    for comp in std::path::Path::new(&raw).components() {
+        match comp {
+            Component::Normal(segment) => out.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("Invalid relative path: {}", input));
+            }
+        }
+    }
+
+    if out.as_os_str().is_empty() {
+        return Err("Path cannot be empty".to_string());
+    }
+
+    Ok(out)
+}
+
+fn sanitize_repo_id(repo_id: &str) -> Result<PathBuf, String> {
+    let normalized = repo_id.trim().replace('\\', "/").trim_matches('/').to_string();
+    if normalized.is_empty() {
+        return Err("Repository ID cannot be empty".to_string());
+    }
+
+    sanitize_relative_path(&normalized)
+}
 
 #[derive(Default)]
 pub struct DownloadState {
@@ -46,6 +77,11 @@ pub async fn uninstall_model(
     let model_path = models_dir.join(&def.model_file);
     
     let is_custom = custom::is_custom_model(&models_dir, &model_id).unwrap_or(false);
+    let is_disk_scanned = def
+        .params
+        .get("discovery_source")
+        .map(|v| v == "disk_scan")
+        .unwrap_or(false);
 
     // Attempt to stop the model before deleting
     let _ = state.0.stop_model(&model_id).await;
@@ -73,9 +109,11 @@ pub async fn uninstall_model(
         }
     }
     
-    if is_custom {
+    if is_custom || is_disk_scanned {
         let _ = state.0.unregister_model(&model_id).await;
-        let _ = custom::remove_custom_model(&models_dir, &model_id);
+        if is_custom {
+            let _ = custom::remove_custom_model(&models_dir, &model_id);
+        }
     }
 
     Ok(())
@@ -356,16 +394,40 @@ pub async fn download_custom_file(
     url: String,
     folder: String,
     filename: String,
+    repo_id: Option<String>,
+    relative_path: Option<String>,
     download_state: State<'_, DownloadState>,
 ) -> Result<(), String> {
     let models_dir = crate::paths::resolve_models_dir();
-    let model_path = models_dir.join(&folder).join(&filename);
+    let folder_rel = sanitize_relative_path(&folder)?;
+    let file_rel = if let Some(ref rel) = relative_path {
+        sanitize_relative_path(rel)?
+    } else {
+        sanitize_relative_path(&filename)?
+    };
+
+    let container_rel = if let Some(repo) = repo_id.as_ref().filter(|s| !s.trim().is_empty()) {
+        folder_rel.join(sanitize_repo_id(repo)?)
+    } else {
+        folder_rel
+    };
+
+    let model_path = models_dir.join(&container_rel).join(&file_rel);
 
     if let Some(parent) = model_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let model_id = format!("{}/{}", folder, filename);
+    let model_id = if let Some(repo) = repo_id.as_ref().filter(|s| !s.trim().is_empty()) {
+        format!(
+            "{}/{}/{}",
+            folder,
+            repo.trim_matches('/'),
+            file_rel.to_string_lossy().replace('\\', "/")
+        )
+    } else {
+        format!("{}/{}", folder, filename)
+    };
 
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
@@ -510,9 +572,36 @@ pub async fn download_custom_file(
 }
 
 #[tauri::command]
-pub fn check_custom_file_exists(folder: String, filename: String) -> bool {
+pub fn check_custom_file_exists(
+    folder: String,
+    filename: String,
+    repo_id: Option<String>,
+    relative_path: Option<String>,
+) -> bool {
     let models_dir = crate::paths::resolve_models_dir();
-    let model_path = models_dir.join(&folder).join(&filename);
+    let folder_rel = match sanitize_relative_path(&folder) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+
+    let file_rel = match relative_path
+        .as_ref()
+        .map(|value| sanitize_relative_path(value))
+        .unwrap_or_else(|| sanitize_relative_path(&filename))
+    {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+
+    let container_rel = match repo_id.as_ref().filter(|s| !s.trim().is_empty()) {
+        Some(repo) => match sanitize_repo_id(repo) {
+            Ok(repo_rel) => folder_rel.join(repo_rel),
+            Err(_) => return false,
+        },
+        None => folder_rel,
+    };
+
+    let model_path = models_dir.join(container_rel).join(file_rel);
     model_path.exists()
 }
 

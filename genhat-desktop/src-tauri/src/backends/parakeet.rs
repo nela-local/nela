@@ -33,9 +33,13 @@ impl ParakeetBackend {
 #[async_trait]
 impl super::ModelBackend for ParakeetBackend {
     /// Load the Parakeet ONNX model, vocabulary, and pre-compute DSP tables.
+    ///
+    /// Runs on a blocking thread to avoid stalling the tokio async runtime
+    /// while loading ~700 MB of ONNX sessions.
     async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
         // model_file points to the model directory (e.g. "parakeet")
         let model_dir = models_dir.join(&def.model_file);
+        let overrides = def.params.clone();
 
         if !model_dir.exists() {
             return Err(format!(
@@ -46,14 +50,20 @@ impl super::ModelBackend for ParakeetBackend {
 
         log::info!("[Parakeet] Starting from {}", model_dir.display());
 
-        let engine = ParakeetEngine::load(&model_dir)?;
+        // Heavy synchronous I/O — offload to a blocking thread so the async
+        // runtime stays responsive and the frontend doesn't hang.
+        let handle = tokio::task::spawn_blocking(move || {
+            let engine = ParakeetEngine::load_with_overrides(&model_dir, &overrides)?;
+            log::info!("[Parakeet] Engine loaded and ready");
+            Ok::<ModelHandle, String>(ModelHandle::InMemory(InMemoryHandle {
+                model: Arc::new(engine),
+                loaded_at: Instant::now(),
+            }))
+        })
+        .await
+        .map_err(|e| format!("Parakeet model loading thread panicked: {e}"))??;
 
-        log::info!("[Parakeet] Engine loaded and ready");
-
-        Ok(ModelHandle::InMemory(InMemoryHandle {
-            model: Arc::new(engine),
-            loaded_at: Instant::now(),
-        }))
+        Ok(handle)
     }
 
     async fn is_healthy(&self, handle: &ModelHandle) -> bool {
@@ -65,6 +75,9 @@ impl super::ModelBackend for ParakeetBackend {
     /// `request.input` must be the absolute path to an audio file.
     /// Returns `TaskResponse::Transcription` with a single segment
     /// containing the full transcription text.
+    ///
+    /// Runs ONNX inference on a blocking thread so the async runtime
+    /// stays responsive.
     async fn execute(
         &self,
         handle: &ModelHandle,
@@ -76,39 +89,48 @@ impl super::ModelBackend for ParakeetBackend {
             _ => return Err("Parakeet requires InMemoryHandle".into()),
         };
 
-        let engine = mem
-            .model
-            .downcast_ref::<ParakeetEngine>()
-            .ok_or("Failed to downcast to ParakeetEngine")?;
+        // Clone the Arc so we can move it into the blocking thread.
+        let model_arc = mem.model.clone();
+        let audio_input = request.input.clone();
 
-        let audio_path = std::path::Path::new(&request.input);
-        if !audio_path.exists() {
-            return Err(format!("Audio file not found: {}", audio_path.display()));
-        }
+        let result = tokio::task::spawn_blocking(move || {
+            let engine = model_arc
+                .downcast_ref::<ParakeetEngine>()
+                .ok_or("Failed to downcast to ParakeetEngine")?;
 
-        let start = Instant::now();
-        let text = engine.transcribe(audio_path)?;
-        let elapsed = start.elapsed();
+            let audio_path = std::path::Path::new(&audio_input);
+            if !audio_path.exists() {
+                return Err(format!("Audio file not found: {}", audio_path.display()));
+            }
 
-        log::info!(
-            "[Parakeet] Transcribed {} in {:.2}s",
-            audio_path.display(),
-            elapsed.as_secs_f64(),
-        );
+            let start = Instant::now();
+            let text = engine.transcribe(audio_path)?;
+            let elapsed = start.elapsed();
 
-        // Return as a single-segment transcription (no sub-segment timestamps
-        // from greedy TDT decode — the text covers the entire file).
-        let segments = if text.is_empty() {
-            Vec::new()
-        } else {
-            vec![TranscriptSegment {
-                text,
-                start_ms: 0,
-                end_ms: 0,
-            }]
-        };
+            log::info!(
+                "[Parakeet] Transcribed {} in {:.2}s",
+                audio_path.display(),
+                elapsed.as_secs_f64(),
+            );
 
-        Ok(TaskResponse::Transcription { segments })
+            // Return as a single-segment transcription (no sub-segment timestamps
+            // from greedy TDT decode — the text covers the entire file).
+            let segments = if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![TranscriptSegment {
+                    text,
+                    start_ms: 0,
+                    end_ms: 0,
+                }]
+            };
+
+            Ok::<TaskResponse, String>(TaskResponse::Transcription { segments })
+        })
+        .await
+        .map_err(|e| format!("Parakeet transcription thread panicked: {e}"))??;
+
+        Ok(result)
     }
 
     async fn stop(&self, _handle: &ModelHandle) -> Result<(), String> {

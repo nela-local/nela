@@ -137,7 +137,7 @@ is_zip = true
 [models.params]
 mmproj_file = "LiquidAI-VLM/mmproj-LFM2.5-VL-1.6b-Q8_0.gguf"
 image_max_tokens = "64"
-max_tokens = "256"
+max_tokens = "1024"
 
 # ── Embedding: BGE-small-en-v1.5 (llama-server --embedding mode) ──────────────
 

@@ -239,12 +239,6 @@ function App() {
 
       // Vision Mode - use streaming CLI backend
       if (chatMode === "vision") {
-        if (!imagePath) {
-          setResponse("Please select an image first");
-          setLoading(false);
-          return;
-        }
-        
         try {
           // Clean up any previous listener before registering a new one
           visionUnlistenRef.current?.();
@@ -264,7 +258,7 @@ function App() {
 
           // Start the streaming vision chat
           await invoke("vision_chat_stream", {
-            imagePath: imagePath,
+            imagePath: imagePath || null,
             prompt: prompt || "What's in this image?",
             modelId: selectedVisionModel || null,
           });

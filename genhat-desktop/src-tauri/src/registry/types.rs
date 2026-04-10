@@ -332,4 +332,5 @@ pub struct ModelInfo {
     pub model_source: String,
     pub model_profile: Option<String>,
     pub engine_adapter: Option<String>,
+    pub params: HashMap<String, String>,
 }

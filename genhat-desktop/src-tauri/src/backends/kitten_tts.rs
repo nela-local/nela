@@ -44,17 +44,21 @@ impl super::ModelBackend for KittenTtsBackend {
 
         log::info!("[KittenTTS] Starting from {}", model_dir.display());
 
-        let engine = KittenTtsEngine::load(&model_dir)?;
+        let handle = tokio::task::spawn_blocking(move || {
+            let engine = KittenTtsEngine::load(&model_dir)?;
+            log::info!(
+                "[KittenTTS] Engine loaded — voices: {:?}",
+                engine.voice_names()
+            );
+            Ok::<ModelHandle, String>(ModelHandle::InMemory(InMemoryHandle {
+                model: Arc::new(engine),
+                loaded_at: Instant::now(),
+            }))
+        })
+        .await
+        .map_err(|e| format!("KittenTTS model loading thread panicked: {e}"))??;
 
-        log::info!(
-            "[KittenTTS] Engine loaded — voices: {:?}",
-            engine.voice_names()
-        );
-
-        Ok(ModelHandle::InMemory(InMemoryHandle {
-            model: Arc::new(engine),
-            loaded_at: Instant::now(),
-        }))
+        Ok(handle)
     }
 
     async fn is_healthy(&self, handle: &ModelHandle) -> bool {
@@ -72,39 +76,45 @@ impl super::ModelBackend for KittenTtsBackend {
             _ => return Err("KittenTTS requires InMemoryHandle".into()),
         };
 
-        let engine = mem
-            .model
-            .downcast_ref::<KittenTtsEngine>()
-            .ok_or("Failed to downcast to KittenTtsEngine")?;
-
+        let model_arc = mem.model.clone();
+        let input_text = request.input.clone();
         let voice = request
             .extra
             .get("voice")
-            .map(|s| s.as_str())
-            .unwrap_or("Leo");
-
+            .cloned()
+            .unwrap_or_else(|| "Leo".to_string());
         let speed: f32 = request
             .extra
             .get("speed")
             .and_then(|s| s.parse().ok())
             .unwrap_or(1.0);
 
-        // Generate to a temp WAV file
-        let output_dir = std::env::temp_dir().join("genhat-tts");
-        std::fs::create_dir_all(&output_dir)
-            .map_err(|e| format!("Failed to create TTS output dir: {e}"))?;
+        let result = tokio::task::spawn_blocking(move || {
+            let engine = model_arc
+                .downcast_ref::<KittenTtsEngine>()
+                .ok_or("Failed to downcast to KittenTtsEngine")?;
 
-        let filename = format!("{}.wav", uuid::Uuid::new_v4());
-        let output_path = output_dir.join(&filename);
+            // Generate to a temp WAV file
+            let output_dir = std::env::temp_dir().join("genhat-tts");
+            std::fs::create_dir_all(&output_dir)
+                .map_err(|e| format!("Failed to create TTS output dir: {e}"))?;
 
-        let path_str = engine.generate_to_file(
-            &request.input,
-            voice,
-            speed,
-            &output_path,
-        )?;
+            let filename = format!("{}.wav", uuid::Uuid::new_v4());
+            let output_path = output_dir.join(&filename);
 
-        Ok(TaskResponse::FilePath(path_str))
+            let path_str = engine.generate_to_file(
+                &input_text,
+                &voice,
+                speed,
+                &output_path,
+            )?;
+
+            Ok::<TaskResponse, String>(TaskResponse::FilePath(path_str))
+        })
+        .await
+        .map_err(|e| format!("KittenTTS synthesis thread panicked: {e}"))??;
+
+        Ok(result)
     }
 
     async fn stop(&self, _handle: &ModelHandle) -> Result<(), String> {

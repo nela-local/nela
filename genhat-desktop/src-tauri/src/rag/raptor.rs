@@ -44,7 +44,7 @@
 //! - `MIN_CLUSTER_SIZE`: 3
 //! - `MAX_TREE_DEPTH`: 2
 
-use crate::rag::db::{bytes_to_embedding, cosine_similarity, embedding_to_bytes, RagDb};
+use crate::rag::db::{bytes_to_embedding, dot_product, embedding_to_bytes, RagDb};
 use crate::registry::types::TaskResponse;
 use crate::router::tasks;
 use crate::router::TaskRouter;
@@ -283,7 +283,7 @@ fn kmeans_cluster(embeddings: &[Vec<f32>], k: usize, max_iterations: usize) -> V
             let mut best_cluster = 0;
             let mut best_sim = f32::NEG_INFINITY;
             for (c, centroid) in centroids.iter().enumerate() {
-                let sim = cosine_similarity(emb, centroid);
+                let sim = dot_product(emb, centroid);
                 if sim > best_sim {
                     best_sim = sim;
                     best_cluster = c;
@@ -619,7 +619,7 @@ async fn embed_text(router: &TaskRouter, text: &str) -> Result<Vec<f32>, String>
 /// # Returns
 /// Vec of (chunk_id, score, text) tuples, where:
 /// - chunk_id is the original chunk ID (or RAPTOR node ID)
-/// - score is the cosine similarity to the query
+/// - score is the dot-product similarity to the query
 /// - text is either summary or expanded child text
 ///
 /// # Example
@@ -658,7 +658,7 @@ pub async fn raptor_retrieve(
     let mut scored: Vec<(i64, f32)> = raptor_embeddings
         .iter()
         .map(|(node_id, emb)| {
-            let sim = cosine_similarity(&query_embedding, emb);
+            let sim = dot_product(&query_embedding, emb);
             (*node_id, sim)
         })
         .collect();

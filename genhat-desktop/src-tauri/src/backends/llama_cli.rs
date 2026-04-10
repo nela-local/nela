@@ -20,6 +20,14 @@ use tauri::{AppHandle, Emitter};
 #[derive(Debug)]
 pub struct LlamaCliBackend;
 
+fn parse_bool_param(value: &str, default: bool) -> bool {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
 /// Platform-specific constants.
 const OS_FOLDER: &str = if cfg!(target_os = "windows") {
     "llama-win"
@@ -239,16 +247,40 @@ impl super::ModelBackend for LlamaCliBackend {
             }
             cmd.arg("--image").arg(image_path);
 
-            // Image max tokens (optional, default 64)
-            let max_img_tokens = request.extra.get("image_max_tokens").map(|s| s.as_str()).unwrap_or("64");
-            cmd.arg("--image-max-tokens").arg(max_img_tokens);
+            if let Some(min_img_tokens) = request.extra.get("image_min_tokens") {
+                if !min_img_tokens.trim().is_empty() {
+                    cmd.arg("--image-min-tokens").arg(min_img_tokens);
+                }
+            }
+
+            if let Some(max_img_tokens) = request.extra.get("image_max_tokens") {
+                if !max_img_tokens.trim().is_empty() {
+                    cmd.arg("--image-max-tokens").arg(max_img_tokens);
+                }
+            }
         }
 
         // Prompt
         cmd.arg("-p").arg(&request.input);
 
+        // Many modern VLM chat templates (for example Gemma variants) require
+        // Jinja mode in llama.cpp; default on for compatibility.
+        let use_jinja = request
+            .extra
+            .get("use_jinja")
+            .map(|v| parse_bool_param(v, true))
+            .unwrap_or(true);
+        if use_jinja {
+            cmd.arg("--jinja");
+        }
+
         // Max output tokens
-        let max_tokens = request.extra.get("max_tokens").map(|s| s.as_str()).unwrap_or("256");
+        let max_tokens = request
+            .extra
+            .get("max_tokens")
+            .map(|s| s.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or("1024");
         cmd.arg("-n").arg(max_tokens);
 
         // Log the full command for debugging
@@ -298,9 +330,12 @@ impl super::ModelBackend for LlamaCliBackend {
 pub async fn execute_vision_streaming(
     model_file: &str,
     mmproj_file: &str,
-    image_path: &str,
+    image_path: Option<&str>,
     prompt: &str,
     max_tokens: &str,
+    image_min_tokens: Option<&str>,
+    image_max_tokens: Option<&str>,
+    use_jinja: bool,
     models_dir: &Path,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -317,16 +352,25 @@ pub async fn execute_vision_streaming(
         return Err(format!("mmproj file not found: {}", mmproj_path.display()));
     }
 
-    let img = Path::new(image_path);
-    if !img.exists() {
-        return Err(format!("Image file not found: {image_path}"));
+    let image_path = image_path
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(path) = image_path {
+        let img = Path::new(path);
+        if !img.exists() {
+            return Err(format!("Image file not found: {path}"));
+        }
     }
 
     let work_dir = exe_path
         .parent()
         .ok_or_else(|| "llama-mtmd-cli has no parent directory".to_string())?;
 
-    log::info!("Starting streaming vision chat: model={}, image={}", model_file, image_path);
+    log::info!(
+        "Starting streaming vision chat: model={}, image={}",
+        model_file,
+        image_path.unwrap_or("<none>")
+    );
 
     let mut cmd = TokioCommand::new(&exe_path);
     cmd.current_dir(work_dir);
@@ -334,15 +378,38 @@ pub async fn execute_vision_streaming(
     #[cfg(windows)]
     crate::windows_spawn::hide_console_tokio(&mut cmd);
 
-    let mut child = cmd
+    let child = cmd
         .arg("-m").arg(&model_path)
         .arg("--mmproj").arg(&mmproj_path)
-        .arg("--image").arg(image_path)
-        .arg("--image-max-tokens").arg("64")
         .arg("-p").arg(prompt)
         .arg("-n").arg(max_tokens)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        ;
+
+    if let Some(path) = image_path {
+        child.arg("--image").arg(path);
+    }
+
+    if image_path.is_some() {
+        if let Some(min_tokens) = image_min_tokens {
+            if !min_tokens.trim().is_empty() {
+                child.arg("--image-min-tokens").arg(min_tokens);
+            }
+        }
+
+        if let Some(max_tokens) = image_max_tokens {
+            if !max_tokens.trim().is_empty() {
+                child.arg("--image-max-tokens").arg(max_tokens);
+            }
+        }
+    }
+
+    if use_jinja {
+        child.arg("--jinja");
+    }
+
+    let mut child = child
         .spawn()
         .map_err(|e| format!("Failed to spawn llama-mtmd-cli: {e}"))?;
 

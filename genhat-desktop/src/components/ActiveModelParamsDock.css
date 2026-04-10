@@ -1,0 +1,38 @@
+.runtime-param-select {
+  width: 100%;
+  background: rgba(14, 20, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 12px;
+  padding-right: 34px;
+  font-size: 0.76rem;
+  color: #e7f6ff;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2388b4cc' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.runtime-param-select:hover {
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.runtime-param-select:focus {
+  outline: none;
+  border-color: #00d4ff;
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
+}
+
+.runtime-param-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.runtime-param-select option {
+  background: #0a0f14;
+  color: #e7f6ff;
+}

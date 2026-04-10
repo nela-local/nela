@@ -15,6 +15,66 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+/// Kill any stale llama-server processes from previous app runs.
+/// Called at startup to reclaim GPU/memory resources leaked by zombie processes.
+#[cfg(unix)]
+pub fn kill_stale_llama_servers() {
+    // Get our own PID so we don't kill our own children (they haven't been spawned yet at startup)
+    let my_pid = std::process::id();
+
+    // Find all llama-server processes owned by the current user
+    let output = match Command::new("pgrep").args(["-f", "llama-server"]).output() {
+        Ok(o) => o,
+        Err(_) => return, // pgrep not available, skip cleanup
+    };
+
+    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .filter(|&pid| pid != my_pid)
+        .collect();
+
+    if pids.is_empty() {
+        return;
+    }
+
+    log::info!(
+        "Found {} stale llama-server process(es) from previous runs; killing them",
+        pids.len()
+    );
+
+    for pid in &pids {
+        unsafe {
+            libc::kill(*pid as i32, libc::SIGKILL);
+        }
+    }
+
+    // Give the OS a moment to reap
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Count how many are still alive (UE state processes can't be killed)
+    let still_alive: Vec<&u32> = pids
+        .iter()
+        .filter(|&&pid| unsafe { libc::kill(pid as i32, 0) } == 0)
+        .collect();
+
+    if still_alive.is_empty() {
+        log::info!("All stale llama-server processes cleaned up");
+    } else {
+        log::warn!(
+            "{} llama-server process(es) are in uninterruptible state and cannot be killed. \
+             A reboot may be required to reclaim Metal GPU resources: PIDs {:?}",
+            still_alive.len(),
+            still_alive
+        );
+    }
+}
+
+#[cfg(not(unix))]
+pub fn kill_stale_llama_servers() {
+    // No-op on non-Unix platforms; Windows uses taskkill in stop()
+}
+
 #[derive(Debug)]
 pub struct LlamaServerBackend;
 
@@ -161,10 +221,10 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         args.push(batch_size);
     }
 
-    // Enable Flash Attention if configured (requires value: on/off/auto)
+    // Enable Flash Attention if configured (valid values: enabled/disabled/auto/true/false)
     if def.param_or("flash_attn", "false") == "true" {
         args.push("--flash-attn".to_string());
-        args.push("on".to_string());
+        args.push("enabled".to_string());
     }
 
     // Enable mlock (lock model in RAM, prevent swap) if configured
@@ -258,25 +318,42 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
 }
 
 /// Wait for llama-server to become ready by polling its /health endpoint.
-/// Also monitors whether the process is still alive — exits early if it crashes.
+/// Also monitors whether the process is still alive — exits early if it crashes
+/// or appears stuck (zero RSS after a grace period, indicating a Metal GPU hang).
 async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{port}/health");
-    let client = reqwest::Client::new();
-    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+    let start_time = Instant::now();
+    let deadline = start_time + std::time::Duration::from_secs(timeout_secs);
+
+    // Grace period before we start checking if the process is stuck (no RSS).
+    // Metal GPU init can take a few seconds even on a healthy start.
+    let stuck_check_after = std::time::Duration::from_secs(15);
 
     loop {
         if Instant::now() > deadline {
+            // Timeout — kill the process since it's likely stuck
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
             return Err(format!(
                 "llama-server on port {port} did not become ready within {timeout_secs}s"
             ));
         }
 
-        // Check if the process has exited (crashed on startup)
+        // Check if the process has exited (crashed on startup).
+        // Use waitpid(WNOHANG) to detect zombies that kill(pid,0) misses.
         #[cfg(unix)]
         {
-            // kill(pid, 0) checks if process exists without sending a signal
-            let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
-            if !alive {
+            let mut status: libc::c_int = 0;
+            let ret = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
+            if ret > 0 {
+                // Process has exited — it's a zombie we just reaped
                 let log_path = std::env::temp_dir().join(format!("genhat-llama-server-{port}.log"));
                 let hint = if log_path.exists() {
                     format!(" Check log: {}", log_path.display())
@@ -286,6 +363,45 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
                 return Err(format!(
                     "llama-server (pid={pid}) crashed before becoming ready.{hint}"
                 ));
+            } else if ret < 0 {
+                // ECHILD — not our child or already reaped; fall back to kill check
+                let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+                if !alive {
+                    let log_path = std::env::temp_dir().join(format!("genhat-llama-server-{port}.log"));
+                    let hint = if log_path.exists() {
+                        format!(" Check log: {}", log_path.display())
+                    } else {
+                        String::new()
+                    };
+                    return Err(format!(
+                        "llama-server (pid={pid}) crashed before becoming ready.{hint}"
+                    ));
+                }
+            }
+            // ret == 0 means process is still running — continue polling
+
+            // Detect stuck processes (e.g. hung in Metal GPU init): after the grace
+            // period, check if the process has any resident memory. A stuck process
+            // will have near-zero RSS because it never got past initialization.
+            if start_time.elapsed() > stuck_check_after {
+                if let Ok(rss) = get_process_rss(pid) {
+                    // A model that's actually loading will have at least a few MB of RSS.
+                    // Stuck processes typically show 0 or near-0 (just the process table entry).
+                    if rss < 1024 {
+                        log::warn!(
+                            "llama-server pid={pid} appears stuck (RSS={rss} KB after {:?}); killing",
+                            start_time.elapsed()
+                        );
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGKILL);
+                        }
+                        return Err(format!(
+                            "llama-server (pid={pid}) appears stuck during initialization (RSS={rss} KB). \
+                             This is usually caused by stale processes holding Metal GPU resources. \
+                             Try restarting the app or rebooting if the problem persists."
+                        ));
+                    }
+                }
             }
         }
 
@@ -299,6 +415,19 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
             }
         }
     }
+}
+
+/// Get the resident set size (RSS) of a process in KB.
+#[cfg(unix)]
+fn get_process_rss(pid: u32) -> Result<u64, String> {
+    // On macOS, use `ps -o rss= -p <pid>` to get RSS in KB
+    let output = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .map_err(|e| format!("Failed to run ps: {e}"))?;
+    
+    let rss_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    rss_str.parse::<u64>().map_err(|e| format!("Failed to parse RSS '{rss_str}': {e}"))
 }
 
 #[async_trait]
@@ -330,8 +459,17 @@ impl ModelBackend for LlamaServerBackend {
             work_dir,
         });
 
-        // Wait for the server to be ready (up to 120s for large models with big ctx)
-        wait_for_ready(port, pid, 120).await?;
+        // Wait for the server to be ready (up to 120s for large models with big ctx).
+        // If this fails, the process may already be killed by wait_for_ready, but we
+        // also do an explicit cleanup to prevent zombie accumulation.
+        if let Err(e) = wait_for_ready(port, pid, 120).await {
+            // Ensure the process is dead
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            return Err(e);
+        }
 
         Ok(handle)
     }
@@ -465,7 +603,7 @@ impl ModelBackend for LlamaServerBackend {
 
         // Control reasoning/thinking behavior based on task type.
         // For non-chat tasks (enrich, summarize, etc.), disable thinking to improve speed.
-        // For chat tasks, use deepseek format to separate thinking from response.
+        // For chat tasks, keep thinking OFF by default; callers may explicitly opt in.
         // 
         // IMPORTANT: When disabling reasoning, we must set ALL THREE:
         //   - reasoning_budget = 0 (disables generation of thinking tokens)
@@ -474,13 +612,23 @@ impl ModelBackend for LlamaServerBackend {
         // Setting only budget=0 may not fully disable reasoning on some models.
         match request.task_type {
             crate::registry::types::TaskType::Chat => {
-                // Enable thinking for chat, extract it separately
-                // Check if user wants thinking disabled via extra params
-                let disable_thinking = request.extra.get("disable_thinking")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false);
-                
-                if !disable_thinking {
+                // Backward compatibility:
+                // - `enable_thinking=true` explicitly enables reasoning.
+                // - `disable_thinking=false` also enables reasoning.
+                // - If neither is provided, reasoning remains disabled by default.
+                let enable_thinking = request
+                    .extra
+                    .get("enable_thinking")
+                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    .unwrap_or_else(|| {
+                        !request
+                            .extra
+                            .get("disable_thinking")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                            .unwrap_or(true)
+                    });
+
+                if enable_thinking {
                     body["reasoning_format"] = serde_json::json!("deepseek");
                     body["reasoning_budget"] = serde_json::json!(-1); // Unrestricted
                     body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": true});
