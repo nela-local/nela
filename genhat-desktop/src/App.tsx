@@ -26,6 +26,7 @@ import type {
   MindMapGraph,
   MindMapNode,
   WorkspaceRecord,
+  ImportModelProfile,
 } from "./types";
 import { KITTEN_TTS_VOICES } from "./types";
 import ChatWindow from "./components/ChatWindow";
@@ -277,6 +278,13 @@ function App() {
   const [sessionModelParamOverrides, setSessionModelParamOverrides] = useState<Record<string, Record<string, string>>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hfModalOpen, setHfModalOpen] = useState(false);
+  const [hfModalPreset, setHfModalPreset] = useState<{
+    folder: string;
+    profile: "none" | ImportModelProfile;
+  }>({
+    folder: "LLM",
+    profile: "llm",
+  });
   const [downloadOptionalOnStart, setDownloadOptionalOnStart] = useState(() => {
     return localStorage.getItem(STARTUP_OPTIONAL_DOWNLOAD_KEY) === "true";
   });
@@ -1310,10 +1318,6 @@ function App() {
     });
   };
 
-  const showInfo = (message: string, title = "Info") => {
-    showModal("info", title, message);
-  };
-
   const showError = (message: string, title = "Error") => {
     showModal("error", title, message);
   };
@@ -1469,9 +1473,13 @@ function App() {
   };
 
   const handleAddModel = () => {
-    showInfo(
-      "To add a model, place the .gguf file into the 'models' folder of the application and restart/refresh."
-    );
+    setHfModalPreset({ folder: "LLM", profile: "llm" });
+    setHfModalOpen(true);
+  };
+
+  const handleAddVisionModel = () => {
+    setHfModalPreset({ folder: "LiquidAI-VLM", profile: "vlm" });
+    setHfModalOpen(true);
   };
 
   // ── Vision helpers ─────────────────────────────────────────────────────────
@@ -2361,6 +2369,8 @@ function App() {
         isOpen={hfModalOpen}
         onClose={() => setHfModalOpen(false)}
         onModelImported={refreshModels}
+        defaultFolder={hfModalPreset.folder}
+        defaultImportProfile={hfModalPreset.profile}
       />
 
       {/* Main app content stays visible in background behind startup modal */}
@@ -2371,7 +2381,7 @@ function App() {
         onImportProject={() => void openWorkspaceFromFile()}
         onExportProject={() => void saveWorkspaceFile()}
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenHuggingFaceSearch={() => setHfModalOpen(true)}
+        onOpenHuggingFaceSearch={handleAddModel}
         workspaceBusy={workspaceBusy}
         canExport={!!activeWorkspace}
       />
@@ -2573,7 +2583,6 @@ function App() {
                     selectedModel={selectedTtsEngine}
                     onSelect={setSelectedTtsEngine}
                     type="audio"
-                    onAdd={handleAddModel}
                     onDownload={handleDownloadModel}
                     onCancelDownload={handleCancelDownload}
                     onUninstall={handleUninstall}
@@ -2590,7 +2599,7 @@ function App() {
                   selectedModel={selectedVisionModel}
                   onSelect={setSelectedVisionModel}
                   type="vision"
-                  onAdd={handleAddModel}
+                  onAdd={handleAddVisionModel}
                   onDownload={handleDownloadModel}
                   onCancelDownload={handleCancelDownload}
                   onUninstall={handleUninstall}

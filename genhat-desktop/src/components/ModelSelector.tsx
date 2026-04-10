@@ -27,6 +27,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   onUninstall,
   onConfirm,
   downloads = {},
+  onAdd,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
@@ -53,6 +54,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const installedModels = models.filter(m => m.is_downloaded || downloads[m.path] !== undefined || !m.gdrive_id);
   const missingModelsCount = models.filter(m => !m.is_downloaded && m.gdrive_id).length;
+  const useExternalInstallFlow = typeof onAdd === "function" && (type === "llm" || type === "vision");
 
   return (
     <div className="model-selector-container" ref={containerRef}>
@@ -134,30 +136,40 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             <button
               className="add-model-btn"
               onClick={() => {
-                setIsInstallModalOpen(true);
+                if (useExternalInstallFlow) {
+                  onAdd?.();
+                } else {
+                  setIsInstallModalOpen(true);
+                }
                 setIsOpen(false);
               }}
             >
               <Plus size={14} />
-              <span>Install Model {missingModelsCount > 0 ? `(${missingModelsCount})` : ''}</span>
+              <span>
+                {useExternalInstallFlow
+                  ? "Install from Hugging Face"
+                  : `Install Model ${missingModelsCount > 0 ? `(${missingModelsCount})` : ""}`}
+              </span>
             </button>
           </div>
         </div>
       )}
 
-      <InstallModelModal 
-        isOpen={isInstallModalOpen}
-        onClose={() => setIsInstallModalOpen(false)}
-        models={models}
-        title={`Install ${type === "llm" ? "Text" : type === "vision" ? "Vision" : "Voice"} Model`}
-        onDownload={(path) => {
-          if (onDownload) onDownload(path);
-        }}
-        onCancelDownload={onCancelDownload}
-        onUninstall={onUninstall}
-        onConfirm={onConfirm}
-        downloads={downloads}
-      />
+      {!useExternalInstallFlow && (
+        <InstallModelModal 
+          isOpen={isInstallModalOpen}
+          onClose={() => setIsInstallModalOpen(false)}
+          models={models}
+          title={`Install ${type === "llm" ? "Text" : type === "vision" ? "Vision" : "Voice"} Model`}
+          onDownload={(path) => {
+            if (onDownload) onDownload(path);
+          }}
+          onCancelDownload={onCancelDownload}
+          onUninstall={onUninstall}
+          onConfirm={onConfirm}
+          downloads={downloads}
+        />
+      )}
     </div>
   );
 };
