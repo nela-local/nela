@@ -18,7 +18,7 @@ const CATEGORIES: { label: string; folder: string }[] = [
   { label: "Vision", folder: "LiquidAI-VLM" },
   { label: "Embedding", folder: "bge-1.5-embed" },
   { label: "TTS", folder: "tts" },
-  { label: "STT", folder: "parakeet" },
+  { label: "STT", folder: "asr" },
 ];
 
 /** Detect quantization level from GGUF filename */

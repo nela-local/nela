@@ -17,7 +17,8 @@
     CreateDirectory "$INSTDIR\models\tts\kitten-tts\mini"
     CreateDirectory "$INSTDIR\models\grader"
     CreateDirectory "$INSTDIR\models\grader\ms-marco-MiniLM-L6-v2-onnx-int8"
-    CreateDirectory "$INSTDIR\models\parakeet"
+    CreateDirectory "$INSTDIR\models\asr"
+    CreateDirectory "$INSTDIR\models\asr\parakeet"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

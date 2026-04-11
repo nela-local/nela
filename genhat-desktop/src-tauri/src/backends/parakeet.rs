@@ -37,8 +37,14 @@ impl super::ModelBackend for ParakeetBackend {
     /// Runs on a blocking thread to avoid stalling the tokio async runtime
     /// while loading ~700 MB of ONNX sessions.
     async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
-        // model_file points to the model directory (e.g. "parakeet")
-        let model_dir = models_dir.join(&def.model_file);
+        // model_file points to the model directory (e.g. "asr/parakeet")
+        let mut model_dir = models_dir.join(&def.model_file);
+        if !model_dir.exists() && def.model_file == "asr/parakeet" {
+            let legacy = models_dir.join("parakeet");
+            if legacy.exists() {
+                model_dir = legacy;
+            }
+        }
         let overrides = def.params.clone();
 
         if !model_dir.exists() {

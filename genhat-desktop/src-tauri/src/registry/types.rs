@@ -126,6 +126,20 @@ pub struct ModelDef {
 }
 
 impl ModelDef {
+    fn primary_exists_with_legacy_fallback(&self, models_dir: &Path) -> bool {
+        let primary = models_dir.join(&self.model_file);
+        if primary.exists() {
+            return true;
+        }
+
+        // Backward compatibility for migrated folder layouts.
+        match self.model_file.as_str() {
+            "asr/parakeet" => models_dir.join("parakeet").exists(),
+            "tts/kitten-tts/mini" => models_dir.join("kittenTTS").join("mini").exists(),
+            _ => false,
+        }
+    }
+
     /// Get a param value, returning the default if missing.
     pub fn param_or(&self, key: &str, default: &str) -> String {
         self.params.get(key).cloned().unwrap_or_else(|| default.to_string())
@@ -155,8 +169,7 @@ impl ModelDef {
         let mut missing = Vec::new();
 
         // Primary model file / directory
-        let primary = models_dir.join(&self.model_file);
-        if !primary.exists() {
+        if !self.primary_exists_with_legacy_fallback(models_dir) {
             missing.push(self.model_file.clone());
         }
 

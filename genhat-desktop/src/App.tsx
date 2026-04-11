@@ -51,8 +51,10 @@ import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
-const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
-const STARTUP_OPTIONAL_MODEL_IDS = new Set(["kitten-tts"]);
+const STARTUP_MODEL_SELECTOR = {
+  tasks: new Set(["embed", "grade", "classify"]),
+  ids: new Set(["kitten-tts", "parakeet-tdt"]),
+};
 
 const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
 
@@ -1316,8 +1318,8 @@ function App() {
     if (modelCatalog.length === 0) return;
 
     const optionalForStartup = modelCatalog.filter((model) =>
-      model.tasks.some((task) => OPTIONAL_TASKS.has(task)) ||
-      STARTUP_OPTIONAL_MODEL_IDS.has(model.id)
+      model.tasks.some((task) => STARTUP_MODEL_SELECTOR.tasks.has(task)) ||
+      STARTUP_MODEL_SELECTOR.ids.has(model.id)
     );
     if (optionalForStartup.length === 0) return;
 
@@ -1556,7 +1558,7 @@ function App() {
   };
 
   const getOptionalModels = (list: RegisteredModel[]) =>
-    list.filter((model) => model.tasks.some((t) => OPTIONAL_TASKS.has(t)));
+    list.filter((model) => model.tasks.some((t) => STARTUP_MODEL_SELECTOR.tasks.has(t)));
 
   const downloadMissingOptionalModels = async () => {
     const list = registeredModels.length > 0
@@ -2992,7 +2994,7 @@ function App() {
           <div className="px-4 py-3 text-sm text-txt">
             <div className="font-medium mb-1">
               {startupModelToast.phase === "prompt"
-                ? "Models detected"
+                ? "Model(s) absent"
                 : startupModelToast.phase === "downloading"
                   ? "Downloading models"
                   : "Model setup"}
