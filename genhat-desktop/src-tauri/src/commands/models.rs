@@ -407,6 +407,50 @@ pub async fn list_registered_models(
     Ok(state.0.list_models().await)
 }
 
+/// List models defined in models.toml, including those not yet downloaded.
+#[tauri::command]
+pub fn list_model_catalog() -> Result<Vec<ModelInfo>, String> {
+    let defs = crate::config::load_model_definitions()?;
+    let models_dir = crate::paths::resolve_models_dir();
+
+    let mut catalog: Vec<ModelInfo> = defs
+        .into_iter()
+        .map(|def| {
+            let is_downloaded = def.files_exist(&models_dir);
+            let model_profile = def.params.get("custom_profile").cloned();
+            let engine_adapter = def.params.get("engine_adapter").cloned();
+            let model_source = if model_profile.is_some() {
+                "custom".to_string()
+            } else {
+                "builtin".to_string()
+            };
+
+            ModelInfo {
+                id: def.id,
+                name: def.name,
+                backend: format!("{:?}", def.backend),
+                kind: format!("{:?}", def.kind),
+                model_file: def.model_file,
+                tasks: def.tasks.iter().map(|t| t.to_string()).collect(),
+                status: ModelStatus::Unloaded,
+                instance_count: 0,
+                memory_mb: def.memory_mb,
+                gdrive_id: def.gdrive_id,
+                is_zip: def.is_zip,
+                priority: def.priority,
+                is_downloaded,
+                model_source,
+                model_profile,
+                engine_adapter,
+                params: def.params,
+            }
+        })
+        .collect();
+
+    catalog.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.name.cmp(&b.name)));
+    Ok(catalog)
+}
+
 /// Update a model's runtime parameters.
 /// If the model is currently loaded, it will be restarted to apply startup-level settings.
 #[tauri::command]

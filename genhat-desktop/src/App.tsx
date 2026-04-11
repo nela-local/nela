@@ -277,6 +277,7 @@ function App() {
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [registeredModels, setRegisteredModels] = useState<RegisteredModel[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<RegisteredModel[]>([]);
   const [sessionModelParamOverrides, setSessionModelParamOverrides] = useState<Record<string, Record<string, string>>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hfModalOpen, setHfModalOpen] = useState(false);
@@ -1377,11 +1378,13 @@ function App() {
 
   const refreshModels = useCallback(async (): Promise<RegisteredModel[]> => {
     try {
-      const [list, discoveredUnits] = await Promise.all([
+      const [list, discoveredUnits, catalog] = await Promise.all([
         Api.listRegisteredModels(),
         Api.discoverLocalModelUnits().catch(() => []),
+        Api.listModelCatalog().catch(() => []),
       ]);
       setRegisteredModels(list);
+      setModelCatalog(catalog);
 
       // Vision models
       const vision = list.filter((m) => m.tasks.includes("vision_chat"));
@@ -2389,6 +2392,7 @@ function App() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         models={registeredModels}
+        modelCatalog={modelCatalog}
         onModelsUpdated={refreshModels}
         downloads={downloads}
         onDownload={handleDownloadModel}

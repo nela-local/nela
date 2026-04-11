@@ -10,6 +10,7 @@ interface ModelsSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   models: RegisteredModel[];
+  modelCatalog?: RegisteredModel[];
   downloads?: Record<string, { progress: number; status: string }>;
   onDownload: (modelId: string) => void;
   onCancelDownload?: (modelId: string) => void;
@@ -280,6 +281,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   isOpen,
   onClose,
   models,
+  modelCatalog = [],
   downloads = {},
   onDownload,
   onCancelDownload,
@@ -440,7 +442,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 
   const activePickerModels = useMemo(() => {
     if (!activePickerGroup) return [];
-    return models
+    const source = modelCatalog.length > 0 ? modelCatalog : models;
+    return source
       .filter(activePickerGroup.match)
       .map((model) => ({
         name: model.name,
@@ -448,7 +451,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
         is_downloaded: model.is_downloaded,
         gdrive_id: model.gdrive_id ?? null,
       }));
-  }, [activePickerGroup, models]);
+  }, [activePickerGroup, modelCatalog, models]);
 
   const getControlValue = (control: ParamControl): string => {
     return paramDraft[control.key] ?? selectedParamModel?.params?.[control.key] ?? control.defaultValue;

@@ -165,6 +165,22 @@ fn model_in_advanced_category(def: &crate::registry::types::ModelDef, category: 
     }
 }
 
+async fn ensure_model_registered_from_catalog(
+    state: &State<'_, ProcessManagerState>,
+    model_id: &str,
+) -> Result<(), String> {
+    if state.0.get_model_def(model_id).await.is_some() {
+        return Ok(());
+    }
+
+    let defs = crate::config::load_model_definitions()?;
+    let def = defs
+        .into_iter()
+        .find(|d| d.id == model_id)
+        .ok_or_else(|| format!("Model not found: {}", model_id))?;
+    state.0.register_model(def).await
+}
+
 async fn download_model_internal(
     app_handle: tauri::AppHandle,
     model_id: &str,
@@ -416,6 +432,7 @@ pub async fn download_model(
     state: State<'_, ProcessManagerState>,
     download_state: State<'_, DownloadState>,
 ) -> Result<(), String> {
+    ensure_model_registered_from_catalog(&state, &model_id).await?;
     download_model_internal(
         app_handle,
         &model_id,
