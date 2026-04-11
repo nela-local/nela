@@ -20,6 +20,7 @@ export type TourStep = {
   body: React.ReactNode;
   target: TourTarget;
   placement?: TourPlacement;
+  centerTooltip?: boolean;
   isAvailable?: (bindings: TourBindings) => boolean;
   onBeforeStep?: (bindings: TourBindings) => void | Promise<void>;
 };

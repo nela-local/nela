@@ -99,8 +99,11 @@ export default function TourOverlay() {
   if (status !== "running" || !activeTour || !activeStep) return null;
 
   const placement = pickPlacement(targetRect ?? { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }, activeStep.placement ?? "auto");
+  const shouldCenterTooltip = activeStep.centerTooltip === true;
 
-  const tooltipPos = targetRect
+  const tooltipPos = shouldCenterTooltip
+    ? { left: window.innerWidth / 2, top: window.innerHeight / 2, transform: "translate(-50%, -50%)" }
+    : targetRect
     ? computeTooltipPosition(targetRect, placement)
     : { left: window.innerWidth / 2, top: window.innerHeight / 2, transform: "translate(-50%, -50%)" };
 

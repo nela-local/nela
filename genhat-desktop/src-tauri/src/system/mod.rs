@@ -519,7 +519,7 @@ fn get_disk_space(path: &std::path::Path) -> (f64, f64) {
     let disks = Disks::new_with_refreshed_list();
     
     // Get the path as a string, handling UNC paths on Windows
-    let path_str = path.to_string_lossy();
+    let _path_str = path.to_string_lossy();
     
     // On Windows, we need to match drive letters (e.g., "D:" matches "D:\")
     #[cfg(target_os = "windows")]

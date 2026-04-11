@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle, Cpu, Loader2, Save, SlidersHorizontal, X } from "lucide-react";
 import { Api, type CompatibilityRating } from "../api";
 import { KITTEN_TTS_VOICES } from "../types";
@@ -39,6 +40,35 @@ const BOOLEAN_OPTIONS = [
   { value: "true", label: "Enabled" },
   { value: "false", label: "Disabled" },
 ];
+
+const PARAM_HELP_TEXT: Record<string, string> = {
+  ctx_size:
+    "Controls how much previous conversation the model can remember at once. Bigger values improve long-context understanding but use more memory.",
+  max_tokens:
+    "Sets the maximum length of a single response. Higher values allow longer answers but can take more time.",
+  temp:
+    "Controls creativity. Lower values are more predictable; higher values are more varied and imaginative.",
+  top_p:
+    "Keeps only the most likely words until their combined probability reaches this value. Lower values make outputs safer and more focused.",
+  top_k:
+    "Limits each token choice to the top K candidates. Smaller numbers are more conservative; larger numbers allow more variety.",
+  repeat_penalty:
+    "Reduces repetitive phrases. Increasing this can help avoid loops or repeated wording in long responses.",
+  flash_attn:
+    "Uses optimized attention kernels on supported hardware for faster generation and better efficiency.",
+  mlock:
+    "Attempts to keep model memory in RAM to reduce disk swapping. Useful if you have enough memory available.",
+  voice:
+    "Selects the default speaker voice used for text-to-speech outputs.",
+  speed:
+    "Adjusts speaking rate for generated audio. Higher is faster, lower is slower.",
+  max_symbols_per_step:
+    "Sets how many symbols the speech decoder can emit per step. Higher values can improve recall but may reduce speed.",
+  preemphasis:
+    "Boosts higher-frequency audio details before recognition. Usually keep near the default unless tuning audio quality.",
+  dither:
+    "Adds a tiny amount of noise for numerical stability in very quiet audio; usually best left near default.",
+};
 
 const OPTIMAL_CONTEXT_RATINGS = new Set<CompatibilityRating>([
   "efficient",
@@ -230,6 +260,7 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openHelp, setOpenHelp] = useState<{ key: string; left: number; top: number; width: number } | null>(null);
   const [contextHint, setContextHint] = useState<{ rating: CompatibilityRating; reason: string } | null>(null);
   const [contextHintLoading, setContextHintLoading] = useState(false);
 
@@ -239,7 +270,45 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
     setDraft({ ...(target.params ?? {}) });
     setSaved(false);
     setError(null);
+    setOpenHelp(null);
   }, [target.key, target.params]);
+
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      const candidate = event.target;
+      if (!(candidate instanceof HTMLElement)) return;
+      if (candidate.closest(".runtime-param-help-anchor")) return;
+      if (candidate.closest(".runtime-param-help-popover")) return;
+      setOpenHelp(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenHelp(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!openHelp) return;
+
+    const closeHelp = () => setOpenHelp(null);
+    window.addEventListener("resize", closeHelp);
+    window.addEventListener("scroll", closeHelp, true);
+
+    return () => {
+      window.removeEventListener("resize", closeHelp);
+      window.removeEventListener("scroll", closeHelp, true);
+    };
+  }, [openHelp]);
 
   useEffect(() => {
     if (target.backend !== "LlamaServer") {
@@ -297,6 +366,33 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
 
   const getValue = (control: ParamControl): string => {
     return draft[control.key] ?? target.params?.[control.key] ?? control.defaultValue;
+  };
+
+  const getHelpText = (control: ParamControl): string => {
+    return PARAM_HELP_TEXT[control.key] ?? control.description;
+  };
+
+  const openHelpForControl = (
+    controlKey: string,
+    buttonEl: HTMLButtonElement
+  ) => {
+    if (openHelp?.key === controlKey) {
+      setOpenHelp(null);
+      return;
+    }
+
+    const rect = buttonEl.getBoundingClientRect();
+    const margin = 20;
+    const desiredWidth = 320;
+    const width = Math.min(desiredWidth, Math.max(220, window.innerWidth - margin * 2));
+    const left = clamp(
+      rect.left + rect.width / 2 - width / 2,
+      margin,
+      window.innerWidth - width - margin
+    );
+    const top = rect.bottom + 8;
+
+    setOpenHelp({ key: controlKey, left, top, width });
   };
 
   const handleApply = async () => {
@@ -365,9 +461,28 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
             const hasCurrent = options.some((option) => option.value === rawValue);
             return (
               <div key={control.key} className="rounded-lg border border-glass-border bg-void-700/55 p-2.5 flex flex-col gap-1.5">
-                <label htmlFor={`runtime-param-${target.key}-${control.key}`} className="text-[0.74rem] font-semibold text-txt">
-                  {control.label}
-                </label>
+                <div className="runtime-param-label-row">
+                  <div className="runtime-param-label-group">
+                    <label htmlFor={`runtime-param-${target.key}-${control.key}`} className="text-[0.74rem] font-semibold text-txt">
+                      {control.label}
+                    </label>
+                    <div className="runtime-param-help-anchor">
+                      <button
+                        type="button"
+                        className="runtime-param-help-btn"
+                        aria-label={`Explain ${control.label}`}
+                        aria-expanded={openHelp?.key === control.key}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openHelpForControl(control.key, event.currentTarget);
+                        }}
+                        data-tour={control.key === controls[0]?.key ? "runtime-param-help" : undefined}
+                      >
+                        ?
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 <select
                   id={`runtime-param-${target.key}-${control.key}`}
                   className="runtime-param-select"
@@ -395,9 +510,26 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
           return (
             <div key={control.key} className="rounded-lg border border-glass-border bg-void-700/55 p-2.5 flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <label htmlFor={`runtime-param-${target.key}-${control.key}`} className="text-[0.74rem] font-semibold text-txt">
-                  {control.label}
-                </label>
+                <div className="runtime-param-label-group">
+                  <label htmlFor={`runtime-param-${target.key}-${control.key}`} className="text-[0.74rem] font-semibold text-txt">
+                    {control.label}
+                  </label>
+                  <div className="runtime-param-help-anchor">
+                    <button
+                      type="button"
+                      className="runtime-param-help-btn"
+                      aria-label={`Explain ${control.label}`}
+                      aria-expanded={openHelp?.key === control.key}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openHelpForControl(control.key, event.currentTarget);
+                      }}
+                      data-tour={control.key === controls[0]?.key ? "runtime-param-help" : undefined}
+                    >
+                      ?
+                    </button>
+                  </div>
+                </div>
                 <span className="text-[0.7rem] text-[#8ae8ff]">{displayValue}</span>
               </div>
               <input
@@ -469,6 +601,28 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
           </div>
         )}
       </div>
+
+      {openHelp &&
+        (() => {
+          const activeControl = controls.find((control) => control.key === openHelp.key);
+          if (!activeControl) return null;
+          if (typeof document === "undefined") return null;
+
+          return createPortal(
+            <div
+              className="runtime-param-help-popover"
+              role="tooltip"
+              style={{
+                left: `${openHelp.left}px`,
+                top: `${openHelp.top}px`,
+                width: `${openHelp.width}px`,
+              }}
+            >
+              <p>{getHelpText(activeControl)}</p>
+            </div>,
+            document.body
+          );
+        })()}
     </div>
   );
 };

@@ -205,7 +205,7 @@ fn try_repair_truncated_array(array_str: &str) -> Result<String, String> {
 
     if let Some(end) = last_complete_end {
         // Slice everything up to and including the last complete `}`
-        let mut repaired = array_str[..=end].to_string();
+        let repaired = array_str[..=end].to_string();
         // Remove any trailing comma + whitespace before closing
         let trimmed_tail = repaired.trim_end().trim_end_matches(',').to_string();
         let result = format!("{}]", trimmed_tail);

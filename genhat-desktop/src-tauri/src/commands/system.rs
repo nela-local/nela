@@ -1,7 +1,7 @@
 //! Tauri commands for system information and device compatibility.
 
 use crate::system::{
-    check_model_compatibility, check_model_compatibility_with_context, get_device_specs, 
+    check_model_compatibility_with_context, get_device_specs, 
     DeviceSpecs, ModelCompatibility, ModelTier, QuantLevel, ModelParams,
 };
 

@@ -84,6 +84,18 @@ export const TOURS: TourDefinition[] = [
         placement: "right",
       },
       {
+        id: "parameter-help",
+        title: "Parameter help",
+        body: (
+          <span>
+            Not sure what a model parameter means? Click the small <strong>?</strong> next to a parameter name for a plain-language explanation.
+          </span>
+        ),
+        target: '[data-tour="runtime-param-help"]',
+        placement: "left",
+        centerTooltip: true,
+      },
+      {
         id: "help-tours",
         title: "Feature tours",
         body: (
