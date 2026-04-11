@@ -52,6 +52,7 @@ import "./App.css";
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
 const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
+const STARTUP_OPTIONAL_MODEL_IDS = new Set(["kitten-tts"]);
 
 const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
 
@@ -396,11 +397,16 @@ function App() {
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const startupToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const startupPresenceNoticeShownRef = useRef(false);
+  const legacySessionStorageDisabledRef = useRef(false);
+  const sessionQuotaPromptedRef = useRef(false);
   const [startupModelToast, setStartupModelToast] = useState<{
     open: boolean;
     phase: "prompt" | "downloading" | "done" | "declined" | "info";
     message: string;
     missingIds: string[];
+    missingNames: string[];
+    doneIds: string[];
+    failedIds: string[];
     completed: number;
     total: number;
     failed: number;
@@ -409,6 +415,9 @@ function App() {
     phase: "info",
     message: "",
     missingIds: [],
+    missingNames: [],
+    doneIds: [],
+    failedIds: [],
     completed: 0,
     total: 0,
     failed: 0,
@@ -418,6 +427,48 @@ function App() {
 
   /** Get the currently active session object (read-only snapshot). */
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+
+  const promptClearSessionStorage = useCallback(() => {
+    if (sessionQuotaPromptedRef.current) return;
+    if (modalResolveRef.current) return;
+    sessionQuotaPromptedRef.current = true;
+
+    modalResolveRef.current = (confirmed) => {
+      sessionQuotaPromptedRef.current = false;
+      if (!confirmed) return;
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          if (key.startsWith(SESSION_STORAGE_PREFIX)) {
+            localStorage.removeItem(key);
+          }
+        }
+        legacySessionStorageDisabledRef.current = false;
+        setAppModal({
+          open: true,
+          kind: "info",
+          title: "Session storage cleared",
+          message: "Local cached session storage was cleared. You can continue normally.",
+          confirmLabel: "OK",
+          cancelLabel: "Cancel",
+          showCancel: false,
+        });
+      } catch (err) {
+        console.warn("Failed to clear session storage cache:", err);
+      }
+    };
+
+    setAppModal({
+      open: true,
+      kind: "confirm",
+      title: "Session storage is full",
+      message: "Local session cache is full. Do you want to clear cached session storage now?",
+      confirmLabel: "Clear storage",
+      cancelLabel: "Not now",
+      showCancel: true,
+    });
+  }, []);
 
   const parseModelParamNumber = useCallback((raw: string | undefined): number | undefined => {
     if (!raw) return undefined;
@@ -904,24 +955,65 @@ function App() {
   // Persist sessions whenever they change, scoped to the current workspace.
   useEffect(() => {
     if (!workspaceScope || !sessionStoreReady || sessions.length === 0) return;
+    if (workspaceScope === "workspace:none") return;
 
     const safeActive = sessions.some((s) => s.id === activeSessionId)
       ? activeSessionId
       : sessions[0].id;
 
     const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        sessions,
-        activeSessionId: safeActive,
-        openSessionIds,
-        mindmapsBySession,
-        selectedModel,
-        selectedTtsEngine,
-        selectedVisionModel,
-      })
-    );
+    const fullLegacyState = JSON.stringify({
+      sessions,
+      activeSessionId: safeActive,
+      openSessionIds,
+      mindmapsBySession,
+      selectedModel,
+      selectedTtsEngine,
+      selectedVisionModel,
+    });
+
+    if (!legacySessionStorageDisabledRef.current) {
+      try {
+        localStorage.setItem(storageKey, fullLegacyState);
+      } catch (err) {
+        const isQuotaError =
+          err instanceof DOMException &&
+          (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+
+        if (isQuotaError) {
+          promptClearSessionStorage();
+          try {
+            for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+              const key = localStorage.key(i);
+              if (!key) continue;
+              if (key.startsWith(SESSION_STORAGE_PREFIX) && key !== storageKey) {
+                localStorage.removeItem(key);
+              }
+            }
+            localStorage.setItem(storageKey, fullLegacyState);
+          } catch {
+            try {
+              localStorage.setItem(
+                storageKey,
+                JSON.stringify({
+                  sessions: [],
+                  activeSessionId: safeActive,
+                  openSessionIds: [safeActive],
+                  selectedModel,
+                  selectedTtsEngine,
+                  selectedVisionModel,
+                })
+              );
+            } catch (retryErr) {
+              legacySessionStorageDisabledRef.current = true;
+              console.warn("Disabling legacy localStorage session mirror due to quota:", retryErr);
+            }
+          }
+        } else {
+          console.warn("Failed to persist legacy localStorage session state:", err);
+        }
+      }
+    }
 
     // Mirror into active workspace cache for .nela save/open flows.
     void Api.saveWorkspaceFrontendState(
@@ -929,7 +1021,7 @@ function App() {
     ).catch((err) => {
       console.warn("Failed to persist workspace frontend state to backend:", err);
     });
-  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel, buildWorkspaceFrontendState]);
+  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel, buildWorkspaceFrontendState, promptClearSessionStorage]);
 
   const switchWorkspaceById = useCallback(async (workspaceId: string) => {
     if (workspaceBusy) return;
@@ -1217,25 +1309,29 @@ function App() {
     setModeSwitchNotice(null);
   }, [activeSessionId]);
 
-  // On first entry to the chat screen, notify user which advanced models are present.
+  // On first entry to the chat screen, notify user which optional models are present.
   useEffect(() => {
     if (startupPresenceNoticeShownRef.current) return;
     if (!activeWorkspace || !sessionStoreReady) return;
     if (modelCatalog.length === 0) return;
 
-    const advanced = modelCatalog.filter((model) =>
-      model.tasks.some((task) => OPTIONAL_TASKS.has(task))
+    const optionalForStartup = modelCatalog.filter((model) =>
+      model.tasks.some((task) => OPTIONAL_TASKS.has(task)) ||
+      STARTUP_OPTIONAL_MODEL_IDS.has(model.id)
     );
-    if (advanced.length === 0) return;
+    if (optionalForStartup.length === 0) return;
 
-    const present = advanced.filter((model) => model.is_downloaded);
-    const missing = advanced.filter((model) => !model.is_downloaded);
+    const present = optionalForStartup.filter((model) => model.is_downloaded);
+    const missing = optionalForStartup.filter((model) => !model.is_downloaded);
     if (missing.length > 0) {
       setStartupModelToast({
         open: true,
         phase: "prompt",
-        message: `${present.length}/${advanced.length} advanced models are present. Download ${missing.length} missing model(s) now?`,
+        message: `${present.length}/${optionalForStartup.length} models are present.`,
         missingIds: missing.map((model) => model.id),
+        missingNames: missing.map((model) => model.name),
+        doneIds: [],
+        failedIds: [],
         completed: 0,
         total: missing.length,
         failed: 0,
@@ -1244,8 +1340,11 @@ function App() {
       setStartupModelToast({
         open: true,
         phase: "info",
-        message: `All ${advanced.length} advanced models are already present.`,
+        message: `All ${optionalForStartup.length} models are already present.`,
         missingIds: [],
+        missingNames: [],
+        doneIds: [],
+        failedIds: [],
         completed: 0,
         total: 0,
         failed: 0,
@@ -1337,10 +1436,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      STARTUP_OPTIONAL_DOWNLOAD_KEY,
-      downloadOptionalOnStart ? "true" : "false"
-    );
+    try {
+      localStorage.setItem(
+        STARTUP_OPTIONAL_DOWNLOAD_KEY,
+        downloadOptionalOnStart ? "true" : "false"
+      );
+    } catch (err) {
+      console.warn("Failed to persist startup optional-download preference:", err);
+    }
   }, [downloadOptionalOnStart]);
 
   // ── Model helpers ──────────────────────────────────────────────────────────
@@ -1384,7 +1487,7 @@ function App() {
       ...prev,
       open: true,
       phase: "declined",
-      message: "You can download these models from Settings any time.",
+      message: "You can download these models from Settings or clicking on the drop-down any time.",
     }));
   };
 
@@ -1399,7 +1502,9 @@ function App() {
       ...prev,
       open: true,
       phase: "downloading",
-      message: `Starting downloads...`,
+      message: "Starting parallel downloads...",
+      doneIds: [],
+      failedIds: [],
       completed: 0,
       total: ids.length,
       failed: 0,
@@ -1407,20 +1512,31 @@ function App() {
 
     let completed = 0;
     let failed = 0;
-    for (const modelId of ids) {
-      try {
-        await Api.downloadModel(modelId);
-        completed += 1;
-      } catch (e) {
-        failed += 1;
-        console.error("Failed startup model download", e);
-      }
-      setStartupModelToast((prev) => ({
-        ...prev,
-        completed,
-        failed,
-      }));
-    }
+    await Promise.all(
+      ids.map(async (modelId) => {
+        try {
+          await Api.downloadModel(modelId);
+          completed += 1;
+          setStartupModelToast((prev) => ({
+            ...prev,
+            doneIds: prev.doneIds.includes(modelId) ? prev.doneIds : [...prev.doneIds, modelId],
+          }));
+        } catch (e) {
+          failed += 1;
+          console.error("Failed startup model download", e);
+          setStartupModelToast((prev) => ({
+            ...prev,
+            failedIds: prev.failedIds.includes(modelId) ? prev.failedIds : [...prev.failedIds, modelId],
+          }));
+        } finally {
+          setStartupModelToast((prev) => ({
+            ...prev,
+            completed,
+            failed,
+          }));
+        }
+      })
+    );
 
     if (failed > 0) {
       setStartupModelToast((prev) => ({
@@ -1457,7 +1573,7 @@ function App() {
     }
   };
 
-  const showModal = (
+  const showModal = useCallback((
     kind: AppModalKind,
     title: string,
     message: string,
@@ -1472,7 +1588,7 @@ function App() {
       cancelLabel: options?.cancelLabel ?? "Cancel",
       showCancel: options?.showCancel ?? false,
     });
-  };
+  }, []);
 
   const showError = (message: string, title = "Error") => {
     showModal("error", title, message);
@@ -2488,10 +2604,6 @@ function App() {
     .length;
   const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
   const showRightSidebar = showParamsDock || docPanelOpen;
-  const startupDownloadActiveId = startupModelToast.missingIds.find((id) => downloads[id] !== undefined);
-  const startupDownloadProgress = startupDownloadActiveId
-    ? downloads[startupDownloadActiveId]?.progress
-    : undefined;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -2876,24 +2988,61 @@ function App() {
       </main>
 
       {startupModelToast.open && (
-        <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-glass-border bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
+        <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-neon/60 bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
           <div className="px-4 py-3 text-sm text-txt">
             <div className="font-medium mb-1">
               {startupModelToast.phase === "prompt"
-                ? "Advanced models detected"
+                ? "Models detected"
                 : startupModelToast.phase === "downloading"
-                  ? "Downloading advanced models"
-                  : "Advanced model setup"}
+                  ? "Downloading models"
+                  : "Model setup"}
             </div>
             <div className="text-txt-muted leading-relaxed">{startupModelToast.message}</div>
 
+            {startupModelToast.phase === "prompt" && startupModelToast.missingNames.length > 0 && (
+              <div className="mt-2 text-xs leading-relaxed">
+                <div className="text-txt-muted">The following models are not present:</div>
+                <ul className="mt-1 list-disc pl-5 text-neon font-medium">
+                  {startupModelToast.missingNames.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {startupModelToast.phase === "downloading" && (
-              <div className="mt-2 flex items-center gap-2 text-neon text-xs">
-                <Loader2 size={13} className="animate-spin" />
-                <span>
-                  Progress: {startupModelToast.completed}/{startupModelToast.total}
-                  {typeof startupDownloadProgress === "number" ? ` · ${startupDownloadProgress.toFixed(0)}%` : ""}
-                </span>
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center gap-2 text-neon text-xs">
+                  <Loader2 size={13} className="animate-spin" />
+                  <span>
+                    Progress: {startupModelToast.completed}/{startupModelToast.total}
+                  </span>
+                </div>
+                {startupModelToast.missingIds.map((modelId, idx) => {
+                  const dl = downloads[modelId];
+                  const isDone = startupModelToast.doneIds.includes(modelId);
+                  const isFailed = startupModelToast.failedIds.includes(modelId);
+                  const pct = isDone
+                    ? 100
+                    : typeof dl?.progress === "number"
+                      ? Math.max(0, Math.min(100, dl.progress))
+                      : 0;
+                  const name = startupModelToast.missingNames[idx] ?? modelId;
+                  return (
+                    <div key={modelId} className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px] text-txt-muted">
+                        <span className="truncate max-w-[220px]" title={name}>{name}</span>
+                        <span>{isDone ? "Done" : isFailed ? "Failed" : dl ? `${pct.toFixed(0)}%` : "Queued"}</span>
+                      </div>
+                      <div className="h-1.5 w-full rounded bg-void-700/80 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-300 ${isFailed ? "bg-red-500" : "bg-neon"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

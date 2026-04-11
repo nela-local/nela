@@ -17,7 +17,7 @@ const CATEGORIES: { label: string; folder: string }[] = [
   { label: "LLM", folder: "LLM" },
   { label: "Vision", folder: "LiquidAI-VLM" },
   { label: "Embedding", folder: "bge-1.5-embed" },
-  { label: "TTS", folder: "kittenTTS" },
+  { label: "TTS", folder: "tts" },
   { label: "STT", folder: "parakeet" },
 ];
 
