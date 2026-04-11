@@ -71,3 +71,29 @@ export default defineConfig([
   },
 ])
 ```
+
+## Guided Tours (Onboarding)
+
+This app includes a lightweight, in-house guided tour system.
+
+### Where it lives
+- Tour runtime (provider + state machine): `src/hooks/useTour.tsx`
+- Tour overlay UI: `src/components/TourOverlay.tsx` (+ `TourOverlay.css`)
+- Tour entrypoint wrapper: `src/components/TourProviderRoot.tsx` (wired in `src/main.tsx`)
+- Tour definitions / registry: `src/tours.tsx`
+- Help UI for starting tours: `src/components/ToursModal.tsx`
+
+### How tours target UI reliably
+Tours target stable `data-tour` attributes, e.g.:
+- UI: `<button data-tour="sidebar-settings" />`
+- Step target: `target: '[data-tour="sidebar-settings"]'`
+
+If a target isn’t present in the DOM, the tour framework will allow the user to continue and will skip unavailable steps when navigating.
+
+### Startup + Help access
+- Startup modal includes a **Start Tour** button (runs `getting-started` and returns to the startup modal on exit/complete).
+- Sidebar includes **Help · Tours** to start any tour later.
+
+### Persistence
+Completion is stored in localStorage:
+- `genhat:tours:v1:completed` = JSON array of completed tour IDs

@@ -170,6 +170,10 @@ export const Api = {
     return invoke<void>("download_model", { modelId });
   },
 
+  async downloadModelCategory(category: "embedding" | "grader" | "classifier"): Promise<number> {
+    return invoke<number>("download_model_category", { category });
+  },
+
   async cancelDownload(modelId: string): Promise<void> {
     return invoke<void>("cancel_download", { modelId });
   },

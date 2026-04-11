@@ -55,6 +55,50 @@
 .settings-modal-body {
   padding: 18px 20px 22px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.55) rgba(255, 255, 255, 0.06);
+}
+
+.settings-modal-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.settings-modal-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.settings-modal-body::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.78), rgba(67, 227, 255, 0.58));
+  border: 2px solid rgba(9, 13, 18, 0.92);
+  border-radius: 999px;
+}
+
+.settings-modal-body::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.92), rgba(67, 227, 255, 0.72));
+}
+
+.settings-model-picker {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.5) rgba(255, 255, 255, 0.05);
+}
+
+.settings-model-picker::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-model-picker::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 999px;
+}
+
+.settings-model-picker::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.62);
+  border-radius: 999px;
+}
+
+.settings-model-picker::-webkit-scrollbar-thumb:hover {
+  background: rgba(67, 227, 255, 0.72);
 }
 
 .settings-layout {

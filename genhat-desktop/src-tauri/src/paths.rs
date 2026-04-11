@@ -145,6 +145,15 @@ pub fn resolve_models_dir() -> PathBuf {
         }
     }
 
+    // 1b. Local Windows workspace fallback for shared models.
+    // This keeps category folders like `grader/` rooted at D:\nela\models\...
+    if cfg!(windows) {
+        let local_models = PathBuf::from(r"D:\nela\models");
+        if local_models.is_dir() {
+            return local_models;
+        }
+    }
+
     // 2. Dev fallback — only compiled into debug builds.
     //    Checked early so it wins over the empty placeholder dirs
     //    that Tauri copies next to the debug binary.

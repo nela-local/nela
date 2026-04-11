@@ -127,6 +127,7 @@ fn main() {
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,
             app_lib::commands::download::download_model,
+            app_lib::commands::download::download_model_category,
             app_lib::commands::download::cancel_download,
             app_lib::commands::download::uninstall_model,
             app_lib::commands::download::download_custom_file,
