@@ -13,6 +13,8 @@ import {
   CheckCircle2,
   Share2,
   SlidersHorizontal,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Api } from "./api";
 import type {
@@ -54,6 +56,20 @@ const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
 const STARTUP_MODEL_SELECTOR = {
   tasks: new Set(["embed", "grade", "classify"]),
   ids: new Set(["kitten-tts", "parakeet-tdt"]),
+};
+
+const formatModelSizeLabel = (memoryMb: number | null | undefined): string => {
+  if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
+    return "Unknown size";
+  }
+  const mb = memoryMb;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${Math.round(mb)} MB`;
+};
+
+const formatTotalSizeLabel = (totalMb: number): string => {
+  if (totalMb >= 1024) return `${(totalMb / 1024).toFixed(2)} GB`;
+  return `${Math.round(totalMb)} MB`;
 };
 
 const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
@@ -407,6 +423,8 @@ function App() {
     message: string;
     missingIds: string[];
     missingNames: string[];
+    missingSizesMb: number[];
+    selectedIds: string[];
     doneIds: string[];
     failedIds: string[];
     completed: number;
@@ -418,12 +436,15 @@ function App() {
     message: "",
     missingIds: [],
     missingNames: [],
+    missingSizesMb: [],
+    selectedIds: [],
     doneIds: [],
     failedIds: [],
     completed: 0,
     total: 0,
     failed: 0,
   });
+  const [startupToastMinimized, setStartupToastMinimized] = useState(false);
 
   // ── Session accessor helpers ───────────────────────────────────────────────
 
@@ -1332,6 +1353,8 @@ function App() {
         message: `${present.length}/${optionalForStartup.length} models are present.`,
         missingIds: missing.map((model) => model.id),
         missingNames: missing.map((model) => model.name),
+        missingSizesMb: missing.map((model) => model.memory_mb),
+        selectedIds: missing.map((model) => model.id),
         doneIds: [],
         failedIds: [],
         completed: 0,
@@ -1345,6 +1368,8 @@ function App() {
         message: `All ${optionalForStartup.length} models are already present.`,
         missingIds: [],
         missingNames: [],
+        missingSizesMb: [],
+        selectedIds: [],
         doneIds: [],
         failedIds: [],
         completed: 0,
@@ -1369,6 +1394,12 @@ function App() {
       }
     };
   }, [startupModelToast]);
+
+  useEffect(() => {
+    if (startupModelToast.phase !== "downloading") {
+      setStartupToastMinimized(false);
+    }
+  }, [startupModelToast.phase]);
 
   // Reload RAG docs periodically when in text/mindmap modes
   useEffect(() => {
@@ -1494,9 +1525,14 @@ function App() {
   };
 
   const handleStartupToastAccept = async () => {
-    const ids = startupModelToast.missingIds;
+    const ids = startupModelToast.selectedIds;
     if (ids.length === 0) {
-      setStartupModelToast((prev) => ({ ...prev, open: false }));
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "declined",
+        message: "No models selected. You can download models from Settings any time.",
+      }));
       return;
     }
 
@@ -1505,12 +1541,13 @@ function App() {
       open: true,
       phase: "downloading",
       message: "Starting parallel downloads...",
+      total: ids.length,
       doneIds: [],
       failedIds: [],
       completed: 0,
-      total: ids.length,
       failed: 0,
     }));
+    setStartupToastMinimized(false);
 
     let completed = 0;
     let failed = 0;
@@ -1556,6 +1593,27 @@ function App() {
       }));
     }
   };
+
+  const toggleStartupModelSelection = (modelId: string) => {
+    setStartupModelToast((prev) => {
+      if (prev.phase !== "prompt") return prev;
+      const selected = prev.selectedIds.includes(modelId)
+        ? prev.selectedIds.filter((id) => id !== modelId)
+        : [...prev.selectedIds, modelId];
+      return { ...prev, selectedIds: selected };
+    });
+  };
+
+  const startupSelectedTotalMb = useMemo(() => {
+    let total = 0;
+    startupModelToast.selectedIds.forEach((modelId) => {
+      const idx = startupModelToast.missingIds.indexOf(modelId);
+      if (idx < 0) return;
+      const mb = startupModelToast.missingSizesMb[idx];
+      if (typeof mb === "number" && Number.isFinite(mb) && mb > 0) total += mb;
+    });
+    return total;
+  }, [startupModelToast.selectedIds, startupModelToast.missingIds, startupModelToast.missingSizesMb]);
 
   const getOptionalModels = (list: RegisteredModel[]) =>
     list.filter((model) => model.tasks.some((t) => STARTUP_MODEL_SELECTOR.tasks.has(t)));
@@ -2601,9 +2659,6 @@ function App() {
 
   // Show startup modal if no active workspace yet (unless we're running the tour from it)
   const showStartupModal = !activeWorkspace && !suppressStartupModal;
-  const optionalMissingCount = getOptionalModels(registeredModels)
-    .filter((model) => model.gdrive_id && !model.is_downloaded)
-    .length;
   const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
   const showRightSidebar = showParamsDock || docPanelOpen;
 
@@ -2618,9 +2673,6 @@ function App() {
           onNewProject={createWorkspaceFromStartup}
           onImportProject={importWorkspaceFromStartup}
           onStartTour={startTourFromStartup}
-          downloadOptionalOnStart={downloadOptionalOnStart}
-          onToggleDownloadOptional={setDownloadOptionalOnStart}
-          optionalMissingCount={optionalMissingCount}
           busy={workspaceBusy}
         />
       )}
@@ -2992,27 +3044,66 @@ function App() {
       {startupModelToast.open && (
         <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-neon/60 bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
           <div className="px-4 py-3 text-sm text-txt">
-            <div className="font-medium mb-1">
-              {startupModelToast.phase === "prompt"
-                ? "Model(s) absent"
-                : startupModelToast.phase === "downloading"
-                  ? "Downloading models"
-                  : "Model setup"}
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <div className="font-medium">
+                {startupModelToast.phase === "prompt"
+                  ? "Model(s) absent"
+                  : startupModelToast.phase === "downloading"
+                    ? "Downloading models"
+                    : "Model setup"}
+              </div>
             </div>
-            <div className="text-txt-muted leading-relaxed">{startupModelToast.message}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-txt-muted leading-relaxed">
+                {startupModelToast.phase === "downloading" && startupToastMinimized
+                  ? `Progress: ${startupModelToast.completed}/${startupModelToast.total}`
+                  : startupModelToast.message}
+              </div>
+              {startupModelToast.phase === "downloading" && (
+                <button
+                  type="button"
+                  className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
+                  onClick={() => setStartupToastMinimized((prev) => !prev)}
+                  aria-label={startupToastMinimized ? "Expand download notification" : "Minimize download notification"}
+                  title={startupToastMinimized ? "Expand" : "Minimize"}
+                >
+                  {startupToastMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              )}
+            </div>
 
             {startupModelToast.phase === "prompt" && startupModelToast.missingNames.length > 0 && (
               <div className="mt-2 text-xs leading-relaxed">
                 <div className="text-txt-muted">The following models are not present:</div>
-                <ul className="mt-1 list-disc pl-5 text-neon font-medium">
-                  {startupModelToast.missingNames.map((name) => (
-                    <li key={name}>{name}</li>
-                  ))}
+                <ul className="mt-2 space-y-1">
+                  {startupModelToast.missingIds.map((modelId, idx) => {
+                    const name = startupModelToast.missingNames[idx] ?? modelId;
+                    const sizeLabel = formatModelSizeLabel(startupModelToast.missingSizesMb[idx]);
+                    const checked = startupModelToast.selectedIds.includes(modelId);
+                    return (
+                      <li key={modelId}>
+                        <label className="flex items-center gap-2 cursor-pointer rounded px-1 py-0.5 hover:bg-void-700/40">
+                          <input
+                            type="checkbox"
+                            className="accent-neon"
+                            checked={checked}
+                            onChange={() => toggleStartupModelSelection(modelId)}
+                          />
+                          <span className="text-neon font-medium truncate" title={name}>{name}</span>
+                          <span className="ml-auto text-[11px] text-txt-muted">{sizeLabel}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
                 </ul>
+                <div className="mt-2 text-[11px] text-txt-muted">
+                  Total selected size:{" "}
+                  <span className="text-neon font-medium">{formatTotalSizeLabel(startupSelectedTotalMb)}</span>
+                </div>
               </div>
             )}
 
-            {startupModelToast.phase === "downloading" && (
+            {startupModelToast.phase === "downloading" && !startupToastMinimized && (
               <div className="mt-2 space-y-2">
                 <div className="flex items-center gap-2 text-neon text-xs">
                   <Loader2 size={13} className="animate-spin" />
@@ -3020,7 +3111,7 @@ function App() {
                     Progress: {startupModelToast.completed}/{startupModelToast.total}
                   </span>
                 </div>
-                {startupModelToast.missingIds.map((modelId, idx) => {
+                {startupModelToast.selectedIds.map((modelId) => {
                   const dl = downloads[modelId];
                   const isDone = startupModelToast.doneIds.includes(modelId);
                   const isFailed = startupModelToast.failedIds.includes(modelId);
@@ -3029,7 +3120,8 @@ function App() {
                     : typeof dl?.progress === "number"
                       ? Math.max(0, Math.min(100, dl.progress))
                       : 0;
-                  const name = startupModelToast.missingNames[idx] ?? modelId;
+                  const idx = startupModelToast.missingIds.indexOf(modelId);
+                  const name = idx >= 0 ? startupModelToast.missingNames[idx] ?? modelId : modelId;
                   return (
                     <div key={modelId} className="space-y-1">
                       <div className="flex items-center justify-between text-[11px] text-txt-muted">
@@ -3057,10 +3149,11 @@ function App() {
                   No
                 </button>
                 <button
-                  className="px-3 py-1.5 rounded-md bg-neon text-void-900 text-xs font-semibold hover:opacity-90"
+                  className="px-3 py-1.5 rounded-md bg-neon text-void-900 text-xs font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => void handleStartupToastAccept()}
+                  disabled={startupModelToast.selectedIds.length === 0}
                 >
-                  Yes, download
+                  Yes, download ({startupModelToast.selectedIds.length})
                 </button>
               </div>
             )}

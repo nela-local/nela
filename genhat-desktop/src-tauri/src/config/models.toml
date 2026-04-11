@@ -152,7 +152,7 @@ auto_start = false
 max_instances = 1
 idle_timeout_s = 120
 priority = 10
-memory_mb = 200
+memory_mb = 35
 gdrive_id = "1316122j4PMF4eUZegYzMyx_zwiO_6b5W"
 is_zip = true   
 
@@ -179,7 +179,7 @@ auto_start = false
 max_instances = 1
 idle_timeout_s = 120
 priority = 15
-memory_mb = 420
+memory_mb = 112
 gdrive_id = "19WyHr2yEPNjnVw_hxGGc5uOnBJEhVZRW"
 is_zip = true
 
@@ -203,7 +203,7 @@ auto_start = false
 max_instances = 1
 idle_timeout_s = 300
 priority = 10
-memory_mb = 300
+memory_mb = 257
 gdrive_id = "1eDQs0gV3TBy7dkjF52QWky1YpgpjUFQn"
 is_zip = true
 
@@ -225,7 +225,7 @@ auto_start = false
 max_instances = 1
 idle_timeout_s = 300
 priority = 15
-memory_mb = 200
+memory_mb = 78
 gdrive_id = "1a3stJhNjvKNZRuUPcay1pcSm3SDRn2ex"
 is_zip = true
 
@@ -242,7 +242,7 @@ auto_start = false
 max_instances = 1
 idle_timeout_s = 300
 priority = 20
-memory_mb = 100
+memory_mb = 1
 gdrive_id = "1Cwvq_5B9RMwR3BlZiHzsLkw7Eb-B7KDd"
 is_zip = true
 
@@ -263,6 +263,6 @@ auto_start = false
 max_instances = 1
 idle_timeout_s = 300
 priority = 10
-memory_mb = 700
+memory_mb = 640
 gdrive_id = "1AF9w-Y9kbW_IWYBbXsxebQjXsS98K8-Z"
 is_zip = true
