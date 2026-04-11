@@ -394,6 +394,25 @@ function App() {
   const [paramsDockOpen, setParamsDockOpen] = useState(true);
   const [modeSwitchNotice, setModeSwitchNotice] = useState<string | null>(null);
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const startupToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const startupPresenceNoticeShownRef = useRef(false);
+  const [startupModelToast, setStartupModelToast] = useState<{
+    open: boolean;
+    phase: "prompt" | "downloading" | "done" | "declined" | "info";
+    message: string;
+    missingIds: string[];
+    completed: number;
+    total: number;
+    failed: number;
+  }>({
+    open: false,
+    phase: "info",
+    message: "",
+    missingIds: [],
+    completed: 0,
+    total: 0,
+    failed: 0,
+  });
 
   // ── Session accessor helpers ───────────────────────────────────────────────
 
@@ -1198,6 +1217,58 @@ function App() {
     setModeSwitchNotice(null);
   }, [activeSessionId]);
 
+  // On first entry to the chat screen, notify user which advanced models are present.
+  useEffect(() => {
+    if (startupPresenceNoticeShownRef.current) return;
+    if (!activeWorkspace || !sessionStoreReady) return;
+    if (modelCatalog.length === 0) return;
+
+    const advanced = modelCatalog.filter((model) =>
+      model.tasks.some((task) => OPTIONAL_TASKS.has(task))
+    );
+    if (advanced.length === 0) return;
+
+    const present = advanced.filter((model) => model.is_downloaded);
+    const missing = advanced.filter((model) => !model.is_downloaded);
+    if (missing.length > 0) {
+      setStartupModelToast({
+        open: true,
+        phase: "prompt",
+        message: `${present.length}/${advanced.length} advanced models are present. Download ${missing.length} missing model(s) now?`,
+        missingIds: missing.map((model) => model.id),
+        completed: 0,
+        total: missing.length,
+        failed: 0,
+      });
+    } else {
+      setStartupModelToast({
+        open: true,
+        phase: "info",
+        message: `All ${advanced.length} advanced models are already present.`,
+        missingIds: [],
+        completed: 0,
+        total: 0,
+        failed: 0,
+      });
+    }
+    startupPresenceNoticeShownRef.current = true;
+  }, [activeWorkspace, sessionStoreReady, modelCatalog]);
+
+  useEffect(() => {
+    if (!startupModelToast.open) return;
+    if (startupModelToast.phase === "prompt" || startupModelToast.phase === "downloading") return;
+    if (startupToastTimeoutRef.current) clearTimeout(startupToastTimeoutRef.current);
+    startupToastTimeoutRef.current = setTimeout(() => {
+      setStartupModelToast((prev) => ({ ...prev, open: false }));
+      startupToastTimeoutRef.current = null;
+    }, 5000);
+    return () => {
+      if (startupToastTimeoutRef.current) {
+        clearTimeout(startupToastTimeoutRef.current);
+      }
+    };
+  }, [startupModelToast]);
+
   // Reload RAG docs periodically when in text/mindmap modes
   useEffect(() => {
     if (chatMode === "text" || chatMode === "mindmap") loadRagDocs();
@@ -1305,6 +1376,66 @@ function App() {
     } catch (e) {
       console.error("Failed to uninstall model", e);
       showError(`Failed to uninstall model: ${String(e)}`);
+    }
+  };
+
+  const handleStartupToastDecline = () => {
+    setStartupModelToast((prev) => ({
+      ...prev,
+      open: true,
+      phase: "declined",
+      message: "You can download these models from Settings any time.",
+    }));
+  };
+
+  const handleStartupToastAccept = async () => {
+    const ids = startupModelToast.missingIds;
+    if (ids.length === 0) {
+      setStartupModelToast((prev) => ({ ...prev, open: false }));
+      return;
+    }
+
+    setStartupModelToast((prev) => ({
+      ...prev,
+      open: true,
+      phase: "downloading",
+      message: `Starting downloads...`,
+      completed: 0,
+      total: ids.length,
+      failed: 0,
+    }));
+
+    let completed = 0;
+    let failed = 0;
+    for (const modelId of ids) {
+      try {
+        await Api.downloadModel(modelId);
+        completed += 1;
+      } catch (e) {
+        failed += 1;
+        console.error("Failed startup model download", e);
+      }
+      setStartupModelToast((prev) => ({
+        ...prev,
+        completed,
+        failed,
+      }));
+    }
+
+    if (failed > 0) {
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "done",
+        message: `Downloads finished: ${completed}/${ids.length} completed, ${failed} failed. You can retry from Settings.`,
+      }));
+    } else {
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "done",
+        message: `All ${ids.length} model download(s) completed.`,
+      }));
     }
   };
 
@@ -2357,6 +2488,10 @@ function App() {
     .length;
   const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
   const showRightSidebar = showParamsDock || docPanelOpen;
+  const startupDownloadActiveId = startupModelToast.missingIds.find((id) => downloads[id] !== undefined);
+  const startupDownloadProgress = startupDownloadActiveId
+    ? downloads[startupDownloadActiveId]?.progress
+    : undefined;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -2739,6 +2874,48 @@ function App() {
           <DocumentViewer key={docViewerFile.filePath} filePath={docViewerFile.filePath} title={docViewerFile.title} onClose={closeDocViewer} />
         )}
       </main>
+
+      {startupModelToast.open && (
+        <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-glass-border bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
+          <div className="px-4 py-3 text-sm text-txt">
+            <div className="font-medium mb-1">
+              {startupModelToast.phase === "prompt"
+                ? "Advanced models detected"
+                : startupModelToast.phase === "downloading"
+                  ? "Downloading advanced models"
+                  : "Advanced model setup"}
+            </div>
+            <div className="text-txt-muted leading-relaxed">{startupModelToast.message}</div>
+
+            {startupModelToast.phase === "downloading" && (
+              <div className="mt-2 flex items-center gap-2 text-neon text-xs">
+                <Loader2 size={13} className="animate-spin" />
+                <span>
+                  Progress: {startupModelToast.completed}/{startupModelToast.total}
+                  {typeof startupDownloadProgress === "number" ? ` · ${startupDownloadProgress.toFixed(0)}%` : ""}
+                </span>
+              </div>
+            )}
+
+            {startupModelToast.phase === "prompt" && (
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  className="px-3 py-1.5 rounded-md border border-glass-border text-txt-muted text-xs hover:text-txt"
+                  onClick={handleStartupToastDecline}
+                >
+                  No
+                </button>
+                <button
+                  className="px-3 py-1.5 rounded-md bg-neon text-void-900 text-xs font-semibold hover:opacity-90"
+                  onClick={() => void handleStartupToastAccept()}
+                >
+                  Yes, download
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ══════════ RIGHT SIDEBAR — Runtime Params / Knowledge Base ══════════ */}
       {showRightSidebar && (
