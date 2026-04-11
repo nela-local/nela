@@ -47,25 +47,29 @@ const CORE_TASKS = new Set([
   "stt",
 ]);
 
-const GROUPS: Array<{ id: string; label: string; match: (model: RegisteredModel) => boolean }> = [
+const GROUPS: Array<{ id: string; label: string; description: string; match: (model: RegisteredModel) => boolean }> = [
   {
     id: "embedding",
     label: "Embedding Models",
+    description: "Embedding models convert text into vectors so the app can find semantically similar content during retrieval.",
     match: (model) => model.tasks.includes("embed"),
   },
   {
     id: "grader",
     label: "Grader Models",
+    description: "Grader models score and rerank retrieved chunks so the most relevant context is used in answers.",
     match: (model) => model.tasks.includes("grade"),
   },
   {
     id: "router",
     label: "Router / Classifier Models",
+    description: "Classifier and router models categorize inputs and help route tasks to the most appropriate pipeline.",
     match: (model) => model.tasks.includes("classify"),
   },
   {
     id: "other",
     label: "Other Advanced Models",
+    description: "Specialized helper models used for advanced tasks beyond core chat, vision, and audio workflows.",
     match: (model) => model.tasks.some((t) => !CORE_TASKS.has(t) && !OPTIONAL_TASKS.has(t)),
   },
 ];
@@ -286,6 +290,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   const [ragPrefsSaving, setRagPrefsSaving] = useState(false);
   const [ragPrefsSaved, setRagPrefsSaved] = useState(false);
   const [selectedParamModelId, setSelectedParamModelId] = useState("");
+  const [openGroupHelpId, setOpenGroupHelpId] = useState<string | null>(null);
   const [paramDraft, setParamDraft] = useState<Record<string, string>>({});
   const [paramSaving, setParamSaving] = useState(false);
   const [paramSaved, setParamSaved] = useState(false);
@@ -316,6 +321,34 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   useEffect(() => {
     setRagPrefsSaved(false);
   }, [ragPrefs]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setOpenGroupHelpId(null);
+      return;
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
+      const candidate = event.target;
+      if (!(candidate instanceof HTMLElement)) return;
+      if (candidate.closest(".settings-group-help-anchor")) return;
+      setOpenGroupHelpId(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenGroupHelpId(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -556,7 +589,28 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 
                 return (
                   <div key={group.id} className="settings-group">
-                    <div className="settings-group-title">{group.label}</div>
+                    <div className="settings-group-title-row">
+                      <div className="settings-group-title">{group.label}</div>
+                      <div className="settings-group-help-anchor">
+                        <button
+                          type="button"
+                          className="settings-group-help-btn"
+                          aria-label={`Explain ${group.label}`}
+                          aria-expanded={openGroupHelpId === group.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenGroupHelpId((prev) => (prev === group.id ? null : group.id));
+                          }}
+                        >
+                          ?
+                        </button>
+                        {openGroupHelpId === group.id && (
+                          <div className="settings-group-help-popover" role="tooltip">
+                            <p>{group.description}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     <div className="settings-list">
                       {groupModels.map((model) => {
                         const isDownloading = downloads[model.id] !== undefined;
