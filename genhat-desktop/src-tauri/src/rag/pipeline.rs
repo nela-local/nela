@@ -810,18 +810,7 @@ impl RagPipeline {
             }
         }
 
-        let before_filter = graded_sources.len();
-        // Filter: keep only chunks with grade >= 3, then take top_k
-        graded_sources.retain(|(_, grade)| *grade >= 3);
-        log::info!(
-            "Grading kept {}/{} chunks (grade >= 3)",
-            graded_sources.len(),
-            before_filter
-        );
-        graded_sources.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal)));
-        graded_sources.truncate(top_k);
-
-        let sources: Vec<SourceChunk> = graded_sources.into_iter().map(|(s, _)| s).collect();
+        let sources = self.select_graded_sources(graded_sources, top_k, "query");
 
         // RAG Fusion: if all chunks failed grading, rephrase and retry once
         if sources.is_empty() {
@@ -1011,19 +1000,7 @@ impl RagPipeline {
             }
         }
 
-        let before_filter = graded_sources.len();
-        graded_sources.retain(|(_, grade)| *grade >= 3);
-        log::info!(
-            "[stream] Grading kept {}/{} chunks",
-            graded_sources.len(), before_filter
-        );
-        graded_sources.sort_by(|a, b| {
-            b.1.cmp(&a.1)
-                .then(b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal))
-        });
-        graded_sources.truncate(top_k);
-
-        let mut sources: Vec<SourceChunk> = graded_sources.into_iter().map(|(s, _)| s).collect();
+        let mut sources = self.select_graded_sources(graded_sources, top_k, "stream");
 
         // RAG Fusion: if all chunks failed grading, rephrase and retry once
         if sources.is_empty() {
@@ -1486,6 +1463,84 @@ impl RagPipeline {
                 3
             }
         }
+    }
+
+    /// Select source chunks from graded candidates with adaptive thresholds.
+    ///
+    /// Primary policy keeps grade >= 3. If this would produce zero chunks,
+    /// we relax to grade >= 2. As a final safeguard, keep at least the best
+    /// available chunk so retrieval does not collapse to an empty set.
+    fn select_graded_sources(
+        &self,
+        mut graded_sources: Vec<(SourceChunk, u8)>,
+        top_k: usize,
+        stage: &str,
+    ) -> Vec<SourceChunk> {
+        if graded_sources.is_empty() {
+            return Vec::new();
+        }
+
+        let strict_threshold = 3u8;
+        let relaxed_threshold = 2u8;
+
+        graded_sources.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then(
+                    b.0
+                        .score
+                        .partial_cmp(&a.0.score)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+        });
+
+        let strict: Vec<SourceChunk> = graded_sources
+            .iter()
+            .filter(|(_, grade)| *grade >= strict_threshold)
+            .take(top_k)
+            .map(|(source, _)| source.clone())
+            .collect();
+
+        if !strict.is_empty() {
+            log::info!(
+                "[{stage}] Grading kept {}/{} chunks (grade >= {})",
+                strict.len(),
+                graded_sources.len(),
+                strict_threshold
+            );
+            return strict;
+        }
+
+        let relaxed: Vec<SourceChunk> = graded_sources
+            .iter()
+            .filter(|(_, grade)| *grade >= relaxed_threshold)
+            .take(top_k)
+            .map(|(source, _)| source.clone())
+            .collect();
+
+        if !relaxed.is_empty() {
+            log::warn!(
+                "[{stage}] No chunks met grade >= {}; relaxing to grade >= {} (kept {}/{})",
+                strict_threshold,
+                relaxed_threshold,
+                relaxed.len(),
+                graded_sources.len()
+            );
+            return relaxed;
+        }
+
+        let fallback_take = top_k.max(1).min(graded_sources.len());
+        let best_grade = graded_sources.first().map(|(_, grade)| *grade).unwrap_or(0);
+        log::warn!(
+            "[{stage}] All chunk grades are very low (best={}); keeping top {} as fallback",
+            best_grade,
+            fallback_take
+        );
+
+        graded_sources
+            .into_iter()
+            .take(fallback_take)
+            .map(|(source, _)| source)
+            .collect()
     }
 
     /// Batch grade multiple chunks at once for efficiency.

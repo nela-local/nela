@@ -85,12 +85,15 @@ pub fn enrich_request(chunk_text: &str) -> TaskRequest {
 
 /// Create a grading task request (for RAG retrieval grading).
 pub fn grade_request(query: &str, context: &str) -> TaskRequest {
+    let mut extra = HashMap::new();
+    extra.insert("query".to_string(), query.to_string());
+
     TaskRequest {
         request_id: uuid::Uuid::new_v4().to_string(),
         task_type: TaskType::Grade,
-        input: format!("Query: {query}\n\nContext: {context}"),
+        input: context.to_string(),
         model_override: None,
-        extra: HashMap::new(),
+        extra,
     }
 }
 
