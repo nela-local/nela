@@ -310,6 +310,16 @@ function App() {
     setBindings({
       openSettings: () => setSettingsOpen(true),
       openTours: () => setToursOpen(true),
+      switchMode: (mode: ChatMode) => {
+        setChatMode(mode);
+        if (mode !== "vision") {
+          setImagePath(null);
+          setImagePreview(null);
+        }
+        if (mode !== "text" && mode !== "mindmap") {
+          setDocPanelOpen(false);
+        }
+      },
     });
   }, [setBindings]);
 

@@ -173,7 +173,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
   return (
     <div className="podcast-tab">
       {/* ─── Header ─── */}
-      <div className="podcast-header">
+      <div className="podcast-header" data-tour="podcast-header">
         <div className="podcast-header-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
@@ -200,9 +200,9 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
       )}
 
       {/* ─── Configuration ─── */}
-      <div className="podcast-config">
+      <div className="podcast-config" data-tour="podcast-setup">
         <div className="podcast-config-header">Setup</div>
-        <div className="podcast-config-grid">
+        <div className="podcast-config-grid" data-tour="podcast-speakers">
           {/* Speaker A */}
           <div className="podcast-speaker-config">
             <div className="speaker-badge speaker-a-badge">A</div>
@@ -323,6 +323,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
             rows={3}
             disabled={isGenerating}
             className="podcast-textarea"
+            data-tour="podcast-query"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -336,6 +337,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
               onClick={() => setShowModeMenu((v) => !v)}
               title="Switch mode"
               disabled={isGenerating}
+              data-tour="podcast-mode-picker"
             >
               <CurrentModeIcon size={16} strokeWidth={1.9} />
               <span className="text-[0.74rem] font-medium leading-none">{currentModeLabel}</span>
@@ -369,6 +371,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
             onClick={handleGenerate}
             disabled={isGenerating || !query.trim() || !hasDocuments}
             className="glass-btn podcast-generate-btn"
+            data-tour="podcast-generate"
           >
             {isGenerating ? (
               <>

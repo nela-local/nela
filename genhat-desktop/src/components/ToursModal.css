@@ -11,13 +11,15 @@
 }
 
 .tours-modal {
-  width: min(640px, calc(100vw - 40px));
-  max-height: min(720px, calc(100vh - 40px));
+  width: min(1160px, 96vw);
+  max-height: 88vh;
   overflow: hidden;
   background: linear-gradient(165deg, rgba(11, 20, 34, 0.96) 0%, rgba(8, 15, 26, 0.97) 100%);
   border: 1px solid var(--color-glass-border);
   border-radius: 16px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
 }
 
 .tours-modal-header {
@@ -52,14 +54,50 @@
 }
 
 .tours-modal-body {
-  padding: 14px;
-  overflow: auto;
+  padding: 18px 20px 22px;
+  overflow-y: auto;
 }
 
 .tours-modal-subtitle {
   margin: 0 0 12px;
   color: var(--color-txt-secondary);
   font-size: 0.9rem;
+}
+
+.tours-modal-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--color-glass-border);
+  background: rgba(255, 255, 255, 0.02);
+  margin-bottom: 12px;
+}
+
+.tours-tab {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-txt-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 620;
+}
+
+.tours-tab.active {
+  color: rgba(0, 212, 255, 0.95);
+  border-color: rgba(0, 212, 255, 0.25);
+  background: rgba(0, 212, 255, 0.12);
+}
+
+.tours-tab:hover {
+  color: var(--color-txt);
 }
 
 .tours-list {
@@ -131,4 +169,19 @@
   margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+}
+
+.help-guide-panel {
+  border-radius: 14px;
+  border: 1px solid var(--color-glass-border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+  min-height: min(520px, calc(100vh - 260px));
+  overflow-y: auto;
+}
+
+@media (max-width: 1080px) {
+  .tours-modal {
+    width: min(860px, 96vw);
+  }
 }

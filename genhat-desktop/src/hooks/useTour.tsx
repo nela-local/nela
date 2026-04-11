@@ -91,6 +91,19 @@ function resolveTarget(target: TourTarget): HTMLElement | null {
   }
 }
 
+async function waitForTarget(target: TourTarget, timeoutMs = 1200, intervalMs = 40): Promise<boolean> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (resolveTarget(target)) return true;
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, intervalMs);
+    });
+  }
+
+  return false;
+}
+
 const TourContext = createContext<TourContextValue | null>(null);
 
 export function TourProvider({
@@ -123,26 +136,40 @@ export function TourProvider({
     return activeTour.steps[stepIndex] ?? null;
   }, [activeTour, stepIndex]);
 
-  const isStepAvailable = useCallback(
-    (tour: TourDefinition, idx: number): boolean => {
-      const step = tour.steps[idx];
-      if (!step) return false;
-      if (step.isAvailable && !step.isAvailable(bindings)) return false;
-      return !!resolveTarget(step.target);
-    },
-    [bindings]
-  );
-
-  const findNextAvailableIndex = useCallback(
-    (tour: TourDefinition, startIdx: number, direction: 1 | -1): number | null => {
+  const findNextNavigableIndex = useCallback(
+    async (tour: TourDefinition, startIdx: number, direction: 1 | -1): Promise<number | null> => {
       let i = startIdx;
+
       while (i >= 0 && i < tour.steps.length) {
-        if (isStepAvailable(tour, i)) return i;
+        const step = tour.steps[i];
+        if (!step) {
+          i += direction;
+          continue;
+        }
+
+        if (step.isAvailable && !step.isAvailable(bindings)) {
+          i += direction;
+          continue;
+        }
+
+        if (step.onBeforeStep) {
+          try {
+            await step.onBeforeStep(bindings);
+          } catch {
+            // ignore
+          }
+        }
+
+        if (resolveTarget(step.target) || (await waitForTarget(step.target))) {
+          return i;
+        }
+
         i += direction;
       }
+
       return null;
     },
-    [isStepAvailable]
+    [bindings]
   );
 
   const exit = useCallback(() => {
@@ -186,7 +213,7 @@ export function TourProvider({
       const tour = activeTour;
       if (!tour) return;
 
-      const nextIdx = findNextAvailableIndex(tour, idx, idx >= stepIndex ? 1 : -1);
+      const nextIdx = await findNextNavigableIndex(tour, idx, idx >= stepIndex ? 1 : -1);
       if (nextIdx === null) {
         // No more available steps in that direction.
         if (idx > stepIndex) {
@@ -199,18 +226,9 @@ export function TourProvider({
         return;
       }
 
-      const step = tour.steps[nextIdx];
-      if (step?.onBeforeStep) {
-        try {
-          await step.onBeforeStep(bindings);
-        } catch {
-          // ignore
-        }
-      }
-
       setStepIndex(nextIdx);
     },
-    [activeTour, bindings, complete, findNextAvailableIndex, stepIndex]
+    [activeTour, complete, findNextNavigableIndex, stepIndex]
   );
 
   const startTour = useCallback(
@@ -223,11 +241,17 @@ export function TourProvider({
       setActiveTourId(tourId);
       setStatus("running");
 
-      // pick first available step
-      const firstIdx = findNextAvailableIndex(tour, 0, 1);
-      setStepIndex(firstIdx ?? 0);
+      // Bootstrap at step 0 and then resolve the first navigable step after
+      // running any step preparation hooks.
+      setStepIndex(0);
+      void (async () => {
+        const firstIdx = await findNextNavigableIndex(tour, 0, 1);
+        if (firstIdx !== null) {
+          setStepIndex(firstIdx);
+        }
+      })();
     },
-    [tours, findNextAvailableIndex]
+    [tours, findNextNavigableIndex]
   );
 
   const next = useCallback(() => {
