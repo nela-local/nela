@@ -27,6 +27,7 @@ import type {
   KittenTtsVoice,
   MindMapGraph,
   MindMapNode,
+  PodcastResult,
   WorkspaceRecord,
   ImportModelProfile,
 } from "./types";
@@ -307,7 +308,7 @@ function App() {
     folder: "LLM",
     profile: "llm",
   });
-  const [downloadOptionalOnStart, setDownloadOptionalOnStart] = useState(() => {
+  const [downloadOptionalOnStart] = useState(() => {
     return localStorage.getItem(STARTUP_OPTIONAL_DOWNLOAD_KEY) === "true";
   });
   const [appModal, setAppModal] = useState({
@@ -583,15 +584,20 @@ function App() {
     visionModels,
   ]);
 
+  const lastRuntimeTargetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeRuntimeParamTarget) {
+      lastRuntimeTargetKeyRef.current = null;
       setParamsDockOpen(false);
       return;
     }
 
-    // Re-open the panel when a new active model target is detected.
-    setParamsDockOpen(true);
-  }, [activeRuntimeParamTarget?.key]);
+    // Re-open the panel only when switching to a different active model target.
+    if (lastRuntimeTargetKeyRef.current !== activeRuntimeParamTarget.key) {
+      lastRuntimeTargetKeyRef.current = activeRuntimeParamTarget.key;
+      setParamsDockOpen(true);
+    }
+  }, [activeRuntimeParamTarget]);
 
   const handleApplyRuntimeParams = async (nextParams: Record<string, string>) => {
     if (!activeRuntimeParamTarget) return;
@@ -1258,7 +1264,6 @@ function App() {
     },
     [
       workspaceBusy,
-      workspaces,
       activeWorkspace,
       refreshWorkspaceRegistry,
       refreshWorkspaceListOnly,
@@ -1404,7 +1409,7 @@ function App() {
   // Reload RAG docs periodically when in text/mindmap modes
   useEffect(() => {
     if (chatMode === "text" || chatMode === "mindmap") loadRagDocs();
-  }, [chatMode]);
+  }, [chatMode, loadRagDocs]);
 
   // Listen for background enrichment progress events
   useEffect(() => {
@@ -1426,7 +1431,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, [chatMode]);
+  }, [loadRagDocs]);
 
   // Clean up TTS and general timers on unmount
   useEffect(() => {
@@ -1466,7 +1471,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [refreshModels]);
 
   useEffect(() => {
     try {
@@ -2657,6 +2662,67 @@ function App() {
     }));
   };
 
+  const handlePodcastGenerated = useCallback(
+    ({ query, result }: { query: string; result: PodcastResult }) => {
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery) return;
+
+      const combinedAudioUrl = result.combined_audio_data_url?.trim() || "";
+      const transcriptMessages: ChatMessage[] = result.segments.map((segment) => ({
+        role: "assistant",
+        content: `🎙️ ${segment.line.speaker}: ${segment.line.text}`,
+      }));
+      const combinedAudioMessage: ChatMessage = {
+        role: "assistant",
+        content: result.script?.title
+          ? `🎧 Podcast generated: ${result.script.title}`
+          : "🎧 Podcast generated.",
+        ...(combinedAudioUrl ? { audioUrl: combinedAudioUrl, audioSaved: true } : {}),
+      };
+
+      if (!combinedAudioUrl && transcriptMessages.length === 0) return;
+
+      const targetSessionId = activeSessionId && sessions.some((session) => session.id === activeSessionId)
+        ? activeSessionId
+        : null;
+
+      if (targetSessionId) {
+        updateSession(targetSessionId, (prev) => {
+          const shouldSetTitle = prev.messages.length === 0;
+          return {
+            title: shouldSetTitle ? deriveTitleFromMessage(trimmedQuery) : prev.title,
+            messages: [
+              ...prev.messages,
+              { role: "user", content: trimmedQuery },
+              combinedAudioMessage,
+              ...transcriptMessages,
+            ],
+            audioOutputs: combinedAudioUrl
+              ? [...(prev.audioOutputs ?? []), combinedAudioUrl]
+              : prev.audioOutputs ?? [],
+            audioOutput: combinedAudioUrl || prev.audioOutput,
+          };
+        });
+        return;
+      }
+
+      const newSession = createEmptySession();
+      newSession.title = deriveTitleFromMessage(trimmedQuery);
+      newSession.messages = [
+        { role: "user", content: trimmedQuery },
+        combinedAudioMessage,
+        ...transcriptMessages,
+      ];
+      newSession.audioOutputs = combinedAudioUrl ? [combinedAudioUrl] : [];
+      newSession.audioOutput = combinedAudioUrl || undefined;
+
+      setSessions((prev) => [...prev, newSession]);
+      setOpenSessionIds((prev) => (prev.includes(newSession.id) ? prev : [...prev, newSession.id]));
+      setActiveSessionId(newSession.id);
+    },
+    [activeSessionId, sessions, updateSession]
+  );
+
   // Show startup modal if no active workspace yet (unless we're running the tour from it)
   const showStartupModal = !activeWorkspace && !suppressStartupModal;
   const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
@@ -2970,6 +3036,7 @@ function App() {
             modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
             currentMode={chatMode}
             onSelectMode={handleModeSwitch}
+            onPodcastGenerated={handlePodcastGenerated}
           />
         ) : !activeSession ? (
           <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">

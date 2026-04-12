@@ -1,0 +1,37 @@
+@import "./ModelSelector.css";
+
+.glass-dropdown-container {
+  width: 100%;
+}
+
+.glass-dropdown-btn {
+  width: 100%;
+  min-width: 0;
+}
+
+.glass-dropdown-menu {
+  width: 100%;
+  right: auto;
+  left: 0;
+  z-index: 120;
+}
+
+.glass-dropdown-menu .model-list {
+  max-height: 240px;
+}
+
+.glass-dropdown-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.glass-dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.glass-dropdown-placeholder {
+  color: var(--color-txt-muted);
+}

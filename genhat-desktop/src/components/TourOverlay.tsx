@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTour, type TourPlacement, type TourTarget } from "../hooks/useTour";
 import "./TourOverlay.css";
@@ -53,12 +53,7 @@ export default function TourOverlay() {
   const { status, activeTour, activeStep, stepIndex, next, prev, exit, complete } = useTour();
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
-  const [tick, setTick] = useState(0);
-
-  const targetEl = useMemo(() => {
-    if (!activeStep) return null;
-    return resolveTarget(activeStep.target);
-  }, [activeStep, tick]);
+  const targetEl = activeStep ? resolveTarget(activeStep.target) : null;
 
   useLayoutEffect(() => {
     if (status !== "running" || !activeStep) return;
@@ -80,7 +75,7 @@ export default function TourOverlay() {
 
     window.addEventListener("resize", onResize);
     window.addEventListener("scroll", onScroll, true);
-    const id = window.setInterval(() => setTick((v) => v + 1), 500);
+    const id = window.setInterval(update, 500);
 
     return () => {
       window.removeEventListener("resize", onResize);

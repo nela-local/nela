@@ -371,7 +371,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
     setParamDraft({ ...(selectedParamModel.params ?? {}) });
     setParamSaved(false);
     setParamError(null);
-  }, [selectedParamModel?.id]);
+  }, [selectedParamModel]);
 
   useEffect(() => {
     if (!isOpen || selectedParamModel?.backend !== "LlamaServer") {

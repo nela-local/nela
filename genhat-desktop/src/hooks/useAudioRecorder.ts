@@ -216,7 +216,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
       }));
       cleanup();
     }
-  }, [cleanup, state.isPaused]);
+  }, [cleanup]);
 
   const stopRecording = useCallback(async (): Promise<Blob | null> => {
     if (!audioContextRef.current || chunksRef.current.length === 0) {
