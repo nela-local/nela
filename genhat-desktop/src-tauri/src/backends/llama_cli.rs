@@ -28,6 +28,58 @@ fn parse_bool_param(value: &str, default: bool) -> bool {
     }
 }
 
+fn pick_mmproj_from_dir(dir: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let is_gguf = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("gguf"))
+                .unwrap_or(false);
+            is_gguf && name.contains("mmproj")
+        })
+        .collect();
+    candidates.sort();
+    candidates.into_iter().next()
+}
+
+fn resolve_mmproj_path(models_dir: &Path, model_file: &str, mmproj_ref: &str) -> Result<PathBuf, String> {
+    let mmproj_candidate = models_dir.join(mmproj_ref);
+    if mmproj_candidate.is_file() {
+        return Ok(mmproj_candidate);
+    }
+    if mmproj_candidate.is_dir() {
+        if let Some(found) = pick_mmproj_from_dir(&mmproj_candidate) {
+            return Ok(found);
+        }
+    }
+
+    // Fallback: find mmproj*.gguf next to the model file.
+    let model_parent = models_dir
+        .join(model_file)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| models_dir.to_path_buf());
+    if let Some(found) = pick_mmproj_from_dir(&model_parent) {
+        return Ok(found);
+    }
+
+    Err(format!(
+        "mmproj file not found. Checked '{}' and model directory '{}'",
+        mmproj_candidate.display(),
+        model_parent.display()
+    ))
+}
+
 /// Platform-specific constants.
 const OS_FOLDER: &str = if cfg!(target_os = "windows") {
     "llama-win"
@@ -231,12 +283,8 @@ impl super::ModelBackend for LlamaCliBackend {
 
         // Add mmproj (multimodal projector) - required for vision models
         if let Some(mmproj_file) = request.extra.get("mmproj_file") {
-            let mmproj_path = models_dir.join(mmproj_file);
-            if mmproj_path.exists() {
-                cmd.arg("--mmproj").arg(&mmproj_path);
-            } else {
-                return Err(format!("mmproj file not found: {}", mmproj_path.display()));
-            }
+            let mmproj_path = resolve_mmproj_path(models_dir, &model_file, mmproj_file)?;
+            cmd.arg("--mmproj").arg(&mmproj_path);
         }
 
         // Add image if provided in extra params
@@ -281,7 +329,15 @@ impl super::ModelBackend for LlamaCliBackend {
             .map(|s| s.as_str())
             .filter(|v| !v.trim().is_empty())
             .unwrap_or("1024");
+        let ctx_size = request
+            .extra
+            .get("ctx_size")
+            .map(|s| s.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or("8192");
+        cmd.arg("--ctx-size").arg(ctx_size);
         cmd.arg("-n").arg(max_tokens);
+        cmd.arg("--no-warmup");
 
         // Log the full command for debugging
         log::info!(
@@ -333,6 +389,7 @@ pub async fn execute_vision_streaming(
     image_path: Option<&str>,
     prompt: &str,
     max_tokens: &str,
+    ctx_size: &str,
     image_min_tokens: Option<&str>,
     image_max_tokens: Option<&str>,
     use_jinja: bool,
@@ -347,10 +404,7 @@ pub async fn execute_vision_streaming(
         return Err(format!("Model file not found: {}", model_path.display()));
     }
 
-    let mmproj_path = models_dir.join(mmproj_file);
-    if !mmproj_path.exists() {
-        return Err(format!("mmproj file not found: {}", mmproj_path.display()));
-    }
+    let mmproj_path = resolve_mmproj_path(models_dir, model_file, mmproj_file)?;
 
     let image_path = image_path
         .map(str::trim)
@@ -382,7 +436,9 @@ pub async fn execute_vision_streaming(
         .arg("-m").arg(&model_path)
         .arg("--mmproj").arg(&mmproj_path)
         .arg("-p").arg(prompt)
+        .arg("--ctx-size").arg(ctx_size)
         .arg("-n").arg(max_tokens)
+        .arg("--no-warmup")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         ;
@@ -427,13 +483,16 @@ pub async fn execute_vision_streaming(
 
     // Read output in small chunks for token-by-token streaming
     let mut buffer = [0u8; 64];  // Small buffer for responsive streaming
+    let mut streamed_any = false;
     
     loop {
         match stdout.read(&mut buffer).await {
             Ok(0) => break,  // EOF
             Ok(n) => {
-                // Convert bytes to string and emit
-                if let Ok(chunk) = String::from_utf8(buffer[..n].to_vec()) {
+                // Decode lossily so split UTF-8 boundaries never drop output chunks.
+                let chunk = String::from_utf8_lossy(&buffer[..n]).to_string();
+                if !chunk.is_empty() {
+                    streamed_any = true;
                     let _ = app.emit("vision-stream", serde_json::json!({
                         "chunk": chunk,
                         "done": false
@@ -451,15 +510,40 @@ pub async fn execute_vision_streaming(
     let status = child.wait().await
         .map_err(|e| format!("Process error: {e}"))?;
 
-    // Log any stderr output
-    if let Ok(stderr_output) = stderr_task.await {
-        if !stderr_output.is_empty() {
-            log::warn!("llama-mtmd-cli stderr: {}", stderr_output.trim());
+    // Capture stderr output for diagnostics and fail-fast behavior.
+    let stderr_output = match stderr_task.await {
+        Ok(out) => out,
+        Err(join_err) => {
+            log::warn!("Failed to join stderr reader task: {}", join_err);
+            String::new()
         }
+    };
+    if !stderr_output.is_empty() {
+        log::warn!("llama-mtmd-cli stderr: {}", stderr_output.trim());
     }
 
     if !status.success() {
         log::error!("llama-mtmd-cli exited with: {}", status);
+        return Err(format!(
+            "llama-mtmd-cli exited with {}. {}",
+            status,
+            if stderr_output.trim().is_empty() {
+                "No stderr output was captured.".to_string()
+            } else {
+                format!("stderr: {}", stderr_output.trim())
+            }
+        ));
+    }
+
+    if !streamed_any {
+        return Err(if stderr_output.trim().is_empty() {
+            "llama-mtmd-cli completed but produced no text output. This usually indicates an incompatible model/mmproj pairing or prompt-template mismatch.".to_string()
+        } else {
+            format!(
+                "llama-mtmd-cli produced no text output. stderr: {}",
+                stderr_output.trim()
+            )
+        });
     }
 
     // Emit done event

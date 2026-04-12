@@ -9,9 +9,11 @@
 //! search which is still much faster than the SQL-based scan.
 
 use crate::rag::db::{dot_product, RagDb};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
+use wide::f32x8;
 
 /// TurboQuant-style symmetric per-vector int8 quantization.
 ///
@@ -60,10 +62,40 @@ impl QuantizedVector {
             return 0.0;
         }
 
-        let mut dot_q = 0.0f32;
-        for (qv, q) in self.data.iter().zip(query.iter()) {
-            dot_q += (*qv as f32) * *q;
+        let mut i = 0usize;
+        let mut acc = f32x8::splat(0.0);
+
+        while i + 8 <= self.data.len() {
+            let qv = f32x8::from([
+                self.data[i] as f32,
+                self.data[i + 1] as f32,
+                self.data[i + 2] as f32,
+                self.data[i + 3] as f32,
+                self.data[i + 4] as f32,
+                self.data[i + 5] as f32,
+                self.data[i + 6] as f32,
+                self.data[i + 7] as f32,
+            ]);
+            let qq = f32x8::from([
+                query[i],
+                query[i + 1],
+                query[i + 2],
+                query[i + 3],
+                query[i + 4],
+                query[i + 5],
+                query[i + 6],
+                query[i + 7],
+            ]);
+            acc += qv * qq;
+            i += 8;
         }
+
+        let mut dot_q = acc.reduce_add();
+        while i < self.data.len() {
+            dot_q += (self.data[i] as f32) * query[i];
+            i += 1;
+        }
+
         dot_q * self.scale
     }
 
@@ -126,24 +158,41 @@ impl VectorIndex {
     /// including both chunk embeddings and media caption embeddings.
     pub fn load_from_db(db: &RagDb) -> Result<Self, String> {
         let all_embeddings = db.get_all_embeddings()?;
-        let mut map = HashMap::with_capacity(all_embeddings.len());
+        let quantized_chunks: Vec<(i64, QuantizedVector, usize, usize)> = all_embeddings
+            .into_par_iter()
+            .map(|(id, emb)| {
+                let float_bytes = emb.len() * std::mem::size_of::<f32>();
+                let q = QuantizedVector::from_f32(&emb);
+                let quantized_bytes = q.compressed_bytes();
+                (id, q, float_bytes, quantized_bytes)
+            })
+            .collect();
+
+        let mut map = HashMap::with_capacity(quantized_chunks.len());
         let mut float_bytes = 0usize;
         let mut quantized_bytes = 0usize;
-        for (id, emb) in &all_embeddings {
-            float_bytes += emb.len() * std::mem::size_of::<f32>();
-            let q = QuantizedVector::from_f32(emb);
-            quantized_bytes += q.compressed_bytes();
-            map.insert(*id, q);
+        for (id, q, f_bytes, q_bytes) in quantized_chunks {
+            float_bytes += f_bytes;
+            quantized_bytes += q_bytes;
+            map.insert(id, q);
         }
         let chunk_count = map.len();
 
         // Also load media caption embeddings (stored with negative IDs)
         let media_embeddings = db.get_all_media_embeddings().unwrap_or_default();
         let media_count = media_embeddings.len();
-        for (neg_id, emb) in media_embeddings {
-            float_bytes += emb.len() * std::mem::size_of::<f32>();
-            let q = QuantizedVector::from_f32(&emb);
-            quantized_bytes += q.compressed_bytes();
+        let quantized_media: Vec<(i64, QuantizedVector, usize, usize)> = media_embeddings
+            .into_par_iter()
+            .map(|(neg_id, emb)| {
+                let float_bytes = emb.len() * std::mem::size_of::<f32>();
+                let q = QuantizedVector::from_f32(&emb);
+                let quantized_bytes = q.compressed_bytes();
+                (neg_id, q, float_bytes, quantized_bytes)
+            })
+            .collect();
+        for (neg_id, q, f_bytes, q_bytes) in quantized_media {
+            float_bytes += f_bytes;
+            quantized_bytes += q_bytes;
             map.insert(neg_id, q);
         }
 
@@ -170,8 +219,6 @@ impl VectorIndex {
             pending_inserts: AtomicUsize::new(0),
         };
 
-        // Build IVF partitions if enough vectors
-        index.rebuild_ivf();
         Ok(index)
     }
 
@@ -266,7 +313,15 @@ impl VectorIndex {
     /// Rebuild IVF partitions if enough new vectors have been inserted.
     pub fn rebuild_if_needed(&self) {
         let pending = self.pending_inserts.load(Ordering::Relaxed);
-        if pending >= REBUILD_THRESHOLD {
+        let should_bootstrap = if pending == 0 {
+            let vec_len = self.vectors.read().unwrap().len();
+            let centroids_empty = self.centroids.read().unwrap().is_empty();
+            vec_len >= MIN_VECTORS_FOR_IVF && centroids_empty
+        } else {
+            false
+        };
+
+        if pending >= REBUILD_THRESHOLD || should_bootstrap {
             self.rebuild_ivf();
         }
     }

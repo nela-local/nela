@@ -56,15 +56,15 @@ id = "qwen3.5-0_8b"
 name = "Qwen3.5 0.8B Q4"
 backend = "llama_server"
 kind = "child_process"
-model_file = "LLM/Qwen3.5-0.8B-UD-Q4_K_XL.gguf"
+model_file = "LLM/unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-UD-Q4_K_XL.gguf"
 tasks = ["chat", "summarize", "mindmap", "enrich", "hyde", "podcast_script"]
 auto_start = false
 max_instances = 2
 idle_timeout_s = 300
 priority = 30
-memory_mb = 900
+memory_mb = 532
 gdrive_id = "1yukrVAp41qkNPJwg0rj5fX5vS1B6kmNP"
-is_zip = true
+is_zip = false
 
 [models.params]
 ctx_size = "4096"
@@ -81,6 +81,23 @@ chat_template_kwargs = '{"enable_thinking": false}'
 
 [models.task_priorities]
 podcast_script = 10
+
+# ── Vision Projector: Qwen3.5 0.8B mmproj (download/check helper) ────────────
+
+[[models]]
+id = "qwen3.5-0_8b-mmproj"
+name = "Qwen3.5 0.8B mmproj F16"
+backend = "llama_cli"
+kind = "child_process"
+model_file = "LLM/unsloth/Qwen3.5-0.8B-GGUF/mmproj-F16.gguf"
+tasks = ["vision_chat"]
+auto_start = false
+max_instances = 1
+idle_timeout_s = 0
+priority = 9
+memory_mb = 196
+gdrive_id = "1eD-mFb6aIXBM7YXdJcCB5-pLY697eJxY"
+is_zip = false
 
 # ── LLM: Qwen3.5-2B (llama-server) ──────────────────────────────────────────
 # Primary model for podcast script generation (highest priority). Thinking
@@ -117,25 +134,25 @@ chat_template_kwargs = '{"enable_thinking": false}'
 [models.task_priorities]
 podcast_script = 30
 
-# ── Vision-Language: LFM 2.5 VL INT4 (llama-mtmd-cli per-request) ────────────
+# ── Vision-Language: Qwen3.5 0.8B + mmproj (llama-mtmd-cli per-request) ──────
 
 [[models]]
 id = "lfm-2_5-vl-q4"
-name = "LFM 2.5 VL INT4"
+name = "Qwen3.5 0.8B Vision Q4"
 backend = "llama_cli"
 kind = "child_process"
-model_file = "LiquidAI-VLM/LFM2.5-VL-1.6B-Q4_0.gguf"
+model_file = "LLM/unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-UD-Q4_K_XL.gguf"
 tasks = ["vision_chat"]
 auto_start = false
 max_instances = 1
 idle_timeout_s = 0
 priority = 10
-memory_mb = 1800
-gdrive_id = "116K_Ck5nD1i53HkFJcppeCDipym1zQHz"
-is_zip = true
+memory_mb = 532
+gdrive_id = "1yukrVAp41qkNPJwg0rj5fX5vS1B6kmNP"
+is_zip = false
 
 [models.params]
-mmproj_file = "LiquidAI-VLM/mmproj-LFM2.5-VL-1.6b-Q8_0.gguf"
+mmproj_file = "LLM/unsloth/Qwen3.5-0.8B-GGUF/mmproj-F16.gguf"
 image_max_tokens = "64"
 max_tokens = "1024"
 

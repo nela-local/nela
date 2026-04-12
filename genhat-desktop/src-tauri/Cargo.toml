@@ -35,6 +35,8 @@ dashmap = "6"
 crossbeam-channel = "0.5"
 base64 = "0.22"
 sysinfo = "0.30"
+rayon = "1.10"
+wide = "0.7"
 
 # ── RAG pipeline ──
 rusqlite = { version = "0.32", features = ["bundled", "blob"] }
@@ -68,3 +70,6 @@ fancy-regex = "0.14"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "2.0.0-rc.11", features = ["download-binaries", "coreml"] }

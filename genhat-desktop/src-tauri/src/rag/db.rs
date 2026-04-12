@@ -11,6 +11,7 @@
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rayon::prelude::*;
 use rusqlite::params;
 use std::path::{Path, PathBuf};
 
@@ -598,15 +599,23 @@ impl RagDb {
                  WHERE COALESCE(enriched_embedding, embedding) IS NOT NULL",
             )
             .map_err(|e| format!("Query error: {e}"))?;
-        let results = stmt
+        // SQLite access remains single-threaded: collect raw blobs first.
+        let raw_rows: Vec<(i64, Vec<u8>)> = stmt
             .query_map([], |row| {
                 let id: i64 = row.get(0)?;
                 let blob: Vec<u8> = row.get(1)?;
-                Ok((id, bytes_to_embedding(&blob)))
+                Ok((id, blob))
             })
             .map_err(|e| format!("Query error: {e}"))?
             .filter_map(|r| r.ok())
             .collect();
+
+        // Decode blobs in parallel across CPU cores.
+        let results: Vec<(i64, Vec<f32>)> = raw_rows
+            .into_par_iter()
+            .map(|(id, blob)| (id, bytes_to_embedding(&blob)))
+            .collect();
+
         Ok(results)
     }
 

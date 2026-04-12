@@ -226,6 +226,75 @@ impl std::fmt::Debug for ParakeetEngine {
     }
 }
 
+fn parakeet_thread_plan() -> (usize, usize, usize, usize) {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(1);
+
+    let inter = if logical >= 8 { 2 } else { 1 };
+    let encoder_intra = logical.clamp(2, 8);
+    let decoder_intra = (logical / 2).clamp(1, 4);
+    let joiner_intra = (logical / 2).clamp(1, 4);
+
+    (encoder_intra, decoder_intra, joiner_intra, inter)
+}
+
+fn build_ort_session_with_fallback(
+    model_path: &Path,
+    model_label: &str,
+    intra_threads: usize,
+    inter_threads: usize,
+) -> Result<Session, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let coreml_attempt = Session::builder()
+            .map_err(|e| format!("ORT session builder ({model_label}): {e}"))?
+            .with_intra_threads(intra_threads)
+            .map_err(|e| format!("ORT intra threads ({model_label}): {e}"))?
+            .with_inter_threads(inter_threads)
+            .map_err(|e| format!("ORT inter threads ({model_label}): {e}"))?
+            .with_execution_providers([
+                ort::ep::CoreML::default()
+                    .with_subgraphs(true)
+                    .with_compute_units(ort::ep::coreml::ComputeUnits::CPUAndNeuralEngine)
+                    .build(),
+            ]);
+
+        match coreml_attempt {
+            Ok(builder) => match builder.commit_from_file(model_path) {
+                Ok(session) => {
+                    log::info!(
+                        "[Parakeet] {model_label} using CoreML EP (intra={}, inter={})",
+                        intra_threads,
+                        inter_threads
+                    );
+                    return Ok(session);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[Parakeet] {model_label} CoreML session commit failed, falling back to CPU: {e}"
+                    );
+                }
+            },
+            Err(e) => {
+                log::warn!(
+                    "[Parakeet] {model_label} CoreML EP registration failed, falling back to CPU: {e}"
+                );
+            }
+        }
+    }
+
+    Session::builder()
+        .map_err(|e| format!("ORT session builder ({model_label}): {e}"))?
+        .with_intra_threads(intra_threads)
+        .map_err(|e| format!("ORT intra threads ({model_label}): {e}"))?
+        .with_inter_threads(inter_threads)
+        .map_err(|e| format!("ORT inter threads ({model_label}): {e}"))?
+        .commit_from_file(model_path)
+        .map_err(|e| format!("ORT load {model_label}: {e}"))
+}
+
 impl ParakeetEngine {
     /// Load the Parakeet TDT model (3 ONNX files), vocabulary, and
     /// pre-compute DSP tables.
@@ -320,28 +389,29 @@ impl ParakeetEngine {
         }
 
         log::info!("[Parakeet] Loading encoder: {}", encoder_path.display());
-        let encoder = Session::builder()
-            .map_err(|e| format!("ORT session builder (encoder): {e}"))?
-            .with_intra_threads(4)
-            .map_err(|e| format!("ORT intra threads (encoder): {e}"))?
-            .commit_from_file(&encoder_path)
-            .map_err(|e| format!("ORT load encoder: {e}"))?;
+        let (encoder_intra, decoder_intra, joiner_intra, inter_threads) = parakeet_thread_plan();
+        let encoder = build_ort_session_with_fallback(
+            &encoder_path,
+            "encoder",
+            encoder_intra,
+            inter_threads,
+        )?;
 
         log::info!("[Parakeet] Loading decoder: {}", decoder_path.display());
-        let decoder = Session::builder()
-            .map_err(|e| format!("ORT session builder (decoder): {e}"))?
-            .with_intra_threads(2)
-            .map_err(|e| format!("ORT intra threads (decoder): {e}"))?
-            .commit_from_file(&decoder_path)
-            .map_err(|e| format!("ORT load decoder: {e}"))?;
+        let decoder = build_ort_session_with_fallback(
+            &decoder_path,
+            "decoder",
+            decoder_intra,
+            inter_threads,
+        )?;
 
         log::info!("[Parakeet] Loading joiner: {}", joiner_path.display());
-        let joiner = Session::builder()
-            .map_err(|e| format!("ORT session builder (joiner): {e}"))?
-            .with_intra_threads(2)
-            .map_err(|e| format!("ORT intra threads (joiner): {e}"))?
-            .commit_from_file(&joiner_path)
-            .map_err(|e| format!("ORT load joiner: {e}"))?;
+        let joiner = build_ort_session_with_fallback(
+            &joiner_path,
+            "joiner",
+            joiner_intra,
+            inter_threads,
+        )?;
 
         // ── 3. Vocabulary ─────────────────────────────────────────────────
         let vocab = load_vocab(model_dir, &config.vocab_file)?;
