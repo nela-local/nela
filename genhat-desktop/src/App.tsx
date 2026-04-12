@@ -1444,6 +1444,7 @@ function App() {
 
   // ── Download state ─────────────────────────────────────────────────────────
   const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string }>>({});
+  const refreshModelsOnDownloadRef = useRef<() => Promise<RegisteredModel[]>>(async () => []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1455,7 +1456,9 @@ function App() {
           [e.payload.model_id]: { progress: e.payload.progress, status: e.payload.status },
         }));
         if (e.payload.progress >= 100 && e.payload.status === "Complete") {
-          setTimeout(refreshModels, 1000);
+          setTimeout(() => {
+            void refreshModelsOnDownloadRef.current();
+          }, 1000);
           setTimeout(() => {
             setDownloads((prev) => {
               const newD = { ...prev };
@@ -1471,7 +1474,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, [refreshModels]);
+  }, []);
 
   useEffect(() => {
     try {
@@ -1777,6 +1780,7 @@ function App() {
       return [];
     }
   }, []);
+  refreshModelsOnDownloadRef.current = refreshModels;
 
   useEffect(() => {
     if (!selectedTtsEngine) return;
