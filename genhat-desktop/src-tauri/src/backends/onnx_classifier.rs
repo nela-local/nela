@@ -51,6 +51,69 @@ impl OnnxClassifierBackend {
     }
 }
 
+fn ort_thread_counts() -> (usize, usize) {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(1);
+
+    let intra = logical.clamp(1, 8);
+    let inter = if logical >= 8 { 2 } else { 1 };
+    (intra, inter)
+}
+
+fn build_classifier_session(model_path: &Path) -> Result<Session, String> {
+    let (intra, inter) = ort_thread_counts();
+
+    #[cfg(target_os = "macos")]
+    {
+        let coreml_attempt = Session::builder()
+            .map_err(|e| format!("ORT session builder: {e}"))?
+            .with_intra_threads(intra)
+            .map_err(|e| format!("ORT intra threads: {e}"))?
+            .with_inter_threads(inter)
+            .map_err(|e| format!("ORT inter threads: {e}"))?
+            .with_execution_providers([
+                ort::ep::CoreML::default()
+                    .with_subgraphs(true)
+                    .with_compute_units(ort::ep::coreml::ComputeUnits::CPUAndNeuralEngine)
+                    .build(),
+            ]);
+
+        match coreml_attempt {
+            Ok(builder) => match builder.commit_from_file(model_path) {
+                Ok(session) => {
+                    log::info!(
+                        "[OnnxClassifier] ORT session using CoreML EP (intra={}, inter={})",
+                        intra,
+                        inter
+                    );
+                    return Ok(session);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[OnnxClassifier] CoreML session commit failed, falling back to CPU: {e}"
+                    );
+                }
+            },
+            Err(e) => {
+                log::warn!(
+                    "[OnnxClassifier] CoreML EP registration failed, falling back to CPU: {e}"
+                );
+            }
+        }
+    }
+
+    Session::builder()
+        .map_err(|e| format!("ORT session builder: {e}"))?
+        .with_intra_threads(intra)
+        .map_err(|e| format!("ORT intra threads: {e}"))?
+        .with_inter_threads(inter)
+        .map_err(|e| format!("ORT inter threads: {e}"))?
+        .commit_from_file(model_path)
+        .map_err(|e| format!("ORT load model: {e}"))
+}
+
 #[async_trait]
 impl super::ModelBackend for OnnxClassifierBackend {
     async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
@@ -96,13 +159,8 @@ impl super::ModelBackend for OnnxClassifierBackend {
             .with_truncation(None)
             .map_err(|e| format!("Failed to disable truncation: {e}"))?;
 
-        // Create ONNX Runtime session
-        let session = Session::builder()
-            .map_err(|e| format!("ORT session builder: {e}"))?
-            .with_intra_threads(4)
-            .map_err(|e| format!("ORT intra threads: {e}"))?
-            .commit_from_file(&model_path)
-            .map_err(|e| format!("ORT load model: {e}"))?;
+        // Create ONNX Runtime session with adaptive thread policy.
+        let session = build_classifier_session(&model_path)?;
 
         let max_length: usize = def
             .params

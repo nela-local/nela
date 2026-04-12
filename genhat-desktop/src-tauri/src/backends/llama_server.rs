@@ -14,6 +14,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
+use sysinfo::System;
 
 /// Kill any stale llama-server processes from previous app runs.
 /// Called at startup to reclaim GPU/memory resources leaked by zombie processes.
@@ -161,6 +162,85 @@ fn http_client_with_timeout(timeout_secs: u64) -> Result<reqwest::Client, String
         .map_err(|e| format!("Failed to create HTTP client: {e}"))
 }
 
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "enabled"
+    )
+}
+
+fn recommended_thread_counts(def: &ModelDef) -> (usize, usize) {
+    let mut sys = System::new();
+    sys.refresh_cpu();
+
+    let physical_cores = sys
+        .physical_core_count()
+        .or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
+        .unwrap_or(4)
+        .max(1);
+
+    // Keep some headroom for the app/UI and background tasks.
+    let default_threads = ((physical_cores * 3) / 4).max(1);
+    let default_threads_batch = physical_cores.max(default_threads);
+
+    let parse_positive = |key: &str| -> Option<usize> {
+        def.params
+            .get(key)
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+    };
+
+    let threads = parse_positive("threads").unwrap_or(default_threads);
+    let threads_batch = parse_positive("threads_batch")
+        .unwrap_or(default_threads_batch)
+        .max(threads);
+
+    (threads, threads_batch)
+}
+
+fn should_use_no_mmap(def: &ModelDef) -> bool {
+    if is_truthy(def.param_or("no_mmap", "false").as_str())
+        || is_truthy(def.param_or("low_ram", "false").as_str())
+    {
+        return true;
+    }
+
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let total_ram_bytes = sys.total_memory();
+    total_ram_bytes > 0 && total_ram_bytes <= 16 * 1024 * 1024 * 1024
+}
+
+fn lower_process_priority(child: &Child) {
+    let pid = child.id();
+
+    #[cfg(unix)]
+    {
+        let ret = unsafe { libc::setpriority(libc::PRIO_PROCESS as _, pid as _, 10) };
+        if ret == 0 {
+            log::info!("Set llama-server pid={pid} priority to nice=10");
+        } else {
+            log::warn!(
+                "Failed to lower llama-server priority for pid={pid}: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($p) {{ $p.PriorityClass = 'BelowNormal' }}"
+        );
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+        crate::windows_spawn::hide_console_std(&mut cmd);
+        if let Err(e) = cmd.output() {
+            log::warn!("Failed to lower llama-server priority for pid={pid} on Windows: {e}");
+        }
+    }
+}
+
 /// Spawn a llama-server child process with the given model and port.
 fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, String> {
     let exe = resolve_llama_exe()?;
@@ -175,6 +255,8 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
     let top_p = def.param_or("top_p", "0.9");
     let top_k = def.param_or("top_k", "40");
     let repeat_penalty = def.param_or("repeat_penalty", "1.1");
+    let (threads, threads_batch) = recommended_thread_counts(def);
+    let use_no_mmap = should_use_no_mmap(def);
 
     let port_str = port.to_string();
     let model_str = model_path.to_string_lossy();
@@ -210,7 +292,15 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         top_k,
         "--repeat-penalty".to_string(),
         repeat_penalty,
+        "--threads".to_string(),
+        threads.to_string(),
+        "--threads-batch".to_string(),
+        threads_batch.to_string(),
     ];
+
+    if use_no_mmap {
+        args.push("--no-mmap".to_string());
+    }
 
     // Enable embedding mode if configured (for embedding models)
     if def.param_or("embedding", "false") == "true" {
@@ -281,6 +371,8 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         .spawn()
         .map_err(|e| format!("Failed to spawn llama-server: {e}"))?;
 
+    lower_process_priority(&child);
+
     // Redirect stdout/stderr to log file in background threads
     let pid = child.id();
     if let Some(stdout) = child.stdout.take() {
@@ -313,6 +405,12 @@ fn spawn_llama(model_path: &Path, port: u16, def: &ModelDef) -> Result<Child, St
         }).collect::<Vec<_>>().join(" ")
     );
     log::info!("llama-server spawned: pid={pid}, port={port}");
+    log::info!(
+        "llama-server tuning: threads={}, threads_batch={}, no_mmap={}",
+        threads,
+        threads_batch,
+        use_no_mmap
+    );
     log::info!("llama-server cmd: {full_cmd}");
     Ok(child)
 }
@@ -584,6 +682,7 @@ impl ModelBackend for LlamaServerBackend {
                 { "role": "system", "content": system_prompt },
                 user_message
             ],
+            "cache_prompt": true,
             "stream": false
         });
 
@@ -795,6 +894,7 @@ impl LlamaServerBackend {
                     "content": &request.input
                 }
             ],
+            "cache_prompt": true,
             "stream": false,
             "temperature": 0.0,
             "max_tokens": 16

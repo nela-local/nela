@@ -8,6 +8,7 @@ use crate::registry::types::{
 };
 use async_trait::async_trait;
 use ort::session::Session;
+use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -36,10 +37,98 @@ impl CrossEncoderBackend {
     }
 }
 
+fn ort_thread_counts() -> (usize, usize) {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(1);
+
+    let intra = logical.clamp(1, 8);
+    let inter = if logical >= 8 { 2 } else { 1 };
+    (intra, inter)
+}
+
+fn build_cross_encoder_session(model_path: &Path) -> Result<Session, String> {
+    let (intra, inter) = ort_thread_counts();
+
+    #[cfg(target_os = "macos")]
+    {
+        let coreml_attempt = Session::builder()
+            .map_err(|e| format!("ORT session builder: {e}"))?
+            .with_intra_threads(intra)
+            .map_err(|e| format!("ORT intra threads: {e}"))?
+            .with_inter_threads(inter)
+            .map_err(|e| format!("ORT inter threads: {e}"))?
+            .with_execution_providers([
+                ort::ep::CoreML::default()
+                    .with_subgraphs(true)
+                    .with_compute_units(ort::ep::coreml::ComputeUnits::CPUAndNeuralEngine)
+                    .build(),
+            ]);
+
+        match coreml_attempt {
+            Ok(builder) => match builder.commit_from_file(model_path) {
+                Ok(session) => {
+                    log::info!(
+                        "[CrossEncoder] ORT session using CoreML EP (intra={}, inter={})",
+                        intra,
+                        inter
+                    );
+                    return Ok(session);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[CrossEncoder] CoreML session commit failed, falling back to CPU: {e}"
+                    );
+                }
+            },
+            Err(e) => {
+                log::warn!(
+                    "[CrossEncoder] CoreML EP registration failed, falling back to CPU: {e}"
+                );
+            }
+        }
+    }
+
+    Session::builder()
+        .map_err(|e| format!("ORT session builder: {e}"))?
+        .with_intra_threads(intra)
+        .map_err(|e| format!("ORT intra threads: {e}"))?
+        .with_inter_threads(inter)
+        .map_err(|e| format!("ORT inter threads: {e}"))?
+        .commit_from_file(model_path)
+        .map_err(|e| format!("ORT load model: {e}"))
+}
+
+fn assert_not_lfs_pointer(model_path: &Path) -> Result<(), String> {
+    let metadata = fs::metadata(model_path)
+        .map_err(|e| format!("Failed to read model metadata ({}): {e}", model_path.display()))?;
+
+    // LFS pointer files are tiny text blobs (~100-200 bytes).
+    if metadata.len() > 1024 {
+        return Ok(());
+    }
+
+    let bytes = fs::read(model_path)
+        .map_err(|e| format!("Failed to read model file ({}): {e}", model_path.display()))?;
+
+    let pointer_prefix = b"version https://git-lfs.github.com/spec/v1";
+    if bytes.starts_with(pointer_prefix) {
+        return Err(format!(
+            "Model file '{}' is a Git LFS pointer, not the real ONNX binary. \
+Install git-lfs and run 'git lfs pull' in that model directory, or re-download the model artifact.",
+            model_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
 #[async_trait]
 impl super::ModelBackend for CrossEncoderBackend {
     async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
         let model_path = models_dir.join(&def.model_file);
+        assert_not_lfs_pointer(&model_path)?;
         let model_dir = model_path.parent().unwrap_or(models_dir);
 
         let tokenizer_path = match def.params.get("tokenizer_file") {
@@ -60,13 +149,8 @@ impl super::ModelBackend for CrossEncoderBackend {
             .with_truncation(None)
             .map_err(|e| format!("Failed to disable truncation: {e}"))?;
 
-        // Create ONNX Runtime session
-        let session = Session::builder()
-            .map_err(|e| format!("ORT session builder: {e}"))?
-            .with_intra_threads(4)
-            .map_err(|e| format!("ORT intra threads: {e}"))?
-            .commit_from_file(&model_path)
-            .map_err(|e| format!("ORT load model: {e}"))?;
+        // Create ONNX Runtime session with adaptive thread policy.
+        let session = build_cross_encoder_session(&model_path)?;
 
         let max_length: usize = def
             .params

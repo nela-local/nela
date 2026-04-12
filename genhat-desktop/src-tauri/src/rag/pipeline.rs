@@ -21,9 +21,9 @@ use crate::router::TaskRouter;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tauri::Emitter;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, Notify};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Prompt Template
@@ -128,7 +128,9 @@ pub struct IngestionStatus {
 pub struct RagPipeline {
     pub db: Arc<RagDb>,
     pub bm25: Arc<BM25Index>,
-    pub vec_index: Arc<VectorIndex>,
+    pub vec_index: Arc<RwLock<Option<Arc<VectorIndex>>>>,
+    pub vec_index_ready: Arc<Notify>,
+    vec_index_load_finished: Arc<AtomicBool>,
     router: Arc<TaskRouter>,
     /// Lock to serialize ingestion (prevent concurrent writes to tantivy writer).
     ingest_lock: TokioMutex<()>,
@@ -151,22 +153,117 @@ impl RagPipeline {
         let db = Arc::new(RagDb::open(&db_path)?);
         let bm25 = Arc::new(BM25Index::open(&index_dir)?);
 
-        // Load all embeddings into in-memory IVF vector index
-        let vec_index = Arc::new(VectorIndex::load_from_db(&db)?);
-        log::info!(
-            "VectorIndex loaded: {} vectors in memory (~{:.2} MB quantized)",
-            vec_index.len(),
-            vec_index.estimated_memory_bytes() as f64 / (1024.0 * 1024.0)
-        );
+        // Load vector index asynchronously to avoid blocking app startup.
+        let vec_index: Arc<RwLock<Option<Arc<VectorIndex>>>> = Arc::new(RwLock::new(None));
+        let vec_index_ready = Arc::new(Notify::new());
+        let vec_index_load_finished = Arc::new(AtomicBool::new(false));
+
+        {
+            let db_for_load = db.clone();
+            let vec_index_for_load = vec_index.clone();
+            let ready_for_load = vec_index_ready.clone();
+            let load_finished_for_load = vec_index_load_finished.clone();
+            tauri::async_runtime::spawn(async move {
+                let load_result = tokio::task::spawn_blocking(move || VectorIndex::load_from_db(&db_for_load)).await;
+
+                match load_result {
+                    Ok(Ok(index)) => {
+                        let loaded = Arc::new(index);
+                        let len = loaded.len();
+                        let mem_mb = loaded.estimated_memory_bytes() as f64 / (1024.0 * 1024.0);
+
+                        match vec_index_for_load.write() {
+                            Ok(mut guard) => {
+                                *guard = Some(loaded);
+                                log::info!(
+                                    "VectorIndex async load complete: {} vectors in memory (~{:.2} MB quantized)",
+                                    len,
+                                    mem_mb
+                                );
+                            }
+                            Err(_) => {
+                                log::warn!("VectorIndex async load succeeded but lock is poisoned; keeping BM25-only fallback");
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("VectorIndex async load failed: {e}. Continuing in BM25-only mode.");
+                    }
+                    Err(e) => {
+                        log::warn!("VectorIndex async load task join error: {e}. Continuing in BM25-only mode.");
+                    }
+                }
+
+                load_finished_for_load.store(true, Ordering::Release);
+                ready_for_load.notify_waiters();
+            });
+        }
 
         Ok(Self {
             db,
             bm25,
             vec_index,
+            vec_index_ready,
+            vec_index_load_finished,
             router,
             ingest_lock: TokioMutex::new(()),
             enrichment_cancelled: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    fn vec_index_snapshot(&self) -> Option<Arc<VectorIndex>> {
+        self.vec_index
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned())
+    }
+
+    fn vec_index_len(&self) -> usize {
+        self.vec_index_snapshot().map(|idx| idx.len()).unwrap_or(0)
+    }
+
+    fn insert_vec_or_defer(&self, id: i64, embedding: Vec<f32>) {
+        if let Some(idx) = self.vec_index_snapshot() {
+            idx.insert(id, embedding);
+            return;
+        }
+
+        if self.vec_index_load_finished.load(Ordering::Acquire) {
+            return;
+        }
+
+        let vec_index = self.vec_index.clone();
+        let ready = self.vec_index_ready.clone();
+        tauri::async_runtime::spawn(async move {
+            ready.notified().await;
+            if let Ok(guard) = vec_index.read() {
+                if let Some(idx) = guard.as_ref() {
+                    idx.insert(id, embedding);
+                }
+            }
+        });
+    }
+
+    fn remove_vec_or_defer(&self, id: i64) {
+        if let Some(idx) = self.vec_index_snapshot() {
+            idx.remove(id);
+            return;
+        }
+
+        if self.vec_index_load_finished.load(Ordering::Acquire) {
+            return;
+        }
+
+        let vec_index = self.vec_index.clone();
+        let ready = self.vec_index_ready.clone();
+        tauri::async_runtime::spawn(async move {
+            ready.notified().await;
+            if let Ok(guard) = vec_index.read() {
+                if let Some(idx) = guard.as_ref() {
+                    idx.remove(id);
+                }
+            }
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -310,7 +407,10 @@ impl RagPipeline {
         let embedded_count = self.embed_chunks(&chunk_ids, &all_chunks).await;
         log::info!(
             "Ingestion summary for '{}': {} chunks, {} embedded, vec_index now has {} vectors",
-            title, chunk_count, embedded_count, self.vec_index.len()
+            title,
+            chunk_count,
+            embedded_count,
+            self.vec_index_len()
         );
 
         // 7. Store media assets and embed their captions
@@ -391,7 +491,7 @@ impl RagPipeline {
                             if i < captions_to_embed.len() {
                                 let asset_id = captions_to_embed[i].0;
                                 if let Ok(()) = self.db.set_media_embedding(asset_id, embedding) {
-                                    self.vec_index.insert(-asset_id, embedding.clone());
+                                    self.insert_vec_or_defer(-asset_id, embedding.clone());
                                     embedded_count += 1;
                                 }
                             }
@@ -433,8 +533,9 @@ impl RagPipeline {
     async fn embed_chunks(&self, chunk_ids: &[i64], chunks: &[Chunk]) -> usize {
         // Batch embeddings (submit all texts at once)
         let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+        let vec_index = self.vec_index_snapshot();
         log::info!("Embedding {} chunks (vec_index has {} vectors before)",
-                   texts.len(), self.vec_index.len());
+               texts.len(), self.vec_index_len());
 
         let request = tasks::embed_request(texts);
         match self.router.route(&request).await {
@@ -445,14 +546,18 @@ impl RagPipeline {
                         if let Ok(()) =
                             self.db.set_chunk_embedding(chunk_ids[i], embedding, None)
                         {
-                            // Also add to in-memory vector index
-                            self.vec_index.insert(chunk_ids[i], embedding.clone());
+                            // Also add to in-memory vector index (or defer until ready).
+                            if let Some(ref idx) = vec_index {
+                                idx.insert(chunk_ids[i], embedding.clone());
+                            } else {
+                                self.insert_vec_or_defer(chunk_ids[i], embedding.clone());
+                            }
                             count += 1;
                         }
                     }
                 }
                 log::info!("Successfully embedded {}/{} chunks (vec_index now has {} vectors)",
-                           count, chunk_ids.len(), self.vec_index.len());
+                           count, chunk_ids.len(), self.vec_index_len());
                 count
             }
             Ok(other) => {
@@ -481,34 +586,14 @@ impl RagPipeline {
 
         log::debug!("Enrichment: Processing {} unenriched chunks", unenriched.len());
         let chunk_records = self.db.get_chunks_by_ids(&unenriched)?;
-        let mut enriched = 0;
+        let mut enriched_pairs: Vec<(i64, String)> = Vec::new();
 
+        // Phase 1: sequential LLM enrichment.
         for chunk in &chunk_records {
-            // Ask LLM to generate contextual summary
             let request = tasks::enrich_request(&chunk.text);
             match self.router.route(&request).await {
                 Ok(TaskResponse::Text(enriched_text)) => {
-                    // Re-embed the enriched text
-                    let embed_req =
-                        tasks::embed_request(vec![enriched_text.clone()]);
-                    let enriched_emb = match self.router.route(&embed_req).await {
-                        Ok(TaskResponse::Embeddings(vecs)) => vecs.into_iter().next(),
-                        _ => None,
-                    };
-
-                    if let Err(e) = self.db.set_chunk_enrichment(
-                        chunk.id,
-                        &enriched_text,
-                        enriched_emb.as_ref(),
-                    ) {
-                        log::warn!("Failed to store enrichment for chunk {}: {e}", chunk.id);
-                    } else {
-                        enriched += 1;
-                        // Update in-memory vector index with enriched embedding
-                        if let Some(ref emb) = enriched_emb {
-                            self.vec_index.insert(chunk.id, emb.clone());
-                        }
-                    }
+                    enriched_pairs.push((chunk.id, enriched_text));
                 }
                 Ok(_) => {
                     log::warn!("Enrich returned non-text for chunk {}", chunk.id);
@@ -517,6 +602,57 @@ impl RagPipeline {
                     log::warn!("Enrichment failed for chunk {}: {e}", chunk.id);
                     log::info!("Enrichment model unavailable, skipping remaining chunks");
                     break; // Model probably not available
+                }
+            }
+        }
+
+        // Phase 2: single batch embed call for all enriched texts.
+        let mut embeddings_by_chunk: std::collections::HashMap<i64, Vec<f32>> =
+            std::collections::HashMap::new();
+        if !enriched_pairs.is_empty() {
+            let texts: Vec<String> = enriched_pairs
+                .iter()
+                .map(|(_, text)| text.clone())
+                .collect();
+            let embed_req = tasks::embed_request(texts);
+
+            match self.router.route(&embed_req).await {
+                Ok(TaskResponse::Embeddings(vecs)) => {
+                    for ((chunk_id, _), emb) in enriched_pairs.iter().zip(vecs.into_iter()) {
+                        embeddings_by_chunk.insert(*chunk_id, emb);
+                    }
+                }
+                Ok(other) => {
+                    log::warn!(
+                        "Batch embedding returned unexpected response ({other:?}); storing enriched text without embeddings"
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Batch embedding failed ({e}); storing enriched text without embeddings"
+                    );
+                }
+            }
+        }
+
+        // Final write phase: persist enrichments, update vector index when available.
+        let mut enriched = 0usize;
+        let vec_index = self.vec_index_snapshot();
+        for (chunk_id, enriched_text) in enriched_pairs {
+            let enriched_emb = embeddings_by_chunk.get(&chunk_id);
+            if let Err(e) = self
+                .db
+                .set_chunk_enrichment(chunk_id, &enriched_text, enriched_emb)
+            {
+                log::warn!("Failed to store enrichment for chunk {}: {e}", chunk_id);
+            } else {
+                enriched += 1;
+                if let Some(emb) = enriched_emb {
+                    if let Some(idx) = vec_index.as_ref() {
+                        idx.insert(chunk_id, emb.clone());
+                    } else {
+                        self.insert_vec_or_defer(chunk_id, emb.clone());
+                    }
                 }
             }
         }
@@ -557,8 +693,10 @@ impl RagPipeline {
                             idle_cycles = 0;
                         }
 
-                        // Periodically rebuild vector index partitions during idle time
-                        pipeline.vec_index.rebuild_if_needed();
+                        // Periodically rebuild vector index partitions during idle time.
+                        if let Some(vec_index) = pipeline.vec_index_snapshot() {
+                            vec_index.rebuild_if_needed();
+                        }
 
                         // Nothing to enrich — wait longer, but check cancellation periodically
                         for _ in 0..6 {
@@ -720,7 +858,10 @@ impl RagPipeline {
             let (query_class, confidence) = self.classify_query(user_query).await;
             log::info!(
                 "Query classified as: {} ({:.1}%) (docs in DB: {}, vec_index: {} vectors)",
-                query_class, confidence * 100.0, doc_count, self.vec_index.len()
+                query_class,
+                confidence * 100.0,
+                doc_count,
+                self.vec_index_len()
             );
             query_class == "no_retrieval" && confidence > 0.9
         };
@@ -927,7 +1068,10 @@ impl RagPipeline {
             let (query_class, confidence) = self.classify_query(user_query).await;
             log::info!(
                 "[stream] Query classified as: {} ({:.1}%) (docs={}, vec={})",
-                query_class, confidence * 100.0, doc_count, self.vec_index.len()
+                query_class,
+                confidence * 100.0,
+                doc_count,
+                self.vec_index_len()
             );
             query_class == "no_retrieval" && confidence > 0.9
         };
@@ -1240,7 +1384,7 @@ impl RagPipeline {
                     if i < unembedded.len() {
                         let asset_id = unembedded[i].0;
                         if let Ok(()) = self.db.set_media_embedding(asset_id, embedding) {
-                            self.vec_index.insert(-asset_id, embedding.clone());
+                            self.insert_vec_or_defer(-asset_id, embedding.clone());
                             count += 1;
                         }
                     }
@@ -1567,7 +1711,11 @@ impl RagPipeline {
         match self.router.route(&request).await {
             Ok(TaskResponse::Embeddings(vecs)) => {
                 if let Some(query_vec) = vecs.into_iter().next() {
-                    Ok(self.vec_index.search(&query_vec, top_k))
+                    if let Some(vec_index) = self.vec_index_snapshot() {
+                        Ok(vec_index.search(&query_vec, top_k))
+                    } else {
+                        Ok(vec![])
+                    }
                 } else {
                     Ok(vec![])
                 }
@@ -1602,7 +1750,7 @@ impl RagPipeline {
             self.bm25.delete_chunks(&chunk_ids)?;
             // Remove from in-memory vector index
             for &id in &chunk_ids {
-                self.vec_index.remove(id);
+                self.remove_vec_or_defer(id);
             }
         }
 
