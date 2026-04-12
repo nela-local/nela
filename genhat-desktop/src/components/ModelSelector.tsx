@@ -51,6 +51,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const currentModelName =
     models.find((m) => m.path === selectedModel)?.name ||
     (type === "audio" && selectedModel === "None" ? "No Audio" : "Select Model");
+  const currentModelLabel =
+    currentModelName.length > 26 ? `${currentModelName.slice(0, 26)}....` : currentModelName;
 
   const installedModels = models.filter(m => m.is_downloaded || downloads[m.path] !== undefined || !m.gdrive_id);
   const missingModelsCount = models.filter(m => !m.is_downloaded && m.gdrive_id).length;
@@ -64,7 +66,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         title={type === "llm" ? "Switch LLM Model" : type === "vision" ? "Switch Vision Model" : "Switch Audio Model"}
       >
         {type === "llm" ? <MessageSquare size={16} /> : type === "vision" ? <MessageSquare size={16} /> : <Music size={16} />}
-        <span className="model-name">{currentModelName}</span>
+        <span className="model-name" title={currentModelName}>{currentModelLabel}</span>
         <ChevronDown size={14} className="chevron" />
       </button>
 

@@ -28,6 +28,58 @@ fn parse_bool_param(value: &str, default: bool) -> bool {
     }
 }
 
+fn pick_mmproj_from_dir(dir: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let is_gguf = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("gguf"))
+                .unwrap_or(false);
+            is_gguf && name.contains("mmproj")
+        })
+        .collect();
+    candidates.sort();
+    candidates.into_iter().next()
+}
+
+fn resolve_mmproj_path(models_dir: &Path, model_file: &str, mmproj_ref: &str) -> Result<PathBuf, String> {
+    let mmproj_candidate = models_dir.join(mmproj_ref);
+    if mmproj_candidate.is_file() {
+        return Ok(mmproj_candidate);
+    }
+    if mmproj_candidate.is_dir() {
+        if let Some(found) = pick_mmproj_from_dir(&mmproj_candidate) {
+            return Ok(found);
+        }
+    }
+
+    // Fallback: find mmproj*.gguf next to the model file.
+    let model_parent = models_dir
+        .join(model_file)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| models_dir.to_path_buf());
+    if let Some(found) = pick_mmproj_from_dir(&model_parent) {
+        return Ok(found);
+    }
+
+    Err(format!(
+        "mmproj file not found. Checked '{}' and model directory '{}'",
+        mmproj_candidate.display(),
+        model_parent.display()
+    ))
+}
+
 /// Platform-specific constants.
 const OS_FOLDER: &str = if cfg!(target_os = "windows") {
     "llama-win"
@@ -231,12 +283,8 @@ impl super::ModelBackend for LlamaCliBackend {
 
         // Add mmproj (multimodal projector) - required for vision models
         if let Some(mmproj_file) = request.extra.get("mmproj_file") {
-            let mmproj_path = models_dir.join(mmproj_file);
-            if mmproj_path.exists() {
-                cmd.arg("--mmproj").arg(&mmproj_path);
-            } else {
-                return Err(format!("mmproj file not found: {}", mmproj_path.display()));
-            }
+            let mmproj_path = resolve_mmproj_path(models_dir, &model_file, mmproj_file)?;
+            cmd.arg("--mmproj").arg(&mmproj_path);
         }
 
         // Add image if provided in extra params
@@ -347,10 +395,7 @@ pub async fn execute_vision_streaming(
         return Err(format!("Model file not found: {}", model_path.display()));
     }
 
-    let mmproj_path = models_dir.join(mmproj_file);
-    if !mmproj_path.exists() {
-        return Err(format!("mmproj file not found: {}", mmproj_path.display()));
-    }
+    let mmproj_path = resolve_mmproj_path(models_dir, model_file, mmproj_file)?;
 
     let image_path = image_path
         .map(str::trim)

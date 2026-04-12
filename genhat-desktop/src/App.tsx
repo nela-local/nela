@@ -56,7 +56,7 @@ const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
 const STARTUP_MODEL_SELECTOR = {
   tasks: new Set(["embed", "grade", "classify"]),
-  ids: new Set(["kitten-tts", "parakeet-tdt"]),
+  ids: new Set(["kitten-tts", "parakeet-tdt", "qwen3.5-0_8b", "qwen3.5-0_8b-mmproj"]),
 };
 
 const formatModelSizeLabel = (memoryMb: number | null | undefined): string => {
@@ -1624,7 +1624,11 @@ function App() {
   }, [startupModelToast.selectedIds, startupModelToast.missingIds, startupModelToast.missingSizesMb]);
 
   const getOptionalModels = (list: RegisteredModel[]) =>
-    list.filter((model) => model.tasks.some((t) => STARTUP_MODEL_SELECTOR.tasks.has(t)));
+    list.filter(
+      (model) =>
+        model.tasks.some((t) => STARTUP_MODEL_SELECTOR.tasks.has(t)) ||
+        STARTUP_MODEL_SELECTOR.ids.has(model.id)
+    );
 
   const downloadMissingOptionalModels = async () => {
     const list = registeredModels.length > 0
