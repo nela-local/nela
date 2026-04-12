@@ -337,7 +337,6 @@ impl super::ModelBackend for LlamaCliBackend {
             .unwrap_or("8192");
         cmd.arg("--ctx-size").arg(ctx_size);
         cmd.arg("-n").arg(max_tokens);
-        cmd.arg("--log-disable");
         cmd.arg("--no-warmup");
 
         // Log the full command for debugging
@@ -439,7 +438,6 @@ pub async fn execute_vision_streaming(
         .arg("-p").arg(prompt)
         .arg("--ctx-size").arg(ctx_size)
         .arg("-n").arg(max_tokens)
-        .arg("--log-disable")
         .arg("--no-warmup")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
