@@ -353,64 +353,87 @@ async fn download_model_internal(
             },
         );
 
-        let zip_file = std::fs::File::open(&download_target).map_err(|e| e.to_string())?;
-        let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| e.to_string())?;
-        
-        // Extract safely while normalizing entry paths to avoid nested duplicate directories
-        // (e.g. distilBert-query-router/onnx_model/distilBert-query-router/onnx_model/...)
-        let extract_path = model_path.parent().unwrap_or(&models_dir).to_path_buf();
-        std::fs::create_dir_all(&extract_path).map_err(|e| e.to_string())?;
+        let zip_open = std::fs::File::open(&download_target).map_err(|e| e.to_string())?;
+        match zip::ZipArchive::new(zip_open) {
+            Ok(mut archive) => {
+                // Extract safely while normalizing entry paths to avoid nested duplicate directories
+                // (e.g. distilBert-query-router/onnx_model/distilBert-query-router/onnx_model/...)
+                let extract_path = model_path.parent().unwrap_or(&models_dir).to_path_buf();
+                std::fs::create_dir_all(&extract_path).map_err(|e| e.to_string())?;
 
-        let extract_path_rel = extract_path
-            .strip_prefix(&models_dir)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        let extract_leaf = extract_path.file_name().map(|n| n.to_os_string());
+                let extract_path_rel = extract_path
+                    .strip_prefix(&models_dir)
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default();
+                let extract_leaf = extract_path.file_name().map(|n| n.to_os_string());
 
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-            let entry_name = entry
-                .enclosed_name()
-                .ok_or_else(|| format!("Invalid zip entry path at index {}", i))?
-                .to_path_buf();
+                for i in 0..archive.len() {
+                    let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+                    let entry_name = entry
+                        .enclosed_name()
+                        .ok_or_else(|| format!("Invalid zip entry path at index {}", i))?
+                        .to_path_buf();
 
-            let mut normalized_rel = entry_name.clone();
+                    let mut normalized_rel = entry_name.clone();
 
-            if !extract_path_rel.as_os_str().is_empty() {
-                if let Ok(stripped) = entry_name.strip_prefix(&extract_path_rel) {
-                    normalized_rel = stripped.to_path_buf();
-                }
-            }
-
-            if normalized_rel == entry_name {
-                if let Some(ref leaf) = extract_leaf {
-                    if let Ok(stripped) = entry_name.strip_prefix(std::path::Path::new(leaf)) {
-                        normalized_rel = stripped.to_path_buf();
+                    if !extract_path_rel.as_os_str().is_empty() {
+                        if let Ok(stripped) = entry_name.strip_prefix(&extract_path_rel) {
+                            normalized_rel = stripped.to_path_buf();
+                        }
                     }
+
+                    if normalized_rel == entry_name {
+                        if let Some(ref leaf) = extract_leaf {
+                            if let Ok(stripped) = entry_name.strip_prefix(std::path::Path::new(leaf)) {
+                                normalized_rel = stripped.to_path_buf();
+                            }
+                        }
+                    }
+
+                    if normalized_rel.as_os_str().is_empty() {
+                        continue;
+                    }
+
+                    let out_path = extract_path.join(&normalized_rel);
+
+                    if entry.is_dir() {
+                        std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+                        continue;
+                    }
+
+                    if let Some(parent) = out_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+
+                    let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+                }
+
+                // Delete zip
+                let _ = std::fs::remove_file(&download_target);
+            }
+            Err(zip_err) => {
+                // Some GDrive IDs point directly to a single file even when config says is_zip=true.
+                // If model_file is a file path, keep the downloaded payload as the final model file.
+                if model_path.extension().is_some() {
+                    if let Some(parent) = model_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+
+                    if model_path.exists() {
+                        let _ = std::fs::remove_file(&model_path);
+                    }
+
+                    std::fs::rename(&download_target, &model_path).map_err(|e| e.to_string())?;
+                } else {
+                    let _ = std::fs::remove_file(&download_target);
+                    return Err(format!(
+                        "Downloaded archive is invalid for model '{}': {}",
+                        model_id, zip_err
+                    ));
                 }
             }
-
-            if normalized_rel.as_os_str().is_empty() {
-                continue;
-            }
-
-            let out_path = extract_path.join(&normalized_rel);
-
-            if entry.is_dir() {
-                std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
-                continue;
-            }
-
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-
-            let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
         }
-        
-        // Delete zip
-        let _ = std::fs::remove_file(&download_target);
     }
 
     let _ = app_handle.emit(
