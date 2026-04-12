@@ -331,6 +331,7 @@ function App() {
     setBindings({
       openSettings: () => setSettingsOpen(true),
       openTours: () => setToursOpen(true),
+      openDocPanel: () => setDocPanelOpen(true),
       switchMode: (mode: ChatMode) => {
         setChatMode(mode);
         if (mode !== "vision") {
@@ -3260,7 +3261,7 @@ function App() {
             </div>
           )}
 
-      <div className={`overflow-hidden bg-void-800 flex flex-col shrink-0 ${docPanelOpen ? "w-[320px] min-w-[320px]" : "w-0 min-w-0"} ${showParamsDock && docPanelOpen ? "border-l border-glass-border" : "border-l-0"}`}>
+      <div className={`overflow-hidden bg-void-800 flex flex-col shrink-0 ${docPanelOpen ? "w-[320px] min-w-[320px]" : "w-0 min-w-0"} ${showParamsDock && docPanelOpen ? "border-l border-glass-border" : "border-l-0"}`} data-tour="kb-sidebar">
         <div className={`kb-sidebar-inner flex flex-col h-full w-[320px] ${docPanelOpen ? "opacity-100" : "opacity-0"}`}>
           {/* Header */}
           <div className="flex items-center justify-between py-3.5 px-4 border-b border-glass-border shrink-0">

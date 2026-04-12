@@ -7,6 +7,13 @@ const switchModeFromBindings = (mode: string) => (bindings: Record<string, unkno
   }
 };
 
+const openDocPanelFromBindings = () => (bindings: Record<string, unknown>) => {
+  const openDocPanel = bindings.openDocPanel;
+  if (typeof openDocPanel === "function") {
+    (openDocPanel as () => void)();
+  }
+};
+
 export const TOURS: TourDefinition[] = [
   {
     id: "getting-started",
@@ -142,11 +149,36 @@ export const TOURS: TourDefinition[] = [
     version: 1,
     steps: [
       {
+        id: "mindmap-mode-switch",
+        title: "Switch to Mindmap mode",
+        body: <span>In the input bar, open the mode selector and choose <strong>Mindmaps</strong> to enter Mindmap mode.</span>,
+        target: '[data-tour="mode-switch"]',
+        placement: "top",
+        onBeforeStep: switchModeFromBindings("text"),
+      },
+      {
+        id: "mindmap-model-selector",
+        title: "Select a model",
+        body: <span>Choose a suitable model for generating mindmaps from the model selector.</span>,
+        target: '[data-tour="model-selector-llm"]',
+        placement: "bottom",
+        onBeforeStep: switchModeFromBindings("mindmap"),
+      },
+      {
+        id: "mindmap-query",
+        title: "Enter your topic",
+        body: <span>Type the topic or idea you want to convert into a mindmap here and press Enter.</span>,
+        target: '[data-tour="chat-input"]',
+        placement: "top",
+        onBeforeStep: switchModeFromBindings("mindmap"),
+      },
+      {
         id: "sidebar-mindmaps",
-        title: "Mindmaps sidebar",
-        body: <span>Open Mindmaps to browse and reopen previously generated graphs.</span>,
+        title: "Saved Mindmaps",
+        body: <span>Your generated mindmaps are stored here. You can browse and reopen previous graphs anytime.</span>,
         target: '[data-tour="sidebar-mindmaps"]',
         placement: "right",
+        onBeforeStep: switchModeFromBindings("mindmap"),
       },
     ],
   },
@@ -203,11 +235,91 @@ export const TOURS: TourDefinition[] = [
     version: 1,
     steps: [
       {
-        id: "attach",
-        title: "Add documents",
-        body: <span>Add files or folders to build a local knowledge base for retrieval.</span>,
+        id: "rag-mode-switch",
+        title: "Select chat mode",
+        body: <span>In the input bar, ensure you have selected the <strong>Chat</strong> mode to query documents.</span>,
+        target: '[data-tour="mode-switch"]',
+        placement: "top",
+        onBeforeStep: switchModeFromBindings("text"),
+      },
+      {
+        id: "rag-attach",
+        title: "Upload documents",
+        body: <span>Use the + button to add files or folders and build your local knowledge base.</span>,
         target: '[data-tour="attach-button"]',
         placement: "top",
+        onBeforeStep: switchModeFromBindings("text"),
+      },
+      {
+        id: "rag-sidebar",
+        title: "View knowledge base",
+        body: <span>Your uploaded documents are shown here in the right sidebar. You can manage them or see the processing status.</span>,
+        target: '[data-tour="kb-sidebar"]',
+        placement: "left",
+        onBeforeStep: (bindings) => {
+          switchModeFromBindings("text")(bindings);
+          openDocPanelFromBindings()(bindings);
+        },
+      },
+      {
+        id: "rag-query",
+        title: "Query your documents",
+        body: <span>Type a question about your documents here. The model will automatically search your knowledge base to form an answer.</span>,
+        target: '[data-tour="chat-input"]',
+        placement: "top",
+        onBeforeStep: switchModeFromBindings("text"),
+      },
+    ],
+  },
+  {
+    id: "audio-prompting",
+    name: "Audio Prompting",
+    version: 1,
+    steps: [
+      {
+        id: "audio-mic-button",
+        title: "Start dictation",
+        body: <span>Click the microphone icon to start recording your voice query. Click it again to stop and transcribe.</span>,
+        target: '[data-tour="mic-button"]',
+        placement: "top",
+      },
+      {
+        id: "audio-transcription-result",
+        title: "Review transcription",
+        body: <span>Your transcribed speech will appear here in the chat bar. You can edit it if needed or press Enter to send it to the model.</span>,
+        target: '[data-tour="chat-input"]',
+        placement: "top",
+      },
+    ],
+  },
+  {
+    id: "audio-tts",
+    name: "Audio Generation",
+    version: 1,
+    steps: [
+      {
+        id: "audio-tts-mode-switch",
+        title: "Switch to Audio mode",
+        body: <span>In the input bar, open the mode selector and choose <strong>Audio</strong> to enter Text-to-Speech mode.</span>,
+        target: '[data-tour="mode-switch"]',
+        placement: "top",
+        onBeforeStep: switchModeFromBindings("text"),
+      },
+      {
+        id: "audio-tts-input",
+        title: "Enter text",
+        body: <span>Type the text you want to convert into spoken audio here and press Enter.</span>,
+        target: '[data-tour="chat-input"]',
+        placement: "top",
+        onBeforeStep: switchModeFromBindings("audio"),
+      },
+      {
+        id: "sidebar-audio-saved",
+        title: "Saved Audio",
+        body: <span>Your generated audio clips will be saved in the Audio section on the left sidebar. You can manage or replay them anytime.</span>,
+        target: '[data-tour="sidebar-audio"]',
+        placement: "right",
+        onBeforeStep: switchModeFromBindings("audio"),
       },
     ],
   },
