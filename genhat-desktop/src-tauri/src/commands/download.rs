@@ -1,15 +1,16 @@
 use crate::commands::models::ProcessManagerState;
 use crate::registry::custom;
+use crate::registry::types::TaskType;
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::fs::File;
 use std::io::Write;
+use std::collections::HashMap;
 use std::path::{Component, PathBuf};
 use tauri::{Emitter, State};
 
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -75,6 +76,15 @@ pub async fn uninstall_model(
         
     let models_dir = crate::paths::resolve_models_dir();
     let model_path = models_dir.join(&def.model_file);
+    let name_scope_dir = {
+        let mut comps = std::path::Path::new(&def.model_file).components();
+        match (comps.next(), comps.next()) {
+            (Some(Component::Normal(category)), Some(Component::Normal(name))) => {
+                Some(models_dir.join(category).join(name))
+            }
+            _ => None,
+        }
+    };
     
     let is_custom = custom::is_custom_model(&models_dir, &model_id).unwrap_or(false);
     let is_disk_scanned = def
@@ -86,8 +96,18 @@ pub async fn uninstall_model(
     // Attempt to stop the model before deleting
     let _ = state.0.stop_model(&model_id).await;
 
-    // Delete the primary model file or directory
-    if model_path.exists() {
+    // Delete the model at <category>/<name>/... by removing the <name> folder.
+    // This preserves the category folder itself.
+    let mut removed_name_scope = false;
+    if let Some(name_dir) = &name_scope_dir {
+        if name_dir.exists() {
+            let _ = std::fs::remove_dir_all(name_dir);
+            removed_name_scope = true;
+        }
+    }
+
+    // Fallback for models that do not follow <category>/<name>/... layout.
+    if !removed_name_scope && model_path.exists() {
         if model_path.is_dir() {
             let _ = std::fs::remove_dir_all(&model_path);
         } else {
@@ -127,16 +147,49 @@ pub struct DownloadProgress {
     pub status: String,
 }
 
-#[tauri::command]
-pub async fn download_model(
+fn normalize_advanced_category(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "embedding" | "embeddings" => Some("embedding"),
+        "grader" | "grade" => Some("grader"),
+        "classifier" | "classify" | "router" => Some("classifier"),
+        _ => None,
+    }
+}
+
+fn model_in_advanced_category(def: &crate::registry::types::ModelDef, category: &str) -> bool {
+    match category {
+        "embedding" => def.tasks.contains(&TaskType::Embed),
+        "grader" => def.tasks.contains(&TaskType::Grade),
+        "classifier" => def.tasks.contains(&TaskType::Classify),
+        _ => false,
+    }
+}
+
+async fn ensure_model_registered_from_catalog(
+    state: &State<'_, ProcessManagerState>,
+    model_id: &str,
+) -> Result<(), String> {
+    if state.0.get_model_def(model_id).await.is_some() {
+        return Ok(());
+    }
+
+    let defs = crate::config::load_model_definitions()?;
+    let def = defs
+        .into_iter()
+        .find(|d| d.id == model_id)
+        .ok_or_else(|| format!("Model not found: {}", model_id))?;
+    state.0.register_model(def).await
+}
+
+async fn download_model_internal(
     app_handle: tauri::AppHandle,
-    model_id: String,
-    state: State<'_, ProcessManagerState>,
-    download_state: State<'_, DownloadState>,
+    model_id: &str,
+    state: &State<'_, ProcessManagerState>,
+    download_state: &State<'_, DownloadState>,
 ) -> Result<(), String> {
     let def = state
         .0
-        .get_model_def(&model_id)
+        .get_model_def(model_id)
         .await
         .ok_or_else(|| format!("Model not found: {}", model_id))?;
         
@@ -152,18 +205,10 @@ pub async fn download_model(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
         let mut map = download_state.cancellations.lock().await;
-        map.insert(model_id.clone(), cancel_flag.clone());
-    }
-
-
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    {
-        let mut map = download_state.cancellations.lock().await;
-        map.insert(model_id.clone(), cancel_flag.clone());
+        map.insert(model_id.to_string(), cancel_flag.clone());
     }
 
     let is_zip = def.is_zip;
@@ -177,7 +222,7 @@ pub async fn download_model(
     let _ = app_handle.emit(
         "model-download-progress",
         DownloadProgress {
-            model_id: model_id.clone(),
+            model_id: model_id.to_string(),
             progress: 0.0,
             status: "Starting download...".to_string(),
         },
@@ -266,15 +311,7 @@ pub async fn download_model(
             drop(file);
             let _ = std::fs::remove_file(&download_target);
             let mut map = download_state.cancellations.lock().await;
-            map.remove(&model_id);
-            return Err("Download cancelled".to_string());
-        }
-        
-        if cancel_flag.load(Ordering::SeqCst) {
-            drop(file);
-            let _ = std::fs::remove_file(&download_target);
-            let mut map = download_state.cancellations.lock().await;
-            map.remove(&model_id);
+            map.remove(model_id);
             return Err("Download cancelled".to_string());
         }
         
@@ -293,7 +330,7 @@ pub async fn download_model(
             let _ = app_handle.emit(
                 "model-download-progress",
                 DownloadProgress {
-                    model_id: model_id.clone(),
+                    model_id: model_id.to_string(),
                     progress: pct,
                     status,
                 },
@@ -310,7 +347,7 @@ pub async fn download_model(
         let _ = app_handle.emit(
             "model-download-progress",
             DownloadProgress {
-                model_id: model_id.clone(),
+                model_id: model_id.to_string(),
                 progress: 100.0,
                 status: "Extracting archive...".to_string(),
             },
@@ -379,13 +416,83 @@ pub async fn download_model(
     let _ = app_handle.emit(
         "model-download-progress",
         DownloadProgress {
-            model_id: model_id.clone(),
+            model_id: model_id.to_string(),
             progress: 100.0,
             status: "Complete".to_string(),
         },
     );
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn download_model(
+    app_handle: tauri::AppHandle,
+    model_id: String,
+    state: State<'_, ProcessManagerState>,
+    download_state: State<'_, DownloadState>,
+) -> Result<(), String> {
+    ensure_model_registered_from_catalog(&state, &model_id).await?;
+    download_model_internal(
+        app_handle,
+        &model_id,
+        &state,
+        &download_state,
+    ).await
+}
+
+#[tauri::command]
+pub async fn download_model_category(
+    app_handle: tauri::AppHandle,
+    category: String,
+    state: State<'_, ProcessManagerState>,
+    download_state: State<'_, DownloadState>,
+) -> Result<u32, String> {
+    let category = normalize_advanced_category(&category)
+        .ok_or_else(|| format!("Unknown category '{}'", category))?;
+
+    let defs = crate::config::load_model_definitions()?;
+    let mut defs_by_id: HashMap<String, crate::registry::types::ModelDef> = HashMap::new();
+    let mut target_ids = Vec::new();
+
+    for def in defs {
+        if model_in_advanced_category(&def, category) && def.gdrive_id.is_some() {
+            target_ids.push(def.id.clone());
+            defs_by_id.insert(def.id.clone(), def);
+        }
+    }
+
+    if target_ids.is_empty() {
+        return Err(format!("No downloadable models configured for category '{}'", category));
+    }
+
+    let models_dir = crate::paths::resolve_models_dir();
+    let mut downloaded = 0_u32;
+
+    for model_id in target_ids {
+        let mut def = state.0.get_model_def(&model_id).await;
+        if def.is_none() {
+            if let Some(config_def) = defs_by_id.get(&model_id).cloned() {
+                state.0.register_model(config_def).await?;
+                def = state.0.get_model_def(&model_id).await;
+            }
+        }
+
+        let def = def.ok_or_else(|| format!("Model not found: {}", model_id))?;
+        if def.files_exist(&models_dir) {
+            continue;
+        }
+
+        download_model_internal(
+            app_handle.clone(),
+            &model_id,
+            &state,
+            &download_state,
+        ).await?;
+        downloaded += 1;
+    }
+
+    Ok(downloaded)
 }
 
 #[tauri::command]

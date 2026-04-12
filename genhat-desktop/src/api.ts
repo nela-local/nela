@@ -148,6 +148,11 @@ export const Api = {
     return invoke<RegisteredModel[]>("list_registered_models");
   },
 
+  /** List all models defined in models.toml, including not-yet-downloaded entries. */
+  async listModelCatalog(): Promise<RegisteredModel[]> {
+    return invoke<RegisteredModel[]>("list_model_catalog");
+  },
+
   /** Scan model folders and return discovered repo-container model units. */
   async discoverLocalModelUnits(): Promise<DiscoveredModelUnit[]> {
     return invoke<DiscoveredModelUnit[]>("discover_local_model_units");
@@ -168,6 +173,10 @@ export const Api = {
 
   async downloadModel(modelId: string): Promise<void> {
     return invoke<void>("download_model", { modelId });
+  },
+
+  async downloadModelCategory(category: "embedding" | "grader" | "classifier"): Promise<number> {
+    return invoke<number>("download_model_category", { category });
   },
 
   async cancelDownload(modelId: string): Promise<void> {

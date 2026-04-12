@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { BookOpen, Map, X } from "lucide-react";
 import { useTour } from "../hooks/useTour";
 import MarkdownRenderer from "./MarkdownRenderer";
@@ -8,6 +8,11 @@ import "./ToursModal.css";
 export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { tours, isTourCompleted, resetTourProgress, startTour, bindings } = useTour();
   const [activeTab, setActiveTab] = useState<"tours" | "guide">("tours");
+
+  const handleClose = () => {
+    setActiveTab("tours");
+    onClose();
+  };
 
   const waitForTourTarget = (selector: string, timeoutMs = 1800): Promise<void> => {
     return new Promise((resolve) => {
@@ -29,13 +34,8 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
     });
   };
 
-  useEffect(() => {
-    if (!isOpen) return;
-    setActiveTab("tours");
-  }, [isOpen]);
-
   const launchTour = (tourId: string) => {
-    onClose();
+    handleClose();
 
     if (tourId === "podcast") {
       const switchMode = bindings.switchMode;
@@ -57,11 +57,11 @@ export default function ToursModal({ isOpen, onClose }: { isOpen: boolean; onClo
   if (!isOpen) return null;
 
   return (
-    <div className="tours-modal-overlay" onClick={onClose}>
+    <div className="tours-modal-overlay" onClick={handleClose}>
       <div className="tours-modal" onClick={(e) => e.stopPropagation()}>
         <div className="tours-modal-header">
           <div className="tours-modal-title">Help Center</div>
-          <button className="tours-modal-close" onClick={onClose} aria-label="Close">
+          <button className="tours-modal-close" onClick={handleClose} aria-label="Close">
             <X size={16} />
           </button>
         </div>

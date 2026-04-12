@@ -591,8 +591,7 @@ impl ProcessManager {
             .values()
             .map(|m| {
                 let models_dir = crate::paths::resolve_models_dir();
-                let model_path = models_dir.join(&m.def.model_file);
-                let is_downloaded = model_path.exists();
+                let is_downloaded = m.def.files_exist(&models_dir);
                 let model_profile = m.def.params.get("custom_profile").cloned();
                 let engine_adapter = m.def.params.get("engine_adapter").cloned();
                 let model_source = if model_profile.is_some() {

@@ -26,6 +26,7 @@ interface PodcastTabProps {
   modeOptions: { mode: ChatMode; label: string }[];
   currentMode: ChatMode;
   onSelectMode: (mode: ChatMode) => void;
+  onPodcastGenerated?: (payload: { query: string; result: PodcastResult }) => void;
 }
 
 const PodcastTab: React.FC<PodcastTabProps> = ({
@@ -33,6 +34,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
   modeOptions,
   currentMode,
   onSelectMode,
+  onPodcastGenerated,
 }) => {
   const [query, setQuery] = useState("");
   const [voiceA, setVoiceA] = useState<KittenTtsVoice>("Leo");
@@ -117,6 +119,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
 
   const handleGenerate = async () => {
     if (!query.trim() || isGenerating) return;
+    const trimmedQuery = query.trim();
 
     setIsGenerating(true);
     setError(null);
@@ -126,7 +129,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
 
     try {
       const request: PodcastRequest = {
-        query: query.trim(),
+        query: trimmedQuery,
         voice_a: voiceA,
         voice_b: voiceB,
         speaker_a_name: speakerA,
@@ -136,6 +139,7 @@ const PodcastTab: React.FC<PodcastTabProps> = ({
 
       const podcast = await Api.generatePodcast(request);
       setResult(podcast);
+      onPodcastGenerated?.({ query: trimmedQuery, result: podcast });
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : (e as Error)?.message || "Unknown error";
       setError(msg);

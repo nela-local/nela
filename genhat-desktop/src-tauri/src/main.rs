@@ -127,6 +127,7 @@ fn main() {
             app_lib::commands::models::switch_model,
             app_lib::commands::models::stop_llama,
             app_lib::commands::download::download_model,
+            app_lib::commands::download::download_model_category,
             app_lib::commands::download::cancel_download,
             app_lib::commands::download::uninstall_model,
             app_lib::commands::download::download_custom_file,
@@ -138,6 +139,7 @@ fn main() {
             app_lib::commands::audio::stop_mic_recording,
             // New unified commands
             app_lib::commands::models::list_registered_models,
+            app_lib::commands::models::list_model_catalog,
             app_lib::commands::models::update_model_params,
             app_lib::commands::models::get_model_status,
             app_lib::commands::models::start_model,

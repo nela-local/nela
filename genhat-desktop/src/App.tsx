@@ -13,6 +13,8 @@ import {
   CheckCircle2,
   Share2,
   SlidersHorizontal,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Api } from "./api";
 import type {
@@ -25,6 +27,7 @@ import type {
   KittenTtsVoice,
   MindMapGraph,
   MindMapNode,
+  PodcastResult,
   WorkspaceRecord,
   ImportModelProfile,
 } from "./types";
@@ -51,7 +54,24 @@ import "./App.css";
 
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
-const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
+const STARTUP_MODEL_SELECTOR = {
+  tasks: new Set(["embed", "grade", "classify"]),
+  ids: new Set(["kitten-tts", "parakeet-tdt"]),
+};
+
+const formatModelSizeLabel = (memoryMb: number | null | undefined): string => {
+  if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
+    return "Unknown size";
+  }
+  const mb = memoryMb;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${Math.round(mb)} MB`;
+};
+
+const formatTotalSizeLabel = (totalMb: number): string => {
+  if (totalMb >= 1024) return `${(totalMb / 1024).toFixed(2)} GB`;
+  return `${Math.round(totalMb)} MB`;
+};
 
 const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
 
@@ -277,6 +297,7 @@ function App() {
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [registeredModels, setRegisteredModels] = useState<RegisteredModel[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<RegisteredModel[]>([]);
   const [sessionModelParamOverrides, setSessionModelParamOverrides] = useState<Record<string, Record<string, string>>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hfModalOpen, setHfModalOpen] = useState(false);
@@ -287,7 +308,7 @@ function App() {
     folder: "LLM",
     profile: "llm",
   });
-  const [downloadOptionalOnStart, setDownloadOptionalOnStart] = useState(() => {
+  const [downloadOptionalOnStart] = useState(() => {
     return localStorage.getItem(STARTUP_OPTIONAL_DOWNLOAD_KEY) === "true";
   });
   const [appModal, setAppModal] = useState({
@@ -393,11 +414,85 @@ function App() {
   const [paramsDockOpen, setParamsDockOpen] = useState(true);
   const [modeSwitchNotice, setModeSwitchNotice] = useState<string | null>(null);
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const startupToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const startupPresenceNoticeShownRef = useRef(false);
+  const legacySessionStorageDisabledRef = useRef(false);
+  const sessionQuotaPromptedRef = useRef(false);
+  const [startupModelToast, setStartupModelToast] = useState<{
+    open: boolean;
+    phase: "prompt" | "downloading" | "done" | "declined" | "info";
+    message: string;
+    missingIds: string[];
+    missingNames: string[];
+    missingSizesMb: number[];
+    selectedIds: string[];
+    doneIds: string[];
+    failedIds: string[];
+    completed: number;
+    total: number;
+    failed: number;
+  }>({
+    open: false,
+    phase: "info",
+    message: "",
+    missingIds: [],
+    missingNames: [],
+    missingSizesMb: [],
+    selectedIds: [],
+    doneIds: [],
+    failedIds: [],
+    completed: 0,
+    total: 0,
+    failed: 0,
+  });
+  const [startupToastMinimized, setStartupToastMinimized] = useState(false);
 
   // ── Session accessor helpers ───────────────────────────────────────────────
 
   /** Get the currently active session object (read-only snapshot). */
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+
+  const promptClearSessionStorage = useCallback(() => {
+    if (sessionQuotaPromptedRef.current) return;
+    if (modalResolveRef.current) return;
+    sessionQuotaPromptedRef.current = true;
+
+    modalResolveRef.current = (confirmed) => {
+      sessionQuotaPromptedRef.current = false;
+      if (!confirmed) return;
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          if (key.startsWith(SESSION_STORAGE_PREFIX)) {
+            localStorage.removeItem(key);
+          }
+        }
+        legacySessionStorageDisabledRef.current = false;
+        setAppModal({
+          open: true,
+          kind: "info",
+          title: "Session storage cleared",
+          message: "Local cached session storage was cleared. You can continue normally.",
+          confirmLabel: "OK",
+          cancelLabel: "Cancel",
+          showCancel: false,
+        });
+      } catch (err) {
+        console.warn("Failed to clear session storage cache:", err);
+      }
+    };
+
+    setAppModal({
+      open: true,
+      kind: "confirm",
+      title: "Session storage is full",
+      message: "Local session cache is full. Do you want to clear cached session storage now?",
+      confirmLabel: "Clear storage",
+      cancelLabel: "Not now",
+      showCancel: true,
+    });
+  }, []);
 
   const parseModelParamNumber = useCallback((raw: string | undefined): number | undefined => {
     if (!raw) return undefined;
@@ -489,15 +584,20 @@ function App() {
     visionModels,
   ]);
 
+  const lastRuntimeTargetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeRuntimeParamTarget) {
+      lastRuntimeTargetKeyRef.current = null;
       setParamsDockOpen(false);
       return;
     }
 
-    // Re-open the panel when a new active model target is detected.
-    setParamsDockOpen(true);
-  }, [activeRuntimeParamTarget?.key]);
+    // Re-open the panel only when switching to a different active model target.
+    if (lastRuntimeTargetKeyRef.current !== activeRuntimeParamTarget.key) {
+      lastRuntimeTargetKeyRef.current = activeRuntimeParamTarget.key;
+      setParamsDockOpen(true);
+    }
+  }, [activeRuntimeParamTarget]);
 
   const handleApplyRuntimeParams = async (nextParams: Record<string, string>) => {
     if (!activeRuntimeParamTarget) return;
@@ -884,24 +984,65 @@ function App() {
   // Persist sessions whenever they change, scoped to the current workspace.
   useEffect(() => {
     if (!workspaceScope || !sessionStoreReady || sessions.length === 0) return;
+    if (workspaceScope === "workspace:none") return;
 
     const safeActive = sessions.some((s) => s.id === activeSessionId)
       ? activeSessionId
       : sessions[0].id;
 
     const storageKey = `${SESSION_STORAGE_PREFIX}${workspaceScope}`;
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        sessions,
-        activeSessionId: safeActive,
-        openSessionIds,
-        mindmapsBySession,
-        selectedModel,
-        selectedTtsEngine,
-        selectedVisionModel,
-      })
-    );
+    const fullLegacyState = JSON.stringify({
+      sessions,
+      activeSessionId: safeActive,
+      openSessionIds,
+      mindmapsBySession,
+      selectedModel,
+      selectedTtsEngine,
+      selectedVisionModel,
+    });
+
+    if (!legacySessionStorageDisabledRef.current) {
+      try {
+        localStorage.setItem(storageKey, fullLegacyState);
+      } catch (err) {
+        const isQuotaError =
+          err instanceof DOMException &&
+          (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+
+        if (isQuotaError) {
+          promptClearSessionStorage();
+          try {
+            for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+              const key = localStorage.key(i);
+              if (!key) continue;
+              if (key.startsWith(SESSION_STORAGE_PREFIX) && key !== storageKey) {
+                localStorage.removeItem(key);
+              }
+            }
+            localStorage.setItem(storageKey, fullLegacyState);
+          } catch {
+            try {
+              localStorage.setItem(
+                storageKey,
+                JSON.stringify({
+                  sessions: [],
+                  activeSessionId: safeActive,
+                  openSessionIds: [safeActive],
+                  selectedModel,
+                  selectedTtsEngine,
+                  selectedVisionModel,
+                })
+              );
+            } catch (retryErr) {
+              legacySessionStorageDisabledRef.current = true;
+              console.warn("Disabling legacy localStorage session mirror due to quota:", retryErr);
+            }
+          }
+        } else {
+          console.warn("Failed to persist legacy localStorage session state:", err);
+        }
+      }
+    }
 
     // Mirror into active workspace cache for .nela save/open flows.
     void Api.saveWorkspaceFrontendState(
@@ -909,7 +1050,7 @@ function App() {
     ).catch((err) => {
       console.warn("Failed to persist workspace frontend state to backend:", err);
     });
-  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel, buildWorkspaceFrontendState]);
+  }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel, buildWorkspaceFrontendState, promptClearSessionStorage]);
 
   const switchWorkspaceById = useCallback(async (workspaceId: string) => {
     if (workspaceBusy) return;
@@ -1123,7 +1264,6 @@ function App() {
     },
     [
       workspaceBusy,
-      workspaces,
       activeWorkspace,
       refreshWorkspaceRegistry,
       refreshWorkspaceListOnly,
@@ -1197,10 +1337,79 @@ function App() {
     setModeSwitchNotice(null);
   }, [activeSessionId]);
 
+  // On first entry to the chat screen, notify user which optional models are present.
+  useEffect(() => {
+    if (startupPresenceNoticeShownRef.current) return;
+    if (!activeWorkspace || !sessionStoreReady) return;
+    if (modelCatalog.length === 0) return;
+
+    const optionalForStartup = modelCatalog.filter((model) =>
+      model.tasks.some((task) => STARTUP_MODEL_SELECTOR.tasks.has(task)) ||
+      STARTUP_MODEL_SELECTOR.ids.has(model.id)
+    );
+    if (optionalForStartup.length === 0) return;
+
+    const present = optionalForStartup.filter((model) => model.is_downloaded);
+    const missing = optionalForStartup.filter((model) => !model.is_downloaded);
+    if (missing.length > 0) {
+      setStartupModelToast({
+        open: true,
+        phase: "prompt",
+        message: `${present.length}/${optionalForStartup.length} models are present.`,
+        missingIds: missing.map((model) => model.id),
+        missingNames: missing.map((model) => model.name),
+        missingSizesMb: missing.map((model) => model.memory_mb),
+        selectedIds: missing.map((model) => model.id),
+        doneIds: [],
+        failedIds: [],
+        completed: 0,
+        total: missing.length,
+        failed: 0,
+      });
+    } else {
+      setStartupModelToast({
+        open: true,
+        phase: "info",
+        message: `All ${optionalForStartup.length} models are already present.`,
+        missingIds: [],
+        missingNames: [],
+        missingSizesMb: [],
+        selectedIds: [],
+        doneIds: [],
+        failedIds: [],
+        completed: 0,
+        total: 0,
+        failed: 0,
+      });
+    }
+    startupPresenceNoticeShownRef.current = true;
+  }, [activeWorkspace, sessionStoreReady, modelCatalog]);
+
+  useEffect(() => {
+    if (!startupModelToast.open) return;
+    if (startupModelToast.phase === "prompt" || startupModelToast.phase === "downloading") return;
+    if (startupToastTimeoutRef.current) clearTimeout(startupToastTimeoutRef.current);
+    startupToastTimeoutRef.current = setTimeout(() => {
+      setStartupModelToast((prev) => ({ ...prev, open: false }));
+      startupToastTimeoutRef.current = null;
+    }, 5000);
+    return () => {
+      if (startupToastTimeoutRef.current) {
+        clearTimeout(startupToastTimeoutRef.current);
+      }
+    };
+  }, [startupModelToast]);
+
+  useEffect(() => {
+    if (startupModelToast.phase !== "downloading") {
+      setStartupToastMinimized(false);
+    }
+  }, [startupModelToast.phase]);
+
   // Reload RAG docs periodically when in text/mindmap modes
   useEffect(() => {
     if (chatMode === "text" || chatMode === "mindmap") loadRagDocs();
-  }, [chatMode]);
+  }, [chatMode, loadRagDocs]);
 
   // Listen for background enrichment progress events
   useEffect(() => {
@@ -1222,7 +1431,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, [chatMode]);
+  }, [loadRagDocs]);
 
   // Clean up TTS and general timers on unmount
   useEffect(() => {
@@ -1235,6 +1444,7 @@ function App() {
 
   // ── Download state ─────────────────────────────────────────────────────────
   const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string }>>({});
+  const refreshModelsOnDownloadRef = useRef<() => Promise<RegisteredModel[]>>(async () => []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1246,7 +1456,9 @@ function App() {
           [e.payload.model_id]: { progress: e.payload.progress, status: e.payload.status },
         }));
         if (e.payload.progress >= 100 && e.payload.status === "Complete") {
-          setTimeout(refreshModels, 1000);
+          setTimeout(() => {
+            void refreshModelsOnDownloadRef.current();
+          }, 1000);
           setTimeout(() => {
             setDownloads((prev) => {
               const newD = { ...prev };
@@ -1265,10 +1477,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      STARTUP_OPTIONAL_DOWNLOAD_KEY,
-      downloadOptionalOnStart ? "true" : "false"
-    );
+    try {
+      localStorage.setItem(
+        STARTUP_OPTIONAL_DOWNLOAD_KEY,
+        downloadOptionalOnStart ? "true" : "false"
+      );
+    } catch (err) {
+      console.warn("Failed to persist startup optional-download preference:", err);
+    }
   }, [downloadOptionalOnStart]);
 
   // ── Model helpers ──────────────────────────────────────────────────────────
@@ -1307,8 +1523,108 @@ function App() {
     }
   };
 
+  const handleStartupToastDecline = () => {
+    setStartupModelToast((prev) => ({
+      ...prev,
+      open: true,
+      phase: "declined",
+      message: "You can download these models from Settings or clicking on the drop-down any time.",
+    }));
+  };
+
+  const handleStartupToastAccept = async () => {
+    const ids = startupModelToast.selectedIds;
+    if (ids.length === 0) {
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "declined",
+        message: "No models selected. You can download models from Settings any time.",
+      }));
+      return;
+    }
+
+    setStartupModelToast((prev) => ({
+      ...prev,
+      open: true,
+      phase: "downloading",
+      message: "Starting parallel downloads...",
+      total: ids.length,
+      doneIds: [],
+      failedIds: [],
+      completed: 0,
+      failed: 0,
+    }));
+    setStartupToastMinimized(false);
+
+    let completed = 0;
+    let failed = 0;
+    await Promise.all(
+      ids.map(async (modelId) => {
+        try {
+          await Api.downloadModel(modelId);
+          completed += 1;
+          setStartupModelToast((prev) => ({
+            ...prev,
+            doneIds: prev.doneIds.includes(modelId) ? prev.doneIds : [...prev.doneIds, modelId],
+          }));
+        } catch (e) {
+          failed += 1;
+          console.error("Failed startup model download", e);
+          setStartupModelToast((prev) => ({
+            ...prev,
+            failedIds: prev.failedIds.includes(modelId) ? prev.failedIds : [...prev.failedIds, modelId],
+          }));
+        } finally {
+          setStartupModelToast((prev) => ({
+            ...prev,
+            completed,
+            failed,
+          }));
+        }
+      })
+    );
+
+    if (failed > 0) {
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "done",
+        message: `Downloads finished: ${completed}/${ids.length} completed, ${failed} failed. You can retry from Settings.`,
+      }));
+    } else {
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "done",
+        message: `All ${ids.length} model download(s) completed.`,
+      }));
+    }
+  };
+
+  const toggleStartupModelSelection = (modelId: string) => {
+    setStartupModelToast((prev) => {
+      if (prev.phase !== "prompt") return prev;
+      const selected = prev.selectedIds.includes(modelId)
+        ? prev.selectedIds.filter((id) => id !== modelId)
+        : [...prev.selectedIds, modelId];
+      return { ...prev, selectedIds: selected };
+    });
+  };
+
+  const startupSelectedTotalMb = useMemo(() => {
+    let total = 0;
+    startupModelToast.selectedIds.forEach((modelId) => {
+      const idx = startupModelToast.missingIds.indexOf(modelId);
+      if (idx < 0) return;
+      const mb = startupModelToast.missingSizesMb[idx];
+      if (typeof mb === "number" && Number.isFinite(mb) && mb > 0) total += mb;
+    });
+    return total;
+  }, [startupModelToast.selectedIds, startupModelToast.missingIds, startupModelToast.missingSizesMb]);
+
   const getOptionalModels = (list: RegisteredModel[]) =>
-    list.filter((model) => model.tasks.some((t) => OPTIONAL_TASKS.has(t)));
+    list.filter((model) => model.tasks.some((t) => STARTUP_MODEL_SELECTOR.tasks.has(t)));
 
   const downloadMissingOptionalModels = async () => {
     const list = registeredModels.length > 0
@@ -1325,7 +1641,7 @@ function App() {
     }
   };
 
-  const showModal = (
+  const showModal = useCallback((
     kind: AppModalKind,
     title: string,
     message: string,
@@ -1340,7 +1656,7 @@ function App() {
       cancelLabel: options?.cancelLabel ?? "Cancel",
       showCancel: options?.showCancel ?? false,
     });
-  };
+  }, []);
 
   const showError = (message: string, title = "Error") => {
     showModal("error", title, message);
@@ -1377,11 +1693,13 @@ function App() {
 
   const refreshModels = useCallback(async (): Promise<RegisteredModel[]> => {
     try {
-      const [list, discoveredUnits] = await Promise.all([
+      const [list, discoveredUnits, catalog] = await Promise.all([
         Api.listRegisteredModels(),
         Api.discoverLocalModelUnits().catch(() => []),
+        Api.listModelCatalog().catch(() => []),
       ]);
       setRegisteredModels(list);
+      setModelCatalog(catalog);
 
       // Vision models
       const vision = list.filter((m) => m.tasks.includes("vision_chat"));
@@ -1462,6 +1780,7 @@ function App() {
       return [];
     }
   }, []);
+  refreshModelsOnDownloadRef.current = refreshModels;
 
   useEffect(() => {
     if (!selectedTtsEngine) return;
@@ -2362,11 +2681,69 @@ function App() {
     }));
   };
 
+  const handlePodcastGenerated = useCallback(
+    ({ query, result }: { query: string; result: PodcastResult }) => {
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery) return;
+
+      const combinedAudioUrl = result.combined_audio_data_url?.trim() || "";
+      const transcriptMessages: ChatMessage[] = result.segments.map((segment) => ({
+        role: "assistant",
+        content: `🎙️ ${segment.line.speaker}: ${segment.line.text}`,
+      }));
+      const combinedAudioMessage: ChatMessage = {
+        role: "assistant",
+        content: result.script?.title
+          ? `🎧 Podcast generated: ${result.script.title}`
+          : "🎧 Podcast generated.",
+        ...(combinedAudioUrl ? { audioUrl: combinedAudioUrl, audioSaved: true } : {}),
+      };
+
+      if (!combinedAudioUrl && transcriptMessages.length === 0) return;
+
+      const targetSessionId = activeSessionId && sessions.some((session) => session.id === activeSessionId)
+        ? activeSessionId
+        : null;
+
+      if (targetSessionId) {
+        updateSession(targetSessionId, (prev) => {
+          const shouldSetTitle = prev.messages.length === 0;
+          return {
+            title: shouldSetTitle ? deriveTitleFromMessage(trimmedQuery) : prev.title,
+            messages: [
+              ...prev.messages,
+              { role: "user", content: trimmedQuery },
+              combinedAudioMessage,
+              ...transcriptMessages,
+            ],
+            audioOutputs: combinedAudioUrl
+              ? [...(prev.audioOutputs ?? []), combinedAudioUrl]
+              : prev.audioOutputs ?? [],
+            audioOutput: combinedAudioUrl || prev.audioOutput,
+          };
+        });
+        return;
+      }
+
+      const newSession = createEmptySession();
+      newSession.title = deriveTitleFromMessage(trimmedQuery);
+      newSession.messages = [
+        { role: "user", content: trimmedQuery },
+        combinedAudioMessage,
+        ...transcriptMessages,
+      ];
+      newSession.audioOutputs = combinedAudioUrl ? [combinedAudioUrl] : [];
+      newSession.audioOutput = combinedAudioUrl || undefined;
+
+      setSessions((prev) => [...prev, newSession]);
+      setOpenSessionIds((prev) => (prev.includes(newSession.id) ? prev : [...prev, newSession.id]));
+      setActiveSessionId(newSession.id);
+    },
+    [activeSessionId, sessions, updateSession]
+  );
+
   // Show startup modal if no active workspace yet (unless we're running the tour from it)
   const showStartupModal = !activeWorkspace && !suppressStartupModal;
-  const optionalMissingCount = getOptionalModels(registeredModels)
-    .filter((model) => model.gdrive_id && !model.is_downloaded)
-    .length;
   const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
   const showRightSidebar = showParamsDock || docPanelOpen;
 
@@ -2381,9 +2758,6 @@ function App() {
           onNewProject={createWorkspaceFromStartup}
           onImportProject={importWorkspaceFromStartup}
           onStartTour={startTourFromStartup}
-          downloadOptionalOnStart={downloadOptionalOnStart}
-          onToggleDownloadOptional={setDownloadOptionalOnStart}
-          optionalMissingCount={optionalMissingCount}
           busy={workspaceBusy}
         />
       )}
@@ -2404,6 +2778,7 @@ function App() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         models={registeredModels}
+        modelCatalog={modelCatalog}
         onModelsUpdated={refreshModels}
         downloads={downloads}
         onDownload={handleDownloadModel}
@@ -2680,6 +3055,7 @@ function App() {
             modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
             currentMode={chatMode}
             onSelectMode={handleModeSwitch}
+            onPodcastGenerated={handlePodcastGenerated}
           />
         ) : !activeSession ? (
           <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">
@@ -2750,6 +3126,126 @@ function App() {
           <DocumentViewer key={docViewerFile.filePath} filePath={docViewerFile.filePath} title={docViewerFile.title} onClose={closeDocViewer} />
         )}
       </main>
+
+      {startupModelToast.open && (
+        <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-neon/60 bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
+          <div className="px-4 py-3 text-sm text-txt">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <div className="font-medium">
+                {startupModelToast.phase === "prompt"
+                  ? "Model(s) absent"
+                  : startupModelToast.phase === "downloading"
+                    ? "Downloading models"
+                    : "Model setup"}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-txt-muted leading-relaxed">
+                {startupModelToast.phase === "downloading" && startupToastMinimized
+                  ? `Progress: ${startupModelToast.completed}/${startupModelToast.total}`
+                  : startupModelToast.message}
+              </div>
+              {startupModelToast.phase === "downloading" && (
+                <button
+                  type="button"
+                  className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
+                  onClick={() => setStartupToastMinimized((prev) => !prev)}
+                  aria-label={startupToastMinimized ? "Expand download notification" : "Minimize download notification"}
+                  title={startupToastMinimized ? "Expand" : "Minimize"}
+                >
+                  {startupToastMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              )}
+            </div>
+
+            {startupModelToast.phase === "prompt" && startupModelToast.missingNames.length > 0 && (
+              <div className="mt-2 text-xs leading-relaxed">
+                <div className="text-txt-muted">The following models are not present:</div>
+                <ul className="mt-2 space-y-1">
+                  {startupModelToast.missingIds.map((modelId, idx) => {
+                    const name = startupModelToast.missingNames[idx] ?? modelId;
+                    const sizeLabel = formatModelSizeLabel(startupModelToast.missingSizesMb[idx]);
+                    const checked = startupModelToast.selectedIds.includes(modelId);
+                    return (
+                      <li key={modelId}>
+                        <label className="flex items-center gap-2 cursor-pointer rounded px-1 py-0.5 hover:bg-void-700/40">
+                          <input
+                            type="checkbox"
+                            className="accent-neon"
+                            checked={checked}
+                            onChange={() => toggleStartupModelSelection(modelId)}
+                          />
+                          <span className="text-neon font-medium truncate" title={name}>{name}</span>
+                          <span className="ml-auto text-[11px] text-txt-muted">{sizeLabel}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="mt-2 text-[11px] text-txt-muted">
+                  Total selected size:{" "}
+                  <span className="text-neon font-medium">{formatTotalSizeLabel(startupSelectedTotalMb)}</span>
+                </div>
+              </div>
+            )}
+
+            {startupModelToast.phase === "downloading" && !startupToastMinimized && (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center gap-2 text-neon text-xs">
+                  <Loader2 size={13} className="animate-spin" />
+                  <span>
+                    Progress: {startupModelToast.completed}/{startupModelToast.total}
+                  </span>
+                </div>
+                {startupModelToast.selectedIds.map((modelId) => {
+                  const dl = downloads[modelId];
+                  const isDone = startupModelToast.doneIds.includes(modelId);
+                  const isFailed = startupModelToast.failedIds.includes(modelId);
+                  const pct = isDone
+                    ? 100
+                    : typeof dl?.progress === "number"
+                      ? Math.max(0, Math.min(100, dl.progress))
+                      : 0;
+                  const idx = startupModelToast.missingIds.indexOf(modelId);
+                  const name = idx >= 0 ? startupModelToast.missingNames[idx] ?? modelId : modelId;
+                  return (
+                    <div key={modelId} className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px] text-txt-muted">
+                        <span className="truncate max-w-[220px]" title={name}>{name}</span>
+                        <span>{isDone ? "Done" : isFailed ? "Failed" : dl ? `${pct.toFixed(0)}%` : "Queued"}</span>
+                      </div>
+                      <div className="h-1.5 w-full rounded bg-void-700/80 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-300 ${isFailed ? "bg-red-500" : "bg-neon"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {startupModelToast.phase === "prompt" && (
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  className="px-3 py-1.5 rounded-md border border-glass-border text-txt-muted text-xs hover:text-txt"
+                  onClick={handleStartupToastDecline}
+                >
+                  No
+                </button>
+                <button
+                  className="px-3 py-1.5 rounded-md bg-neon text-void-900 text-xs font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => void handleStartupToastAccept()}
+                  disabled={startupModelToast.selectedIds.length === 0}
+                >
+                  Yes, download ({startupModelToast.selectedIds.length})
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ══════════ RIGHT SIDEBAR — Runtime Params / Knowledge Base ══════════ */}
       {showRightSidebar && (

@@ -12,11 +12,13 @@
     CreateDirectory "$INSTDIR\models\bge-1.5-embed"
     CreateDirectory "$INSTDIR\models\distilBert-query-router"
     CreateDirectory "$INSTDIR\models\distilBert-query-router\onnx_model"
-    CreateDirectory "$INSTDIR\models\kittenTTS"
-    CreateDirectory "$INSTDIR\models\kittenTTS\mini"
+    CreateDirectory "$INSTDIR\models\tts"
+    CreateDirectory "$INSTDIR\models\tts\kitten-tts"
+    CreateDirectory "$INSTDIR\models\tts\kitten-tts\mini"
     CreateDirectory "$INSTDIR\models\grader"
     CreateDirectory "$INSTDIR\models\grader\ms-marco-MiniLM-L6-v2-onnx-int8"
-    CreateDirectory "$INSTDIR\models\parakeet"
+    CreateDirectory "$INSTDIR\models\asr"
+    CreateDirectory "$INSTDIR\models\asr\parakeet"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

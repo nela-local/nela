@@ -108,12 +108,21 @@ impl super::ModelBackend for CrossEncoderBackend {
             .downcast_ref::<LoadedCrossEncoder>()
             .ok_or("Failed to downcast to LoadedCrossEncoder")?;
 
-        // Extract query and passage from request
-        let query = request.extra.get("query")
-            .ok_or("CrossEncoder requires 'query' in extra params")?;
-        let passage = &request.input;
+        // Extract query and passage from request.
+        // Preferred shape:
+        //   extra.query = user query
+        //   input       = passage/chunk text
+        // Legacy fallback shape (for backward compatibility):
+        //   input = "Query: ...\n\nContext: ..."
+        let (query, passage) = if let Some(query) = request.extra.get("query") {
+            (query.to_string(), request.input.clone())
+        } else if let Some((legacy_query, legacy_passage)) = parse_legacy_grade_payload(&request.input) {
+            (legacy_query, legacy_passage)
+        } else {
+            return Err("CrossEncoder requires 'query' in extra params".to_string());
+        };
 
-        score_pair(query, passage, loaded)
+        score_pair(&query, &passage, loaded)
     }
 
     async fn stop(&self, _handle: &ModelHandle) -> Result<(), String> {
@@ -206,4 +215,31 @@ fn truncate_for_log(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max])
     }
+}
+
+fn parse_legacy_grade_payload(input: &str) -> Option<(String, String)> {
+    // Expected legacy format:
+    // Query: <query text>
+    //
+    // Context: <passage text>
+    const QUERY_PREFIX: &str = "Query:";
+    const CONTEXT_PREFIX: &str = "Context:";
+
+    let trimmed = input.trim();
+    if !trimmed.starts_with(QUERY_PREFIX) {
+        return None;
+    }
+
+    let context_idx = trimmed.find(CONTEXT_PREFIX)?;
+    if context_idx <= QUERY_PREFIX.len() {
+        return None;
+    }
+
+    let query_part = trimmed[QUERY_PREFIX.len()..context_idx].trim();
+    let context_part = trimmed[context_idx + CONTEXT_PREFIX.len()..].trim();
+    if query_part.is_empty() || context_part.is_empty() {
+        return None;
+    }
+
+    Some((query_part.to_string(), context_part.to_string()))
 }

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { CheckCircle, Cpu, Loader2, Save, SlidersHorizontal, X } from "lucide-react";
 import { Api, type CompatibilityRating } from "../api";
 import { KITTEN_TTS_VOICES } from "../types";
+import GlassDropdown from "./GlassDropdown";
 import "./ActiveModelParamsDock.css";
 
 export interface RuntimeParamsTarget {
@@ -459,6 +460,9 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
           if (control.type === "select") {
             const options = control.options ?? [];
             const hasCurrent = options.some((option) => option.value === rawValue);
+            const dropdownOptions = hasCurrent
+              ? options
+              : [{ value: rawValue, label: rawValue }, ...options];
             return (
               <div key={control.key} className="rounded-lg border border-glass-border bg-void-700/55 p-2.5 flex flex-col gap-1.5">
                 <div className="runtime-param-label-row">
@@ -483,19 +487,14 @@ const ActiveModelParamsDock: React.FC<ActiveModelParamsDockProps> = ({ target, o
                     </div>
                   </div>
                 </div>
-                <select
-                  id={`runtime-param-${target.key}-${control.key}`}
-                  className="runtime-param-select"
+                <GlassDropdown
                   value={rawValue}
-                  onChange={(e) => setValue(control.key, e.target.value)}
-                >
-                  {!hasCurrent && <option value={rawValue}>{rawValue}</option>}
-                  {options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(value) => setValue(control.key, value)}
+                  options={dropdownOptions}
+                  className="runtime-param-dropdown"
+                  buttonClassName="runtime-param-dropdown-btn"
+                  menuClassName="runtime-param-dropdown-menu"
+                />
                 <span className="text-[0.67rem] text-txt-muted">{control.description}</span>
               </div>
             );

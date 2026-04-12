@@ -3,12 +3,14 @@ import { X, Download, Loader2, Trash2, Sparkles, Save, CheckCircle, SlidersHoriz
 import type { RegisteredModel, RagModelPreferences } from "../types";
 import { KITTEN_TTS_VOICES } from "../types";
 import { Api, type CompatibilityRating } from "../api";
+import InstallModelModal from "./InstallModelModal";
 import "./ModelsSettingsModal.css";
 
 interface ModelsSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   models: RegisteredModel[];
+  modelCatalog?: RegisteredModel[];
   downloads?: Record<string, { progress: number; status: string }>;
   onDownload: (modelId: string) => void;
   onCancelDownload?: (modelId: string) => void;
@@ -47,23 +49,28 @@ const CORE_TASKS = new Set([
   "stt",
 ]);
 
-const GROUPS: Array<{ id: string; label: string; description: string; match: (model: RegisteredModel) => boolean }> = [
+type AdvancedCategory = "embedding" | "grader" | "classifier";
+
+const GROUPS: Array<{ id: string; label: string; description: string; category?: AdvancedCategory; match: (model: RegisteredModel) => boolean }> = [
   {
     id: "embedding",
     label: "Embedding Models",
     description: "Embedding models convert text into vectors so the app can find semantically similar content during retrieval.",
+    category: "embedding",
     match: (model) => model.tasks.includes("embed"),
   },
   {
     id: "grader",
     label: "Grader Models",
     description: "Grader models score and rerank retrieved chunks so the most relevant context is used in answers.",
+    category: "grader",
     match: (model) => model.tasks.includes("grade"),
   },
   {
     id: "router",
     label: "Router / Classifier Models",
     description: "Classifier and router models categorize inputs and help route tasks to the most appropriate pipeline.",
+    category: "classifier",
     match: (model) => model.tasks.includes("classify"),
   },
   {
@@ -274,6 +281,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   isOpen,
   onClose,
   models,
+  modelCatalog = [],
   downloads = {},
   onDownload,
   onCancelDownload,
@@ -297,6 +305,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
   const [paramError, setParamError] = useState<string | null>(null);
   const [contextHint, setContextHint] = useState<{ rating: CompatibilityRating; reason: string } | null>(null);
   const [contextHintLoading, setContextHintLoading] = useState(false);
+  const [activePickerGroupId, setActivePickerGroupId] = useState<string | null>(null);
 
   const selectedParamModel = useMemo(
     () => models.find((m) => m.id === selectedParamModelId) ?? null,
@@ -362,7 +371,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
     setParamDraft({ ...(selectedParamModel.params ?? {}) });
     setParamSaved(false);
     setParamError(null);
-  }, [selectedParamModel?.id]);
+  }, [selectedParamModel]);
 
   useEffect(() => {
     if (!isOpen || selectedParamModel?.backend !== "LlamaServer") {
@@ -425,6 +434,24 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
       setRagPrefsSaving(false);
     }
   };
+
+  const activePickerGroup = useMemo(
+    () => GROUPS.find((group) => group.id === activePickerGroupId) ?? null,
+    [activePickerGroupId]
+  );
+
+  const activePickerModels = useMemo(() => {
+    if (!activePickerGroup) return [];
+    const source = modelCatalog.length > 0 ? modelCatalog : models;
+    return source
+      .filter(activePickerGroup.match)
+      .map((model) => ({
+        name: model.name,
+        path: model.id,
+        is_downloaded: model.is_downloaded,
+        gdrive_id: model.gdrive_id ?? null,
+      }));
+  }, [activePickerGroup, modelCatalog, models]);
 
   const getControlValue = (control: ParamControl): string => {
     return paramDraft[control.key] ?? selectedParamModel?.params?.[control.key] ?? control.defaultValue;
@@ -585,13 +612,16 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 
               {GROUPS.map((group) => {
                 const groupModels = models.filter(group.match);
-                if (groupModels.length === 0) return null;
+                const shownModels = groupModels.filter((m) => m.is_downloaded || downloads[m.id] !== undefined);
+                const isCategoryGroup = !!group.category;
+                if (!isCategoryGroup && groupModels.length === 0) return null;
 
                 return (
                   <div key={group.id} className="settings-group">
                     <div className="settings-group-title-row">
                       <div className="settings-group-title">{group.label}</div>
-                      <div className="settings-group-help-anchor">
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <div className="settings-group-help-anchor">
                         <button
                           type="button"
                           className="settings-group-help-btn"
@@ -609,13 +639,25 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                             <p>{group.description}</p>
                           </div>
                         )}
+                        </div>
+                        {group.category && (
+                          <button
+                            className="settings-icon-btn"
+                            onClick={() => setActivePickerGroupId(group.id)}
+                            title={`Choose ${group.label}`}
+                          >
+                            <Download size={14} />
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="settings-list">
-                      {groupModels.map((model) => {
+                      {shownModels.length === 0 && (
+                        <div className="settings-empty">No installed models found in this category.</div>
+                      )}
+                      {shownModels.map((model) => {
                         const isDownloading = downloads[model.id] !== undefined;
                         const dlState = downloads[model.id];
-                        const canDownload = !!model.gdrive_id;
 
                         return (
                           <div key={model.id} className="settings-item">
@@ -623,7 +665,6 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                               <div className="settings-item-name">{model.name}</div>
                               <div className="settings-item-meta">
                                 {model.is_downloaded ? "Installed" : "Not installed"}
-                                {!canDownload && " · Not downloadable"}
                               </div>
                             </div>
                             {isDownloading ? (
@@ -644,14 +685,6 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                               </div>
                             ) : (
                               <div className="settings-actions">
-                                <button
-                                  className="settings-icon-btn"
-                                  disabled={!canDownload || model.is_downloaded}
-                                  onClick={() => onDownload(model.id)}
-                                  title={canDownload ? "Download Model" : "Missing download link"}
-                                >
-                                  <Download size={14} />
-                                </button>
                                 {model.is_downloaded && onUninstall && (
                                   <button
                                     className="settings-icon-btn danger"
@@ -846,6 +879,17 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
           </div>
         </div>
       </div>
+      <InstallModelModal
+        isOpen={activePickerGroup !== null}
+        onClose={() => setActivePickerGroupId(null)}
+        models={activePickerModels}
+        title={activePickerGroup ? `${activePickerGroup.label} Downloads` : "Model Downloads"}
+        onDownload={onDownload}
+        onCancelDownload={onCancelDownload}
+        onUninstall={onUninstall}
+        onConfirm={onConfirm}
+        downloads={downloads}
+      />
     </div>
   );
 };

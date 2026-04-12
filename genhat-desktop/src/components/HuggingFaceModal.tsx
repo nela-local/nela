@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { X, Search, Download, Loader2, CheckCircle, AlertTriangle, XCircle, Ban, HelpCircle, Cpu, HardDrive, MemoryStick, Zap, Info, Lightbulb } from "lucide-react";
 import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility, type DocumentedRequirements } from "../api";
 import type { ImportModelProfile } from "../types";
+import GlassDropdown from "./GlassDropdown";
 import "./HuggingFaceModal.css";
 
 interface HuggingFaceModalProps {
@@ -17,8 +18,8 @@ const CATEGORIES: { label: string; folder: string }[] = [
   { label: "LLM", folder: "LLM" },
   { label: "Vision", folder: "LiquidAI-VLM" },
   { label: "Embedding", folder: "bge-1.5-embed" },
-  { label: "TTS", folder: "kittenTTS" },
-  { label: "STT", folder: "parakeet" },
+  { label: "TTS", folder: "tts" },
+  { label: "STT", folder: "asr" },
 ];
 
 /** Detect quantization level from GGUF filename */
@@ -541,7 +542,7 @@ export default function HuggingFaceModal({
     checkExistingFiles();
     
     return () => { isMounted = false; };
-  }, [repoFiles, selectedFolder]);
+  }, [repoFiles, selectedFolder, selectedRepo]);
 
   const handleDownload = async (file: HFRepoFile) => {
     const url = `https://huggingface.co/${selectedRepo}/resolve/main/${file.path}`;
@@ -693,28 +694,27 @@ export default function HuggingFaceModal({
                 
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-txt-secondary">Category (Folder to save into):</label>
-                  <select 
+                  <GlassDropdown
                     value={selectedFolder}
-                    onChange={(e) => setSelectedFolder(e.target.value)}
-                    className="bg-void-900 border border-glass-border rounded-lg px-3 py-2 text-txt focus:outline-none focus:border-neon"
-                  >
-                    {CATEGORIES.map(c => (
-                      <option key={c.folder} value={c.folder}>{c.label} ({c.folder})</option>
-                    ))}
-                  </select>
+                    onChange={setSelectedFolder}
+                    options={CATEGORIES.map((category) => ({
+                      value: category.folder,
+                      label: `${category.label} (${category.folder})`,
+                    }))}
+                  />
                 </div>
 
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-txt-secondary">Download mode (LLM/VLM capability):</label>
-                  <select
+                  <GlassDropdown
                     value={importProfile}
-                    onChange={(e) => setImportProfile(e.target.value as "none" | ImportModelProfile)}
-                    className="bg-void-900 border border-glass-border rounded-lg px-3 py-2 text-txt focus:outline-none focus:border-neon"
-                  >
-                    <option value="llm">LLM</option>
-                    <option value="vlm">VLM</option>
-                    <option value="none">Download only (do not import)</option>
-                  </select>
+                    onChange={(value) => setImportProfile(value as "none" | ImportModelProfile)}
+                    options={[
+                      { value: "llm", label: "LLM" },
+                      { value: "vlm", label: "VLM" },
+                      { value: "none", label: "Download only (do not import)" },
+                    ]}
+                  />
                 </div>
 
                 {importProfile === "vlm" && (

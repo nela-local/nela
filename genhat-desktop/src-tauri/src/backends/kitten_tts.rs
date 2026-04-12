@@ -32,8 +32,14 @@ impl KittenTtsBackend {
 #[async_trait]
 impl super::ModelBackend for KittenTtsBackend {
     async fn start(&self, def: &ModelDef, models_dir: &Path) -> Result<ModelHandle, String> {
-        // model_file points to the model directory (e.g. "kittenTTS/mini")
-        let model_dir = models_dir.join(&def.model_file);
+        // model_file points to the model directory (e.g. "tts/kitten-tts/mini")
+        let mut model_dir = models_dir.join(&def.model_file);
+        if !model_dir.exists() && def.model_file == "tts/kitten-tts/mini" {
+            let legacy = models_dir.join("kittenTTS").join("mini");
+            if legacy.exists() {
+                model_dir = legacy;
+            }
+        }
 
         if !model_dir.exists() {
             return Err(format!(
