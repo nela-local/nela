@@ -1806,9 +1806,24 @@ function App() {
                 "- Depth max 3.",
               ].join("\n");
 
-          const raw = await Api.routeRequest("mindmap", prompt, selectedModel || undefined);
-          const modelText = extractTaskText(raw);
-          const graph = parseMindMapGraph(modelText, text, generatedFrom, sourceCount);
+          let graph: MindMapGraph | undefined;
+          let lastError: unknown;
+          
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const raw = await Api.routeRequest("mindmap", prompt, selectedModel || undefined);
+              const modelText = extractTaskText(raw);
+              graph = parseMindMapGraph(modelText, text, generatedFrom, sourceCount);
+              break; // Success! Exit loop.
+            } catch (e) {
+              console.warn(`Mindmap generation attempt ${attempt} failed:`, e);
+              lastError = e;
+            }
+          }
+          
+          if (!graph) {
+            throw lastError; // Propagate the error to trigger the fallback UI
+          }
 
           setMindmapsBySession((prev) => ({
             ...prev,
@@ -1852,7 +1867,7 @@ function App() {
               ...prev.messages,
               {
                 role: "assistant" as const,
-                content: `Mindmap generation failed: ${e}`,
+                content: "Mindmap generation failed. The model produced malformed data. Try selecting a larger model or rewording your input.",
               },
             ],
             loading: false,
