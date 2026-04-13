@@ -67,6 +67,30 @@ jobs:
             librsvg2-dev \
             libasound2-dev \
             pkg-config
+      
+      - name: Ensure model placeholders
+        run: |
+          mkdir -p \
+            models/bge-1.5-embed \
+            models/distilBert-query-router/onnx_model \
+            models/grader/ms-marco-MiniLM-L6-v2-onnx-int8 \
+            models/tts/kitten-tts/mini \
+            models/LLM \
+            models/LiquidAI-VLM \
+            models/parakeet
+          touch \
+            models/.placeholder \
+            models/bge-1.5-embed/.placeholder \
+            models/distilBert-query-router/.placeholder \
+            models/distilBert-query-router/onnx_model/.placeholder \
+            models/grader/.placeholder \
+            models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/.placeholder \
+            models/tts/.placeholder \
+            models/tts/kitten-tts/.placeholder \
+            models/tts/kitten-tts/mini/.placeholder \
+            models/LLM/.placeholder \
+            models/LiquidAI-VLM/.placeholder \
+            models/parakeet/.placeholder
 
       - name: Run cargo test
         working-directory: genhat-desktop/src-tauri

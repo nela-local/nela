@@ -55,11 +55,30 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # Ensure models placeholder exists for CI builds (tauri expects this file path)
-      - name: Ensure models placeholder
+      # Ensure model directories have placeholder files so Tauri glob resources resolve in CI
+      - name: Ensure model placeholders
         run: |
-          mkdir -p models
-          touch models/.placeholder
+          mkdir -p \
+            models/bge-1.5-embed \
+            models/distilBert-query-router/onnx_model \
+            models/grader/ms-marco-MiniLM-L6-v2-onnx-int8 \
+            models/tts/kitten-tts/mini \
+            models/LLM \
+            models/LiquidAI-VLM \
+            models/parakeet
+          touch \
+            models/.placeholder \
+            models/bge-1.5-embed/.placeholder \
+            models/distilBert-query-router/.placeholder \
+            models/distilBert-query-router/onnx_model/.placeholder \
+            models/grader/.placeholder \
+            models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/.placeholder \
+            models/tts/.placeholder \
+            models/tts/kitten-tts/.placeholder \
+            models/tts/kitten-tts/mini/.placeholder \
+            models/LLM/.placeholder \
+            models/LiquidAI-VLM/.placeholder \
+            models/parakeet/.placeholder
 
       # Linux System Dependencies
       - name: Install Linux Dependencies
