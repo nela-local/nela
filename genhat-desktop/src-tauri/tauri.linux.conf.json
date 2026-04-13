@@ -12,9 +12,8 @@
       "models/distilBert-query-router/onnx_model/*": "models/distilBert-query-router/onnx_model/",
       "models/grader/*": "models/grader/",
       "models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/*": "models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/",
-      "models/tts/*": "models/tts/",
-      "models/tts/kitten-tts/*": "models/tts/kitten-tts/",
-      "models/tts/kitten-tts/mini/*": "models/tts/kitten-tts/mini/",
+      "models/kittenTTS/*": "models/tts/kitten-tts/",
+      "models/kittenTTS/mini/*": "models/tts/kitten-tts/mini/",
       "models/LLM/*": "models/LLM/",
       "models/LiquidAI-VLM/*": "models/LiquidAI-VLM/",
       "models/parakeet/*": "models/parakeet/"
