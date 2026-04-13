@@ -56,7 +56,13 @@ const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
 const STARTUP_MODEL_SELECTOR = {
   tasks: new Set(["embed", "grade", "classify"]),
-  ids: new Set(["kitten-tts", "parakeet-tdt", "qwen3.5-0_8b", "qwen3.5-0_8b-mmproj"]),
+  ids: new Set([
+    "kitten-tts",
+    "parakeet-tdt",
+    "qwen3.5-0_8b",
+    "mmproj-LFM2.5-VL-450m-F16",
+    "LFM2.5-VL-450M-F32",
+  ]),
 };
 
 const formatModelSizeLabel = (memoryMb: number | null | undefined): string => {
