@@ -7,6 +7,15 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
+// ── Session-level TTS audio cache ──────────────────────────────────────
+// Keyed by "text|voice|speed" → base64 data-URL.  Survives across
+// component re-mounts but is cleared when the page is refreshed.
+const ttsCache = new Map<string, string>();
+
+function ttsCacheKey(text: string, voice?: string, speed?: number): string {
+  return `${text}|${voice ?? ""}|${speed ?? 1}`;
+}
+
 export interface StreamingTtsState {
   isPlaying: boolean;
   isSpeaking: boolean;
@@ -153,12 +162,22 @@ export function useStreamingTts(
 
     while (generateIndex < sentences.length && !isStoppedRef.current) {
       const sentence = sentences[generateIndex];
-      
+      const cacheKey = ttsCacheKey(sentence, voiceRef.current, speedRef.current);
+
       try {
-        const audioUrl = await generateSpeechChunk(sentence, {
-          voice: voiceRef.current,
-          speed: speedRef.current,
-        });
+        // Check session cache first
+        let audioUrl = ttsCache.get(cacheKey);
+
+        if (!audioUrl) {
+          audioUrl = await generateSpeechChunk(sentence, {
+            voice: voiceRef.current,
+            speed: speedRef.current,
+          });
+          // Store in session cache for future replays
+          if (audioUrl) {
+            ttsCache.set(cacheKey, audioUrl);
+          }
+        }
 
         if (!isStoppedRef.current && audioUrl) {
           audioQueueRef.current.push(audioUrl);
