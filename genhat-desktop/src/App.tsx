@@ -15,6 +15,9 @@ import {
   SlidersHorizontal,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  Minus,
 } from "lucide-react";
 import { Api } from "./api";
 import type {
@@ -3232,7 +3235,17 @@ function App() {
         )}
       </main>
 
-      {startupModelToast.open && (
+      {startupModelToast.open && startupToastMinimized && (
+        <button
+          onClick={() => setStartupToastMinimized(false)}
+          className="fixed bottom-10 right-0 z-[90] w-12 h-12 rounded-l-full bg-void-800 border-y border-l border-neon/60 shadow-[0_4px_16px_rgba(0,212,255,0.25)] flex items-center justify-center text-neon hover:bg-void-700 transition-all group"
+          title="Expand Download Status"
+        >
+          <ChevronLeft className="w-6 h-6 shrink-0 ml-1 group-hover:-translate-x-0.5 transition-transform" />
+        </button>
+      )}
+
+      {startupModelToast.open && !startupToastMinimized && (
         <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-neon/60 bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
           <div className="px-4 py-3 text-sm text-txt">
             <div className="mb-1 flex items-center justify-between gap-2">
@@ -3243,6 +3256,14 @@ function App() {
                     ? "Downloading models"
                     : "Model setup"}
               </div>
+              <button
+                type="button"
+                className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
+                onClick={() => setStartupToastMinimized(true)}
+                title="Minimize"
+              >
+                <Minus size={14} />
+              </button>
             </div>
             {startupModelToast.phase === "downloading" && (
               <div className="mb-1 text-[11px] text-neon">
@@ -3251,9 +3272,7 @@ function App() {
             )}
             <div className="flex items-center justify-between gap-2">
               <div className="text-txt-muted leading-relaxed">
-                {startupModelToast.phase === "downloading" && startupToastMinimized
-                  ? `Progress: ${startupModelToast.completed}/${startupModelToast.total} · ${formatDownloadSpeedLabel(startupOverallSpeedBps)}`
-                  : startupModelToast.message}
+                {startupModelToast.message}
               </div>
               {startupModelToast.phase === "downloading" && (
                 <div className="flex items-center gap-1">
@@ -3264,15 +3283,6 @@ function App() {
                     title="Cancel startup downloads"
                   >
                     Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
-                    onClick={() => setStartupToastMinimized((prev) => !prev)}
-                    aria-label={startupToastMinimized ? "Expand download notification" : "Minimize download notification"}
-                    title={startupToastMinimized ? "Expand" : "Minimize"}
-                  >
-                    {startupToastMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
                 </div>
               )}
@@ -3309,7 +3319,7 @@ function App() {
               </div>
             )}
 
-            {startupModelToast.phase === "downloading" && !startupToastMinimized && (
+            {startupModelToast.phase === "downloading" && (
               <div className="mt-2 space-y-2">
                 <div className="flex items-center gap-2 text-neon text-xs">
                   <Loader2 size={13} className="animate-spin" />
