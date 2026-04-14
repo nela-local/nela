@@ -126,16 +126,58 @@ pub struct ModelDef {
 }
 
 impl ModelDef {
+    fn path_has_payload(path: &Path) -> bool {
+        if path.is_file() {
+            return true;
+        }
+        if !path.is_dir() {
+            return false;
+        }
+
+        // Treat placeholder-only directories (e.g. just .gitkeep) as missing.
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') {
+                    continue;
+                }
+
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(_) => continue,
+                };
+
+                if file_type.is_file() {
+                    return true;
+                }
+                if file_type.is_dir() {
+                    stack.push(entry.path());
+                }
+            }
+        }
+
+        false
+    }
+
     fn primary_exists_with_legacy_fallback(&self, models_dir: &Path) -> bool {
         let primary = models_dir.join(&self.model_file);
-        if primary.exists() {
+        if Self::path_has_payload(&primary) {
             return true;
         }
 
         // Backward compatibility for migrated folder layouts.
         match self.model_file.as_str() {
-            "asr/parakeet" => models_dir.join("parakeet").exists(),
-            "tts/kitten-tts/mini" => models_dir.join("kittenTTS").join("mini").exists(),
+            "asr/parakeet" => Self::path_has_payload(&models_dir.join("parakeet")),
+            "tts/kitten-tts/mini" => {
+                Self::path_has_payload(&models_dir.join("kittenTTS").join("mini"))
+            }
             _ => false,
         }
     }

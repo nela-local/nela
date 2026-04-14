@@ -9,7 +9,7 @@
 //!   - **Linux deb**: exe → `/usr/bin/<name>`, resources → `/usr/lib/<ProductName>/`
 //!   - **Linux AppImage**: exe → `<mount>/usr/bin/<name>`, resources → `<mount>/usr/lib/<ProductName>/`
 //!   - **macOS**: exe → `<App>.app/Contents/MacOS/<name>`, resources → `<App>.app/Contents/Resources/`
-//!   - **Windows**: exe → `<install>/GenHat.exe`, resources → `<install>/`
+//!   - **Windows**: exe → `<install>/<ProductName>.exe`, resources → `<install>/`
 //!
 //! The ancestor-walk strategy works for dev and macOS/Windows, but on Linux the
 //! resource dir is a *sibling* (`../lib/<ProductName>/`) rather than a child of
@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 
 /// The Tauri product name (must match `productName` in tauri.conf.json).
-const PRODUCT_NAME: &str = "GenHat";
+const PRODUCT_NAME: &str = "NELA";
 
 /// Collect all candidate directories that might contain bundled files.
 ///
@@ -130,7 +130,7 @@ pub fn resolve_bundled_library(os_folder: &str, lib_name: &str) -> Result<PathBu
 ///   1. `GENHAT_MODEL_PATH` environment variable
 ///   2. (debug only) Dev workspace `../../models` relative to CARGO_MANIFEST_DIR
 ///   3. `models/` next to the running executable
-///   4. Tauri resource dir + `models/` (Linux: `/usr/lib/GenHat/models/`)
+///   4. Tauri resource dir + `models/` (Linux: `/usr/lib/NELA/models/`)
 ///   5. Fallback: return the Tauri resource path even if empty
 pub fn resolve_models_dir() -> PathBuf {
     // 1. Explicit override
@@ -176,7 +176,7 @@ pub fn resolve_models_dir() -> PathBuf {
                 return candidate;
             }
 
-            // 4. Tauri resource dir (Linux: ../lib/GenHat/models/)
+            // 4. Tauri resource dir (Linux: ../lib/NELA/models/)
             if cfg!(target_os = "linux") {
                 let candidate = exe_dir
                     .join("..")

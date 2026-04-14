@@ -55,7 +55,7 @@ import "./App.css";
 const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
 const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
 const STARTUP_MODEL_SELECTOR = {
-  tasks: new Set(["embed", "grade", "classify"]),
+  tasks: new Set(["embed", "grade", "classify", "tts", "transcribe", "stt"]),
   ids: new Set([
     "kitten-tts",
     "parakeet-tdt",

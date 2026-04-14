@@ -16,9 +16,38 @@ use app_lib::rag::pipeline::RagPipeline;
 use app_lib::registry::ModelRegistry;
 use app_lib::router::TaskRouter;
 use app_lib::workspace::WorkspaceManager;
+#[cfg(all(target_os = "linux", not(debug_assertions)))]
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tauri::Manager;
+
+#[cfg(all(target_os = "linux", not(debug_assertions)))]
+fn copy_missing_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_missing_tree(&src_path, &dst_path)?;
+        } else if file_type.is_file() && !dst_path.exists() {
+            if let Some(parent) = dst_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(src_path, dst_path)?;
+        }
+    }
+
+    Ok(())
+}
 
 fn main() {
     tauri::Builder::default()
@@ -36,6 +65,49 @@ fn main() {
 
             // 2. Resolve models directory
             let models_dir = app_lib::commands::models::get_models_dir();
+
+            #[cfg(all(target_os = "linux", not(debug_assertions)))]
+            let models_dir = {
+                let mut selected = models_dir;
+
+                // Linux bundles install resources in /usr/lib/<ProductName>/..., which is
+                // typically read-only for non-root users. Route models to app data unless
+                // the user explicitly overrides GENHAT_MODEL_PATH.
+                if std::env::var_os("GENHAT_MODEL_PATH").is_none() {
+                    let bundled_models_dir = selected.clone();
+                    let user_models_dir = app
+                        .path()
+                        .app_data_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from(".genhat_data"))
+                        .join("models");
+
+                    if let Err(e) = std::fs::create_dir_all(&user_models_dir) {
+                        log::warn!(
+                            "Failed to create writable models directory {}: {}",
+                            user_models_dir.display(),
+                            e
+                        );
+                    } else {
+                        if bundled_models_dir.is_dir() && bundled_models_dir != user_models_dir {
+                            if let Err(e) = copy_missing_tree(&bundled_models_dir, &user_models_dir)
+                            {
+                                log::warn!(
+                                    "Failed to seed bundled models from {} to {}: {}",
+                                    bundled_models_dir.display(),
+                                    user_models_dir.display(),
+                                    e
+                                );
+                            }
+                        }
+
+                        std::env::set_var("GENHAT_MODEL_PATH", &user_models_dir);
+                        selected = user_models_dir;
+                    }
+                }
+
+                selected
+            };
+
             log::info!("Models directory: {}", models_dir.display());
 
             // Ensure the models directory exists at runtime. We create the directory
