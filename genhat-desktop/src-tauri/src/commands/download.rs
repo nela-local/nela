@@ -146,6 +146,8 @@ pub struct DownloadProgress {
     pub model_id: String,
     pub progress: f64,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_bps: Option<f64>,
 }
 
 const MAX_DOWNLOAD_RETRIES: usize = 4;
@@ -164,12 +166,23 @@ fn emit_download_progress(
     progress: f64,
     status: impl Into<String>,
 ) {
+    emit_download_progress_with_speed(app_handle, model_id, progress, status, None);
+}
+
+fn emit_download_progress_with_speed(
+    app_handle: &tauri::AppHandle,
+    model_id: &str,
+    progress: f64,
+    status: impl Into<String>,
+    speed_bps: Option<f64>,
+) {
     let _ = app_handle.emit(
         "model-download-progress",
         DownloadProgress {
             model_id: model_id.to_string(),
             progress,
             status: status.into(),
+            speed_bps,
         },
     );
 }
@@ -215,6 +228,8 @@ async fn stream_response_to_file(
     let mut downloaded: u64 = 0;
     let mut stream = response.bytes_stream();
     let mut last_emit = std::time::Instant::now();
+    let mut speed_window_started = std::time::Instant::now();
+    let mut speed_window_bytes: u64 = 0;
 
     loop {
         if cancel_flag.load(Ordering::SeqCst) {
@@ -241,7 +256,9 @@ async fn stream_response_to_file(
 
         file.write_all(&chunk)
             .map_err(|e| DownloadStreamError::Fatal(format!("Failed writing downloaded bytes: {e}")))?;
-        downloaded += chunk.len() as u64;
+        let chunk_size = chunk.len() as u64;
+        downloaded += chunk_size;
+        speed_window_bytes += chunk_size;
 
         if last_emit.elapsed().as_millis() > 500 {
             let (pct, status) = if total_size > 0 {
@@ -256,8 +273,18 @@ async fn stream_response_to_file(
                 )
             };
 
-            emit_download_progress(app_handle, model_id, pct, status);
+            let elapsed_s = speed_window_started.elapsed().as_secs_f64().max(0.001);
+            let speed_bps = speed_window_bytes as f64 / elapsed_s;
+            emit_download_progress_with_speed(
+                app_handle,
+                model_id,
+                pct,
+                status,
+                Some(speed_bps.max(0.0)),
+            );
             last_emit = std::time::Instant::now();
+            speed_window_started = std::time::Instant::now();
+            speed_window_bytes = 0;
         }
     }
 
@@ -445,6 +472,7 @@ async fn download_model_internal(
 
     for attempt in 1..=MAX_DOWNLOAD_RETRIES {
         if cancel_flag.load(Ordering::SeqCst) {
+            let _ = std::fs::remove_file(&download_target);
             let mut map = download_state.cancellations.lock().await;
             map.remove(model_id);
             return Err("Download cancelled".to_string());
@@ -468,6 +496,7 @@ async fn download_model_internal(
                     if let Err(DownloadStreamError::Cancelled) =
                         sleep_with_cancel(&cancel_flag, retry_in).await
                     {
+                        let _ = std::fs::remove_file(&download_target);
                         let mut map = download_state.cancellations.lock().await;
                         map.remove(model_id);
                         return Err("Download cancelled".to_string());
@@ -498,6 +527,7 @@ async fn download_model_internal(
                 if let Err(DownloadStreamError::Cancelled) =
                     sleep_with_cancel(&cancel_flag, retry_in).await
                 {
+                    let _ = std::fs::remove_file(&download_target);
                     let mut map = download_state.cancellations.lock().await;
                     map.remove(model_id);
                     return Err("Download cancelled".to_string());
@@ -531,6 +561,7 @@ async fn download_model_internal(
                 if let Err(DownloadStreamError::Cancelled) =
                     sleep_with_cancel(&cancel_flag, retry_in).await
                 {
+                    let _ = std::fs::remove_file(&download_target);
                     let mut map = download_state.cancellations.lock().await;
                     map.remove(model_id);
                     return Err("Download cancelled".to_string());
@@ -548,6 +579,7 @@ async fn download_model_internal(
                 break;
             }
             Err(DownloadStreamError::Cancelled) => {
+                let _ = std::fs::remove_file(&download_target);
                 let mut map = download_state.cancellations.lock().await;
                 map.remove(model_id);
                 return Err("Download cancelled".to_string());
@@ -569,6 +601,7 @@ async fn download_model_internal(
                     if let Err(DownloadStreamError::Cancelled) =
                         sleep_with_cancel(&cancel_flag, retry_in).await
                     {
+                        let _ = std::fs::remove_file(&download_target);
                         let mut map = download_state.cancellations.lock().await;
                         map.remove(model_id);
                         return Err("Download cancelled".to_string());
@@ -588,14 +621,7 @@ async fn download_model_internal(
     }
 
     if is_zip {
-        let _ = app_handle.emit(
-            "model-download-progress",
-            DownloadProgress {
-                model_id: model_id.to_string(),
-                progress: 100.0,
-                status: "Extracting archive...".to_string(),
-            },
-        );
+        emit_download_progress(&app_handle, model_id, 100.0, "Extracting archive...");
 
         let zip_open = std::fs::File::open(&download_target).map_err(|e| e.to_string())?;
         match zip::ZipArchive::new(zip_open) {
@@ -815,6 +841,7 @@ pub async fn download_custom_file(
 
     for attempt in 1..=MAX_DOWNLOAD_RETRIES {
         if cancel_flag.load(Ordering::SeqCst) {
+            let _ = std::fs::remove_file(&model_path);
             let mut map = download_state.cancellations.lock().await;
             map.remove(&model_id);
             return Err("Download cancelled".to_string());
@@ -844,6 +871,7 @@ pub async fn download_custom_file(
                     if let Err(DownloadStreamError::Cancelled) =
                         sleep_with_cancel(&cancel_flag, retry_in).await
                     {
+                        let _ = std::fs::remove_file(&model_path);
                         let mut map = download_state.cancellations.lock().await;
                         map.remove(&model_id);
                         return Err("Download cancelled".to_string());
@@ -874,6 +902,7 @@ pub async fn download_custom_file(
                 if let Err(DownloadStreamError::Cancelled) =
                     sleep_with_cancel(&cancel_flag, retry_in).await
                 {
+                    let _ = std::fs::remove_file(&model_path);
                     let mut map = download_state.cancellations.lock().await;
                     map.remove(&model_id);
                     return Err("Download cancelled".to_string());
@@ -907,6 +936,7 @@ pub async fn download_custom_file(
                     if let Err(DownloadStreamError::Cancelled) =
                         sleep_with_cancel(&cancel_flag, retry_in).await
                     {
+                        let _ = std::fs::remove_file(&model_path);
                         let mut map = download_state.cancellations.lock().await;
                         map.remove(&model_id);
                         return Err("Download cancelled".to_string());
@@ -923,6 +953,7 @@ pub async fn download_custom_file(
                 break;
             }
             Err(DownloadStreamError::Cancelled) => {
+                let _ = std::fs::remove_file(&model_path);
                 let mut map = download_state.cancellations.lock().await;
                 map.remove(&model_id);
                 return Err("Download cancelled".to_string());
@@ -944,6 +975,7 @@ pub async fn download_custom_file(
                     if let Err(DownloadStreamError::Cancelled) =
                         sleep_with_cancel(&cancel_flag, retry_in).await
                     {
+                        let _ = std::fs::remove_file(&model_path);
                         let mut map = download_state.cancellations.lock().await;
                         map.remove(&model_id);
                         return Err("Download cancelled".to_string());

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { X, Search, Download, Loader2, CheckCircle, AlertTriangle, XCircle, Ban, HelpCircle, Cpu, HardDrive, MemoryStick, Zap, Info, Lightbulb } from "lucide-react";
 import { Api, type HFModel, type HFRepoFile, type DeviceSpecs, type ModelCompatibility, type DocumentedRequirements } from "../api";
@@ -26,6 +26,25 @@ const CATEGORIES: { label: string; folder: string }[] = [
 function detectQuantization(filename: string): string | null {
   const match = filename.match(/-(q\d+_[km]_[ms]|q\d+_\d+|q\d+_k|f16|f32)\.gguf$/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+function formatDownloadSpeedLabel(bytesPerSecond?: number): string {
+  if (typeof bytesPerSecond !== "number" || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return "0 KB/s";
+  }
+
+  if (bytesPerSecond >= 1024 * 1024) {
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s`;
+  }
+
+  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+}
+
+function getCustomDownloadId(folder: string, repoId: string | null, filePath: string, filename: string): string {
+  const useContainer = folder === "LLM" || folder === "LiquidAI-VLM";
+  return repoId && useContainer
+    ? `${folder}/${repoId}/${filePath}`
+    : `${folder}/${filename}`;
 }
 
 /** Rating icon component */
@@ -346,10 +365,35 @@ export default function HuggingFaceModal({
   const [mmprojFile, setMmprojFile] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   
-  const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string }>>({});
+  const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string; speedBps?: number }>>({});
+  const [cancellingDownloads, setCancellingDownloads] = useState<string[]>([]);
   const [completedDownloads, setCompletedDownloads] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  const activeRepoDownloadIds = useMemo(() => {
+    if (repoFiles.length === 0) return [];
+    return repoFiles
+      .map((file) => {
+        const filename = file.file_name || file.path.split('/').pop() || file.path;
+        const key = getCustomDownloadId(selectedFolder, selectedRepo, file.path, filename);
+        return downloads[key] || downloads[filename] ? key : null;
+      })
+      .filter((id): id is string => !!id);
+  }, [repoFiles, selectedFolder, selectedRepo, downloads]);
+
+  const huggingFaceOverallSpeedBps = useMemo(() => {
+    if (repoFiles.length === 0) return 0;
+    return repoFiles.reduce((sum, file) => {
+      const filename = file.file_name || file.path.split('/').pop() || file.path;
+      const key = getCustomDownloadId(selectedFolder, selectedRepo, file.path, filename);
+      const speed = downloads[key]?.speedBps ?? downloads[filename]?.speedBps;
+      if (typeof speed !== "number" || !Number.isFinite(speed) || speed <= 0) {
+        return sum;
+      }
+      return sum + speed;
+    }, 0);
+  }, [repoFiles, selectedFolder, selectedRepo, downloads]);
 
   // Device specs and compatibility
   const [deviceSpecs, setDeviceSpecs] = useState<DeviceSpecs | null>(null);
@@ -430,12 +474,16 @@ export default function HuggingFaceModal({
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     if (isOpen) {
-      listen<{ model_id: string; progress: number; status: string }>(
+      listen<{ model_id: string; progress: number; status: string; speed_bps?: number }>(
         "model-download-progress",
         (e) => {
           setDownloads((prev) => ({
             ...prev,
-            [e.payload.model_id]: { progress: e.payload.progress, status: e.payload.status },
+            [e.payload.model_id]: {
+              progress: e.payload.progress,
+              status: e.payload.status,
+              speedBps: typeof e.payload.speed_bps === "number" ? e.payload.speed_bps : undefined,
+            },
           }));
           if (e.payload.progress >= 100 && e.payload.status === "Complete") {
             setCompletedDownloads(prev => [...prev, e.payload.model_id]);
@@ -514,9 +562,7 @@ export default function HuggingFaceModal({
         repoFiles.map(async (file) => {
           const filename = file.file_name || file.path.split('/').pop() || file.path;
           const useContainer = selectedFolder === "LLM" || selectedFolder === "LiquidAI-VLM";
-          const key = selectedRepo && useContainer
-            ? `${selectedFolder}/${selectedRepo}/${file.path}`
-            : `${selectedFolder}/${filename}`;
+          const key = getCustomDownloadId(selectedFolder, selectedRepo, file.path, filename);
           try {
             const exists = await Api.checkCustomFileExists(selectedFolder, filename, {
               repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
@@ -544,12 +590,40 @@ export default function HuggingFaceModal({
     return () => { isMounted = false; };
   }, [repoFiles, selectedFolder, selectedRepo]);
 
+  const handleCancelHfDownload = async (downloadId: string) => {
+    setCancellingDownloads((prev) => (prev.includes(downloadId) ? prev : [...prev, downloadId]));
+    try {
+      await Api.cancelDownload(downloadId);
+      setDownloads((prev) => {
+        const next = { ...prev };
+        delete next[downloadId];
+        return next;
+      });
+    } catch (err) {
+      console.error(err);
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancellingDownloads((prev) => prev.filter((id) => id !== downloadId));
+    }
+  };
+
+  const handleCancelAllHfDownloads = async () => {
+    if (activeRepoDownloadIds.length === 0) return;
+    await Promise.allSettled(activeRepoDownloadIds.map((downloadId) => handleCancelHfDownload(downloadId)));
+  };
+
   const handleDownload = async (file: HFRepoFile) => {
     const url = `https://huggingface.co/${selectedRepo}/resolve/main/${file.path}`;
     setActionError(null);
     try {
       const filename = file.file_name || file.path.split('/').pop() || file.path;
       const useContainer = selectedFolder === "LLM" || selectedFolder === "LiquidAI-VLM";
+      const modelId = getCustomDownloadId(selectedFolder, selectedRepo, file.path, filename);
+
+      setDownloads((prev) => ({
+        ...prev,
+        [modelId]: prev[modelId] ?? { progress: 0, status: "Starting...", speedBps: undefined },
+      }));
 
       await Api.downloadCustomFile(url, selectedFolder, filename, {
         repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
@@ -587,6 +661,11 @@ export default function HuggingFaceModal({
 
           const companionUrl = `https://huggingface.co/${selectedRepo}/resolve/main/${companionInRepo.path}`;
           const companionFilename = companionInRepo.file_name || companionInRepo.path.split('/').pop() || companionInRepo.path;
+          const companionDownloadId = getCustomDownloadId(selectedFolder, selectedRepo, companionInRepo.path, companionFilename);
+          setDownloads((prev) => ({
+            ...prev,
+            [companionDownloadId]: prev[companionDownloadId] ?? { progress: 0, status: "Starting...", speedBps: undefined },
+          }));
           await Api.downloadCustomFile(companionUrl, selectedFolder, companionFilename, {
             repoId: useContainer ? (selectedRepo ?? undefined) : undefined,
             relativePath: useContainer ? companionInRepo.path : undefined,
@@ -738,6 +817,18 @@ export default function HuggingFaceModal({
                 <div className="mt-2">
                   <div className="text-txt-secondary flex items-center justify-between mb-2">
                     <h4 className="text-sm font-medium">Available .gguf Files</h4>
+                    {activeRepoDownloadIds.length > 0 && (
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="text-neon">{formatDownloadSpeedLabel(huggingFaceOverallSpeedBps)}</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleCancelAllHfDownloads()}
+                          className="px-2 py-0.5 rounded border border-glass-border text-txt-muted hover:text-txt hover:border-neon"
+                        >
+                          Cancel all
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {isFetchingFiles ? (
                     <div className="flex justify-center py-4 text-txt-secondary"><Loader2 className="animate-spin" size={20}/></div>
@@ -745,12 +836,10 @@ export default function HuggingFaceModal({
                     <div className="flex flex-col gap-2">
                       {repoFiles.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((file) => {
                         const filename = file.file_name || file.path.split('/').pop() || file.path;
-                        const useContainer = selectedFolder === "LLM" || selectedFolder === "LiquidAI-VLM";
-                        const dlKey = selectedRepo && useContainer
-                          ? `${selectedFolder}/${selectedRepo}/${file.path}`
-                          : `${selectedFolder}/${filename}`;
+                        const dlKey = getCustomDownloadId(selectedFolder, selectedRepo, file.path, filename);
                         const dlState = downloads[dlKey] || downloads[filename];
                         const isDownloading = dlState !== undefined;
+                        const isCancelling = cancellingDownloads.includes(dlKey) || cancellingDownloads.includes(filename);
                         const isCompleted = completedDownloads.includes(dlKey) || completedDownloads.includes(filename);
                         const compat = fileCompatibility[file.oid];
                         
@@ -779,14 +868,27 @@ export default function HuggingFaceModal({
                             {isDownloading ? (
                               <div className="flex flex-col gap-1 mt-1">
                                 <div className="flex justify-between text-xs text-txt-secondary">
-                                  <span>{dlState.status}</span>
-                                  <span>{Math.round(dlState.progress)}%</span>
+                                  <span>{isCancelling ? "Cancelling..." : dlState.status}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span>{formatDownloadSpeedLabel(dlState.speedBps)}</span>
+                                    <span>{Math.round(dlState.progress)}%</span>
+                                  </div>
                                 </div>
                                 <div className="h-1.5 w-full bg-void-900 rounded-full overflow-hidden">
                                   <div 
                                     className="h-full bg-neon transition-all duration-300"
                                     style={{ width: `${dlState.progress}%` }}
                                   />
+                                </div>
+                                <div className="flex justify-end mt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleCancelHfDownload(dlKey)}
+                                    disabled={isCancelling}
+                                    className="px-2 py-0.5 rounded border border-glass-border text-[11px] text-txt-muted hover:text-txt hover:border-neon disabled:opacity-60"
+                                  >
+                                    {isCancelling ? "Cancelling" : "Cancel"}
+                                  </button>
                                 </div>
                               </div>
                             ) : isCompleted ? (

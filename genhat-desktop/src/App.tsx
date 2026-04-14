@@ -79,6 +79,17 @@ const formatTotalSizeLabel = (totalMb: number): string => {
   return `${Math.round(totalMb)} MB`;
 };
 
+const formatDownloadSpeedLabel = (bytesPerSecond: number): string => {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return "0 KB/s";
+  }
+
+  if (bytesPerSecond >= 1024 * 1024) {
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s`;
+  }
+  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+};
+
 const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
 
 const modelRefBasename = (raw: string): string => {
@@ -1450,17 +1461,24 @@ function App() {
 
 
   // ── Download state ─────────────────────────────────────────────────────────
-  const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string }>>({});
+  const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string; speedBps?: number }>>({});
+  const startupCancelRequestedRef = useRef(false);
+  const [startupCancellingIds, setStartupCancellingIds] = useState<string[]>([]);
+  const [startupCancelledIds, setStartupCancelledIds] = useState<string[]>([]);
   const refreshModelsOnDownloadRef = useRef<() => Promise<RegisteredModel[]>>(async () => []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listen<{ model_id: string; progress: number; status: string }>(
+    listen<{ model_id: string; progress: number; status: string; speed_bps?: number }>(
       "model-download-progress",
       (e) => {
         setDownloads((prev) => ({
           ...prev,
-          [e.payload.model_id]: { progress: e.payload.progress, status: e.payload.status },
+          [e.payload.model_id]: {
+            progress: e.payload.progress,
+            status: e.payload.status,
+            speedBps: typeof e.payload.speed_bps === "number" ? e.payload.speed_bps : undefined,
+          },
         }));
         if (e.payload.progress >= 100 && e.payload.status === "Complete") {
           setTimeout(() => {
@@ -1563,6 +1581,9 @@ function App() {
       failed: 0,
     }));
     setStartupToastMinimized(false);
+    startupCancelRequestedRef.current = false;
+    setStartupCancellingIds([]);
+    setStartupCancelledIds([]);
 
     let completed = 0;
     let failed = 0;
@@ -1576,13 +1597,26 @@ function App() {
             doneIds: prev.doneIds.includes(modelId) ? prev.doneIds : [...prev.doneIds, modelId],
           }));
         } catch (e) {
-          failed += 1;
-          console.error("Failed startup model download", e);
-          setStartupModelToast((prev) => ({
-            ...prev,
-            failedIds: prev.failedIds.includes(modelId) ? prev.failedIds : [...prev.failedIds, modelId],
-          }));
+          const message = e instanceof Error ? e.message : String(e);
+          const cancelled = /cancel/i.test(message);
+
+          if (cancelled) {
+            startupCancelRequestedRef.current = true;
+            setStartupCancelledIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]));
+            setStartupModelToast((prev) => ({
+              ...prev,
+              failedIds: prev.failedIds.includes(modelId) ? prev.failedIds : [...prev.failedIds, modelId],
+            }));
+          } else {
+            failed += 1;
+            console.error("Failed startup model download", e);
+            setStartupModelToast((prev) => ({
+              ...prev,
+              failedIds: prev.failedIds.includes(modelId) ? prev.failedIds : [...prev.failedIds, modelId],
+            }));
+          }
         } finally {
+          setStartupCancellingIds((prev) => prev.filter((id) => id !== modelId));
           setStartupModelToast((prev) => ({
             ...prev,
             completed,
@@ -1592,7 +1626,14 @@ function App() {
       })
     );
 
-    if (failed > 0) {
+    if (startupCancelRequestedRef.current) {
+      setStartupModelToast((prev) => ({
+        ...prev,
+        open: true,
+        phase: "done",
+        message: `Download cancelled. ${completed}/${ids.length} completed before cancellation.`,
+      }));
+    } else if (failed > 0) {
       setStartupModelToast((prev) => ({
         ...prev,
         open: true,
@@ -1607,6 +1648,59 @@ function App() {
         message: `All ${ids.length} model download(s) completed.`,
       }));
     }
+  };
+
+  const startupOverallSpeedBps = useMemo(() => {
+    if (startupModelToast.phase !== "downloading") return 0;
+    return startupModelToast.selectedIds.reduce((sum, modelId) => {
+      const speed = downloads[modelId]?.speedBps;
+      if (typeof speed !== "number" || !Number.isFinite(speed) || speed <= 0) {
+        return sum;
+      }
+      return sum + speed;
+    }, 0);
+  }, [startupModelToast.phase, startupModelToast.selectedIds, downloads]);
+
+  const handleStartupToastCancelSingleDownload = async (modelId: string) => {
+    if (startupModelToast.phase !== "downloading") return;
+    if (startupModelToast.doneIds.includes(modelId) || startupModelToast.failedIds.includes(modelId)) return;
+
+    startupCancelRequestedRef.current = true;
+    setStartupCancellingIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]));
+
+    try {
+      await Api.cancelDownload(modelId);
+      setDownloads((prev) => {
+        const next = { ...prev };
+        delete next[modelId];
+        return next;
+      });
+    } catch (e) {
+      setStartupCancellingIds((prev) => prev.filter((id) => id !== modelId));
+      console.error("Failed to cancel startup model download", e);
+      showError(`Failed to cancel download: ${String(e)}`);
+    }
+  };
+
+  const handleStartupToastCancelDownloads = async () => {
+    if (startupModelToast.phase !== "downloading") return;
+
+    const activeIds = startupModelToast.selectedIds.filter(
+      (modelId) =>
+        !startupModelToast.doneIds.includes(modelId) &&
+        !startupModelToast.failedIds.includes(modelId)
+    );
+
+    if (activeIds.length === 0) return;
+
+    startupCancelRequestedRef.current = true;
+    setStartupCancellingIds((prev) => Array.from(new Set([...prev, ...activeIds])));
+    setStartupModelToast((prev) => ({
+      ...prev,
+      message: "Cancelling downloads...",
+    }));
+
+    await Promise.allSettled(activeIds.map((modelId) => handleStartupToastCancelSingleDownload(modelId)));
   };
 
   const toggleStartupModelSelection = (modelId: string) => {
@@ -3150,22 +3244,37 @@ function App() {
                     : "Model setup"}
               </div>
             </div>
+            {startupModelToast.phase === "downloading" && (
+              <div className="mb-1 text-[11px] text-neon">
+                Overall speed: {formatDownloadSpeedLabel(startupOverallSpeedBps)}
+              </div>
+            )}
             <div className="flex items-center justify-between gap-2">
               <div className="text-txt-muted leading-relaxed">
                 {startupModelToast.phase === "downloading" && startupToastMinimized
-                  ? `Progress: ${startupModelToast.completed}/${startupModelToast.total}`
+                  ? `Progress: ${startupModelToast.completed}/${startupModelToast.total} · ${formatDownloadSpeedLabel(startupOverallSpeedBps)}`
                   : startupModelToast.message}
               </div>
               {startupModelToast.phase === "downloading" && (
-                <button
-                  type="button"
-                  className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
-                  onClick={() => setStartupToastMinimized((prev) => !prev)}
-                  aria-label={startupToastMinimized ? "Expand download notification" : "Minimize download notification"}
-                  title={startupToastMinimized ? "Expand" : "Minimize"}
-                >
-                  {startupToastMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded border border-glass-border text-[11px] text-txt-muted hover:text-txt hover:border-neon"
+                    onClick={() => void handleStartupToastCancelDownloads()}
+                    title="Cancel startup downloads"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
+                    onClick={() => setStartupToastMinimized((prev) => !prev)}
+                    aria-label={startupToastMinimized ? "Expand download notification" : "Minimize download notification"}
+                    title={startupToastMinimized ? "Expand" : "Minimize"}
+                  >
+                    {startupToastMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
               )}
             </div>
 
@@ -3212,6 +3321,8 @@ function App() {
                   const dl = downloads[modelId];
                   const isDone = startupModelToast.doneIds.includes(modelId);
                   const isFailed = startupModelToast.failedIds.includes(modelId);
+                  const isCancelled = startupCancelledIds.includes(modelId);
+                  const isCancelling = startupCancellingIds.includes(modelId);
                   const pct = isDone
                     ? 100
                     : typeof dl?.progress === "number"
@@ -3221,13 +3332,42 @@ function App() {
                   const name = idx >= 0 ? startupModelToast.missingNames[idx] ?? modelId : modelId;
                   return (
                     <div key={modelId} className="space-y-1">
-                      <div className="flex items-center justify-between text-[11px] text-txt-muted">
+                      <div className="flex items-center justify-between text-[11px] text-txt-muted gap-2">
                         <span className="truncate max-w-[220px]" title={name}>{name}</span>
-                        <span>{isDone ? "Done" : isFailed ? "Failed" : dl ? `${pct.toFixed(0)}%` : "Queued"}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span>
+                            {isDone
+                              ? "Done"
+                              : isCancelled
+                                ? "Cancelled"
+                                : isFailed
+                                  ? "Failed"
+                                  : isCancelling
+                                    ? "Cancelling..."
+                                    : dl
+                                      ? `${pct.toFixed(0)}%`
+                                      : "Queued"}
+                          </span>
+                          {!isDone && !isFailed && !isCancelled && (
+                            <button
+                              type="button"
+                              className="px-1.5 py-0.5 rounded border border-glass-border hover:border-neon hover:text-txt disabled:opacity-60"
+                              title="Cancel and delete partial download"
+                              aria-label={`Cancel download for ${name}`}
+                              onClick={() => void handleStartupToastCancelSingleDownload(modelId)}
+                              disabled={isCancelling}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                <Trash2 size={10} />
+                                {isCancelling ? "..." : "Delete"}
+                              </span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="h-1.5 w-full rounded bg-void-700/80 overflow-hidden">
                         <div
-                          className={`h-full transition-all duration-300 ${isFailed ? "bg-red-500" : "bg-neon"}`}
+                          className={`h-full transition-all duration-300 ${isFailed ? (isCancelled ? "bg-yellow-500" : "bg-red-500") : "bg-neon"}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
