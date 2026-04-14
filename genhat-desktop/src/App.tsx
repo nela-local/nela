@@ -13,10 +13,7 @@ import {
   CheckCircle2,
   Share2,
   SlidersHorizontal,
-  ChevronDown,
-  ChevronUp,
   ChevronLeft,
-  ChevronRight,
   Minus,
 } from "lucide-react";
 import { Api } from "./api";
