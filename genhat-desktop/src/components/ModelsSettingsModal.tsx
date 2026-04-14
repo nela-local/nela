@@ -36,6 +36,14 @@ type ParamControl = {
 };
 
 const OPTIONAL_TASKS = new Set(["embed", "grade", "classify"]);
+const STARTUP_TASKS = new Set(["embed", "grade", "classify", "tts", "transcribe", "stt"]);
+const STARTUP_IDS = new Set([
+  "kitten-tts",
+  "parakeet-tdt",
+  "qwen3.5-0_8b",
+  "mmproj-LFM2.5-VL-450m-F16",
+  "LFM2.5-VL-450M-F32",
+]);
 const CORE_TASKS = new Set([
   "chat",
   "summarize",
@@ -102,6 +110,23 @@ const clamp = (value: number, min: number, max: number): number => {
   if (value < min) return min;
   if (value > max) return max;
   return value;
+};
+
+const formatModelSizeLabel = (memoryMb: number | null | undefined): string => {
+  if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
+    return "Unknown size";
+  }
+  if (memoryMb >= 1024) return `${(memoryMb / 1024).toFixed(2)} GB`;
+  return `${Math.round(memoryMb)} MB`;
+};
+
+const sumModelSizesMb = (items: RegisteredModel[]): number => {
+  return items.reduce((total, model) => {
+    if (typeof model.memory_mb !== "number" || !Number.isFinite(model.memory_mb) || model.memory_mb <= 0) {
+      return total;
+    }
+    return total + model.memory_mb;
+  }, 0);
 };
 
 const getBackendLabel = (backend: string | undefined): string => {
@@ -457,6 +482,36 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
     return paramDraft[control.key] ?? selectedParamModel?.params?.[control.key] ?? control.defaultValue;
   };
 
+  const startupCandidates = useMemo(() => {
+    const source = modelCatalog.length > 0 ? modelCatalog : models;
+    const deduped = new Map<string, RegisteredModel>();
+
+    source.forEach((model) => {
+      const isStartupModel =
+        model.tasks.some((task) => STARTUP_TASKS.has(task)) ||
+        STARTUP_IDS.has(model.id);
+
+      if (isStartupModel) {
+        deduped.set(model.id, model);
+      }
+    });
+
+    return Array.from(deduped.values());
+  }, [modelCatalog, models]);
+
+  const startupMissing = useMemo(
+    () => startupCandidates.filter((model) => !model.is_downloaded && !!model.gdrive_id),
+    [startupCandidates]
+  );
+
+  const handleDownloadMissingStartup = () => {
+    startupMissing.forEach((model) => {
+      if (!downloads[model.id]) {
+        onDownload(model.id);
+      }
+    });
+  };
+
   const setControlValue = (key: string, value: string) => {
     setParamDraft((prev) => ({ ...prev, [key]: value }));
     setParamSaved(false);
@@ -494,6 +549,8 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
 
   const optionalModels = models.filter((model) => model.tasks.some((t) => OPTIONAL_TASKS.has(t)));
   const missingOptional = optionalModels.filter((model) => !model.is_downloaded && model.gdrive_id);
+  const missingOptionalTotalMb = sumModelSizesMb(missingOptional);
+  const startupMissingTotalMb = sumModelSizesMb(startupMissing);
   const showRuntimeParamsInAdvanced = false;
 
   // Filter models for RAG settings dropdowns
@@ -532,7 +589,75 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                   disabled={missingOptional.length === 0}
                 >
                   Download Missing ({missingOptional.length})
+                  {missingOptionalTotalMb > 0 ? ` · ${formatModelSizeLabel(missingOptionalTotalMb)}` : ""}
                 </button>
+              </div>
+
+              <div className="settings-startup-missing">
+                <div className="settings-startup-missing-header">
+                  <div>
+                    <div className="settings-group-title">Startup Missing Models</div>
+                    <div className="settings-field-hint">
+                      Download startup-related models directly from here.
+                    </div>
+                  </div>
+                  <button
+                    className="settings-primary"
+                    onClick={handleDownloadMissingStartup}
+                    disabled={startupMissing.length === 0}
+                  >
+                    Download Missing Startup ({startupMissing.length})
+                    {startupMissingTotalMb > 0 ? ` · ${formatModelSizeLabel(startupMissingTotalMb)}` : ""}
+                  </button>
+                </div>
+
+                {startupMissing.length === 0 ? (
+                  <div className="settings-empty">All startup models are already installed.</div>
+                ) : (
+                  <div className="settings-startup-list">
+                    {startupMissing.map((model) => {
+                      const dlState = downloads[model.id];
+                      const isDownloading = dlState !== undefined;
+
+                      return (
+                        <div key={`startup-${model.id}`} className="settings-item settings-startup-item">
+                          <div className="settings-item-info">
+                            <div className="settings-item-name">{model.name}</div>
+                            <div className="settings-item-meta">{model.id} · {formatModelSizeLabel(model.memory_mb)}</div>
+                          </div>
+
+                          {isDownloading ? (
+                            <div className="settings-actions">
+                              <div className="settings-progress">
+                                <Loader2 size={14} className="animate-spin" />
+                                <span>{dlState.progress.toFixed(0)}%</span>
+                              </div>
+                              {onCancelDownload && (
+                                <button
+                                  className="settings-icon-btn"
+                                  onClick={() => onCancelDownload(model.id)}
+                                  title="Cancel Download"
+                                >
+                                  <X size={14} />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="settings-actions">
+                              <button
+                                className="settings-icon-btn"
+                                onClick={() => onDownload(model.id)}
+                                title="Download Model"
+                              >
+                                <Download size={14} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* RAG Pipeline Settings Section */}
@@ -664,7 +789,7 @@ const ModelsSettingsModal: React.FC<ModelsSettingsModalProps> = ({
                             <div className="settings-item-info">
                               <div className="settings-item-name">{model.name}</div>
                               <div className="settings-item-meta">
-                                {model.is_downloaded ? "Installed" : "Not installed"}
+                                {model.is_downloaded ? "Installed" : "Not installed"} · {formatModelSizeLabel(model.memory_mb)}
                               </div>
                             </div>
                             {isDownloading ? (

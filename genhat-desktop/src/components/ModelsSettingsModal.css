@@ -128,6 +128,36 @@
   font-size: 13px;
 }
 
+.settings-startup-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--settings-panel);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-startup-missing-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-startup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.settings-startup-item {
+  padding: 10px 12px;
+}
+
 .settings-primary {
   background: linear-gradient(120deg, #00d4ff, #43e3ff);
   border: none;
@@ -559,5 +589,15 @@
   .settings-params-sidebar {
     width: 100%;
     min-width: 0;
+  }
+
+  .settings-summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-startup-missing-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
