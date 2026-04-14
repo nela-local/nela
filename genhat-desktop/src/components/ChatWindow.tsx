@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from "react";
-import { MessageSquare, Eye, Volume2, Mic, FileText, Share2 } from "lucide-react";
+import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, X } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
 import VoiceInputButton from "./VoiceInputButton";
@@ -264,7 +264,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [previewModal, setPreviewModal] = useState<{ src: string; title: string } | null>(null);
-  const [visionZoom, setVisionZoom] = useState(1);
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -378,7 +377,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           <button
             className="shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-glass-border hover:border-neon transition-colors duration-150"
             onClick={() => {
-              setVisionZoom(1);
               setPreviewModal({ src: visionImagePreview, title: visionFileName });
             }}
             title="Preview image"
@@ -388,7 +386,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           <button
             className="text-[0.74rem] text-txt-secondary max-w-[180px] truncate text-left hover:text-txt"
             onClick={() => {
-              setVisionZoom(1);
               setPreviewModal({ src: visionImagePreview, title: visionFileName });
             }}
             title={visionFileName}
@@ -562,29 +559,18 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         {previewModal && (
           <div className="fixed inset-0 z-[70] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="relative w-full max-w-4xl h-[80vh] bg-void-800 border border-glass-border rounded-2xl overflow-hidden flex flex-col">
+            <div className="relative w-full max-w-6xl h-[90vh] bg-void-800 border border-glass-border rounded-2xl overflow-hidden flex flex-col">
               <div className="h-12 shrink-0 border-b border-glass-border flex items-center justify-between px-3">
-                <span className="text-[0.78rem] text-txt-secondary truncate max-w-[55%]" title={previewModal.title}>{previewModal.title}</span>
-                <div className="flex items-center gap-1.5">
-                  <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-txt" onClick={() => setVisionZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>
-                  </button>
-                  <span className="text-[0.74rem] text-txt-muted min-w-[52px] text-center">{Math.round(visionZoom * 100)}%</span>
-                  <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-txt" onClick={() => setVisionZoom((z) => Math.min(4, +(z + 0.1).toFixed(2)))} title="Zoom in">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-                  </button>
-                  <button className="glass-btn px-2 h-8 rounded-lg text-[0.72rem] text-txt-secondary hover:text-txt" onClick={() => setVisionZoom(1)} title="Reset zoom">Reset</button>
-                  <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-danger" onClick={() => setPreviewModal(null)} title="Close">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                  </button>
-                </div>
+                <span className="text-[0.78rem] text-txt-secondary truncate max-w-[75%]" title={previewModal.title}>{previewModal.title}</span>
+                <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-danger" onClick={() => setPreviewModal(null)} title="Close">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
               </div>
-              <div className="flex-1 overflow-auto flex items-center justify-center p-6">
+              <div className="flex-1 overflow-hidden flex items-center justify-center p-4 sm:p-6">
                 <img
                   src={previewModal.src}
                   alt="Vision preview"
-                  className="max-w-none max-h-none object-contain transition-transform duration-150"
-                  style={{ transform: `scale(${visionZoom})`, transformOrigin: "center center" }}
+                  className="max-w-full max-h-full object-contain"
                 />
               </div>
             </div>
@@ -613,7 +599,6 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                               imagePath={msg.visionImage.path}
                               imageName={msg.visionImage.name}
                               onOpen={(src, title) => {
-                                setVisionZoom(1);
                                 setPreviewModal({ src, title });
                               }}
                             />
@@ -879,29 +864,18 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
       {previewModal && (
         <div className="fixed inset-0 z-[70] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="relative w-full max-w-4xl h-[80vh] bg-void-800 border border-glass-border rounded-2xl overflow-hidden flex flex-col">
+          <div className="relative w-full max-w-6xl h-[90vh] bg-void-800 border border-glass-border rounded-2xl overflow-hidden flex flex-col">
             <div className="h-12 shrink-0 border-b border-glass-border flex items-center justify-between px-3">
-              <span className="text-[0.78rem] text-txt-secondary truncate max-w-[55%]" title={previewModal.title}>{previewModal.title}</span>
-              <div className="flex items-center gap-1.5">
-                <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-txt" onClick={() => setVisionZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>
-                </button>
-                <span className="text-[0.74rem] text-txt-muted min-w-[52px] text-center">{Math.round(visionZoom * 100)}%</span>
-                <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-txt" onClick={() => setVisionZoom((z) => Math.min(4, +(z + 0.1).toFixed(2)))} title="Zoom in">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-                </button>
-                <button className="glass-btn px-2 h-8 rounded-lg text-[0.72rem] text-txt-secondary hover:text-txt" onClick={() => setVisionZoom(1)} title="Reset zoom">Reset</button>
-                <button className="glass-btn w-8 h-8 rounded-lg text-txt-secondary hover:text-danger" onClick={() => setPreviewModal(null)} title="Close">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                </button>
-              </div>
+              <span className="text-[0.78rem] text-txt-secondary truncate max-w-[75%]" title={previewModal.title}>{previewModal.title}</span>
+              <button className="flex items-center justify-center w-8 h-8 rounded-lg text-txt-secondary hover:text-danger transition-colors duration-200" onClick={() => setPreviewModal(null)} title="Close">
+                <X size={16} strokeWidth={2} />
+              </button>
             </div>
-            <div className="flex-1 overflow-auto flex items-center justify-center p-6">
+            <div className="flex-1 overflow-hidden flex items-center justify-center p-4 sm:p-6">
               <img
                 src={previewModal.src}
                 alt="Vision preview"
-                className="max-w-none max-h-none object-contain transition-transform duration-150"
-                style={{ transform: `scale(${visionZoom})`, transformOrigin: "center center" }}
+                className="max-w-full max-h-full object-contain"
               />
             </div>
           </div>
