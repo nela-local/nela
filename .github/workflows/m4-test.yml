@@ -32,7 +32,7 @@ jobs:
       - name: Environment diagnostics
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           echo "=== System ==="
           uname -a
           sw_vers
