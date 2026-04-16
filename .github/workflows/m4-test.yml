@@ -7,6 +7,8 @@ jobs:
   m4-compatibility:
     name: M4 Pro macOS 15 build and diagnostics
     runs-on: macos-15-large
+    permissions:
+      contents: read
 
     env:
       NODE_VERSION: 24
