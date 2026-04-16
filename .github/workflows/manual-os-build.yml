@@ -1,0 +1,111 @@
+name: Manual OS Build Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_os:
+        description: Choose the GitHub runner OS version
+        required: true
+        default: macos-14
+        type: choice
+        options:
+          - macos-13
+          - macos-14
+          - macos-15
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-22.04-arm
+          - ubuntu-24.04-arm
+          - windows-2022
+
+jobs:
+  tauri-build:
+    name: Build on ${{ inputs.runner_os }}
+    runs-on: ${{ inputs.runner_os }}
+
+    env:
+      NODE_VERSION: 24
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: genhat-desktop/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: genhat-desktop
+        run: npm ci
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Ensure model placeholders
+        shell: bash
+        run: |
+          mkdir -p \
+            models/bge-1.5-embed \
+            models/distilBert-query-router/onnx_model \
+            models/grader/ms-marco-MiniLM-L6-v2-onnx-int8 \
+            models/tts/kitten-tts/mini \
+            models/LLM \
+            models/LiquidAI-VLM \
+            models/parakeet
+          touch \
+            models/.placeholder \
+            models/bge-1.5-embed/.placeholder \
+            models/distilBert-query-router/.placeholder \
+            models/distilBert-query-router/onnx_model/.placeholder \
+            models/grader/.placeholder \
+            models/grader/ms-marco-MiniLM-L6-v2-onnx-int8/.placeholder \
+            models/tts/.placeholder \
+            models/tts/kitten-tts/.placeholder \
+            models/tts/kitten-tts/mini/.placeholder \
+            models/LLM/.placeholder \
+            models/LiquidAI-VLM/.placeholder \
+            models/parakeet/.placeholder
+
+      - name: Install Linux system dependencies
+        if: startsWith(inputs.runner_os, 'ubuntu-')
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            pkg-config
+
+      - name: Build Tauri app
+        working-directory: genhat-desktop
+        run: npx tauri build
+
+      - name: List bundle outputs
+        if: always()
+        shell: bash
+        run: |
+          BUNDLE_DIR="genhat-desktop/src-tauri/target/release/bundle"
+          if [ -d "$BUNDLE_DIR" ]; then
+            find "$BUNDLE_DIR" -maxdepth 4 -type f | sort
+          else
+            echo "No bundle directory found."
+          fi
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-build-${{ inputs.runner_os }}
+          if-no-files-found: warn
+          path: |
+            genhat-desktop/src-tauri/target/release/bundle/**/*.dmg
+            genhat-desktop/src-tauri/target/release/bundle/**/*.app
+            genhat-desktop/src-tauri/target/release/bundle/**/*.deb
+            genhat-desktop/src-tauri/target/release/bundle/**/*.AppImage
+            genhat-desktop/src-tauri/target/release/bundle/**/*.msi
+            genhat-desktop/src-tauri/target/release/bundle/**/*.exe

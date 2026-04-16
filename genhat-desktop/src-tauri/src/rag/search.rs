@@ -11,10 +11,11 @@
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tantivy::collector::TopDocs;
+use tantivy::directory::error::LockError;
 use tantivy::query::AllQuery;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
-use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy};
+use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyError};
 
 /// Handle to the Tantivy BM25 search index.
 #[derive(Clone)]
@@ -83,9 +84,20 @@ impl BM25Index {
             .map_err(|e| format!("Reader error: {e}"))?;
 
         // 50 MB heap for the writer
-        let mut writer = index
-            .writer(50_000_000)
-            .map_err(|e| format!("Writer error: {e}"))?;
+        let mut writer = match index.writer(50_000_000) {
+            Ok(writer) => writer,
+            Err(e) if Self::is_lock_busy(&e) => {
+                log::warn!(
+                    "BM25 writer lock busy at {}; attempting stale lock cleanup",
+                    index_dir.display()
+                );
+                Self::cleanup_stale_writer_lock(index_dir)?;
+                index
+                    .writer(50_000_000)
+                    .map_err(|e| format!("Writer error after stale lock cleanup: {e}"))?
+            }
+            Err(e) => return Err(format!("Writer error: {e}")),
+        };
 
         // Initialize tantivy metadata files eagerly to avoid startup-time
         // watcher warnings on fresh/empty indexes.
@@ -269,6 +281,27 @@ impl BM25Index {
             .map_err(|e| format!("MmapDirectory error: {e}"))?;
         Index::open_or_create(mmap_dir, schema)
             .map_err(|e| format!("Index open error: {e}"))
+    }
+
+    fn is_lock_busy(error: &TantivyError) -> bool {
+        matches!(error, TantivyError::LockFailure(LockError::LockBusy, _))
+    }
+
+    fn cleanup_stale_writer_lock(index_dir: &Path) -> Result<(), String> {
+        let lock_path = index_dir.join(".tantivy-writer.lock");
+        if lock_path.exists() {
+            std::fs::remove_file(&lock_path).map_err(|e| {
+                format!(
+                    "Failed to remove stale Tantivy writer lock file {}: {e}",
+                    lock_path.display()
+                )
+            })?;
+            log::warn!(
+                "Removed stale Tantivy writer lock file {}",
+                lock_path.display()
+            );
+        }
+        Ok(())
     }
 
     /// Index a single chunk.
