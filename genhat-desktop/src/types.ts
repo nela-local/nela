@@ -49,6 +49,45 @@ export interface ChatMessage {
   thinking?: string;
 }
 
+export interface ChatContextMessage {
+  role: ChatMessage["role"];
+  content: string;
+}
+
+export interface ChatContextUsage {
+  contextWindowTokens: number;
+  usedTokens: number;
+  reservedOutputTokens: number;
+  projectedTokens: number;
+  remainingTokens: number;
+  remainingAfterReserveTokens: number;
+  usedPercent: number;
+  projectedPercent: number;
+  thresholdPercent: number;
+}
+
+export interface ChatContextCompactionRequest {
+  messages: ChatContextMessage[];
+  contextWindowTokens?: number | null;
+  reservedOutputTokens?: number | null;
+  thresholdPercent?: number | null;
+  allowAutoCompaction?: boolean | null;
+  forceCompaction?: boolean | null;
+  preserveRecentMessages?: number | null;
+  modelOverride?: string | null;
+}
+
+export interface ChatContextCompactionResult {
+  messages: ChatContextMessage[];
+  usage: ChatContextUsage;
+  compacted: boolean;
+  summaryApplied: boolean;
+  droppedMessages: number;
+  reason: string;
+  keptIndices: number[];
+  summaryInsertIndex: number | null;
+}
+
 export interface RegisteredModel {
   id: string;
   name: string;

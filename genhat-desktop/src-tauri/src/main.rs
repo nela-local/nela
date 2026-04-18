@@ -238,6 +238,7 @@ fn main() {
             app_lib::commands::workspace::get_rag_model_preferences,
             app_lib::commands::workspace::save_rag_model_preferences,
             app_lib::commands::inference::route_request,
+            app_lib::commands::inference::compact_chat_context,
             app_lib::commands::inference::vision_chat,
             app_lib::commands::inference::vision_chat_stream,
             app_lib::commands::audio::transcribe_audio,

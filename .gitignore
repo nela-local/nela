@@ -5,6 +5,7 @@ models/
 # App's binary files and build/dist directories
 build/
 dist/
+.kittify/
 
 # Backend build and dist directories, models, and TTS inference data
 The-Bare/build/
@@ -24,3 +25,32 @@ The-Bare/TTS-inference/--hidden-import
 benchmark/results/
 benchmark/__pycache__/
 RESEARCH_PAPER_PLAN.md
+
+# Added by Spec Kitty CLI (auto-managed)
+.claude/
+.codex/
+.vibe/
+.opencode/
+.windsurf/
+.gemini/
+.cursor/
+.qwen/
+.kilocode/
+.augment/
+.roo/
+.amazonq/
+.kiro/
+.agent/
+.github/copilot/
+.kittify/.dashboard
+.kittify/charter/context-state.json
+.kittify/charter/directives.yaml
+.kittify/charter/governance.yaml
+.kittify/charter/metadata.yaml
+.kittify/charter/references.yaml
+.kittify/dossiers/
+.kittify/events/
+.kittify/merge-state.json
+.kittify/missions/__pycache__/
+.kittify/runtime/
+.kittify/workspaces/

@@ -14,6 +14,8 @@ import type {
   WorkspaceOpenResult,
   WorkspaceRecord,
   RagModelPreferences,
+  ChatContextCompactionRequest,
+  ChatContextCompactionResult,
 } from "./types";
 
 export interface HFModel {
@@ -568,6 +570,15 @@ export const Api = {
       input,
       modelOverride: modelOverride || null,
       extra: extra || null,
+    });
+  },
+
+  /** Analyze or compact chat context using backend token estimation and summarization fallback. */
+  async compactChatContext(
+    req: ChatContextCompactionRequest
+  ): Promise<ChatContextCompactionResult> {
+    return invoke<ChatContextCompactionResult>("compact_chat_context", {
+      req,
     });
   },
 

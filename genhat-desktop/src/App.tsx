@@ -1,23 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import {
-  MessageSquare,
-  Eye,
-  Volume2,
-  Mic,
-  FileText,
-  FolderOpen,
-  Trash2,
-  Loader2,
-  CheckCircle2,
-  Share2,
-  SlidersHorizontal,
-  ChevronLeft,
-  Minus,
-} from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Api } from "./api";
 import type {
+  ChatContextUsage,
   ChatMessage,
   ChatMode,
   ChatSession,
@@ -26,288 +12,67 @@ import type {
   IngestionStatus,
   KittenTtsVoice,
   MindMapGraph,
-  MindMapNode,
   PodcastResult,
   WorkspaceRecord,
   ImportModelProfile,
 } from "./types";
 import { KITTEN_TTS_VOICES } from "./types";
-import ChatWindow from "./components/ChatWindow";
-import AudioPlayer from "./components/AudioPlayer";
-import ChatTabBar from "./components/ChatTabBar";
+import type { DownloadStateMap, StartupModelToastState } from "./app/types";
+import {
+  MODE_CONFIG,
+  SESSION_STORAGE_PREFIX,
+  STARTUP_OPTIONAL_DOWNLOAD_KEY,
+  STARTUP_MODEL_SELECTOR,
+  VIEWABLE_EXTS,
+} from "./app/constants";
+import {
+  findRegisteredModelByIdentifier,
+  modelRefBasename,
+  normalizeModelRef,
+} from "./app/modelUtils";
+import {
+  normalizeMindmapsStore,
+} from "./app/mindmapUtils";
+import {
+  createEmptySession,
+  deriveTitleFromMessage,
+  normalizeSession,
+} from "./app/sessionUtils";
+import {
+  executeHandleSend,
+  type MindmapOverlayState,
+} from "./app/handleSend";
+import {
+  createNewWorkspaceAction,
+  deleteWorkspaceByIdAction,
+  loadRagDocsAction,
+  openWorkspaceFromFileAction,
+  refreshWorkspaceListOnlyAction,
+  refreshWorkspaceRegistryAction,
+  renameWorkspaceByIdAction,
+  saveWorkspaceAsFileAction,
+  saveWorkspaceFileAction,
+  switchWorkspaceByIdAction,
+} from "./app/workspaceActions";
 import ChatHistorySidebar from "./components/ChatHistorySidebar";
 import SidebarNav from "./components/SidebarNav";
-import ModelSelector from "./components/ModelSelector";
-import WorkspaceSelector from "./components/WorkspaceSelector";
-import PdfViewer from "./components/PdfViewer";
-import DocumentViewer from "./components/DocumentViewer";
-import PodcastTab from "./components/PodcastTab";
-import MindMapOverlay from "./components/MindMapOverlay";
-import StartupModal from "./components/StartupModal";
-import ModelsSettingsModal from "./components/ModelsSettingsModal";
-import HuggingFaceModal from "./components/HuggingFaceModal";
-import ActiveModelParamsDock, { type RuntimeParamsTarget } from "./components/ActiveModelParamsDock";
-import AppModal, { type AppModalKind } from "./components/AppModal";
-import ToursModal from "./components/ToursModal";
+import { type RuntimeParamsTarget } from "./components/ActiveModelParamsDock";
+import type { AppModalKind } from "./components/AppModal";
+import AudioSidebar from "./components/AudioSidebar";
+import MindmapsSidebar from "./components/MindmapsSidebar";
+import StartupModelToast from "./components/StartupModelToast";
+import AppMainContent from "./components/AppMainContent";
+import AppDialogsLayer from "./components/AppDialogsLayer";
+import AppRightSidebar from "./components/AppRightSidebar";
 import { useTour } from "./hooks/useTour";
+import {
+  applyCompactionResultToSession,
+  CONTEXT_COMPACTION_KEEP_RECENT,
+  CONTEXT_COMPACTION_THRESHOLD,
+  resolveReservedOutputTokens,
+  toContextMessages,
+} from "./app/contextCompaction";
 import "./App.css";
-
-const SESSION_STORAGE_PREFIX = "genhat:sessions:v1:";
-const STARTUP_OPTIONAL_DOWNLOAD_KEY = "genhat:download-optional-on-start";
-const STARTUP_MODEL_SELECTOR = {
-  tasks: new Set(["embed", "grade", "classify", "tts", "transcribe", "stt"]),
-  ids: new Set([
-    "kitten-tts",
-    "parakeet-tdt",
-    "qwen3.5-0_8b",
-    "mmproj-LFM2.5-VL-450m-F16",
-    "LFM2.5-VL-450M-F32",
-  ]),
-};
-
-const formatModelSizeLabel = (memoryMb: number | null | undefined): string => {
-  if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
-    return "Unknown size";
-  }
-  const mb = memoryMb;
-  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
-  return `${Math.round(mb)} MB`;
-};
-
-const formatTotalSizeLabel = (totalMb: number): string => {
-  if (totalMb >= 1024) return `${(totalMb / 1024).toFixed(2)} GB`;
-  return `${Math.round(totalMb)} MB`;
-};
-
-const formatDownloadSpeedLabel = (bytesPerSecond: number): string => {
-  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
-    return "0 KB/s";
-  }
-
-  if (bytesPerSecond >= 1024 * 1024) {
-    return `${(bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s`;
-  }
-  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
-};
-
-const normalizeModelRef = (raw: string): string => raw.replace(/\\/g, "/").toLowerCase();
-
-const modelRefBasename = (raw: string): string => {
-  const normalized = normalizeModelRef(raw);
-  const parts = normalized.split("/");
-  return parts[parts.length - 1] ?? normalized;
-};
-
-const findRegisteredModelByIdentifier = (
-  models: RegisteredModel[],
-  identifier: string | null | undefined
-): RegisteredModel | undefined => {
-  if (!identifier) return undefined;
-
-  const exact = models.find((model) => model.id === identifier);
-  if (exact) return exact;
-
-  const normalizedIdentifier = normalizeModelRef(identifier);
-  const identifierBase = modelRefBasename(identifier);
-
-  return models.find((model) => {
-    if (!model.model_file) return false;
-    const normalizedFile = normalizeModelRef(model.model_file);
-    return (
-      normalizedFile === normalizedIdentifier ||
-      modelRefBasename(normalizedFile) === identifierBase
-    );
-  });
-};
-
-/** Extensions the DocumentViewer can render (non-PDF). */
-const VIEWABLE_EXTS = new Set([
-  "docx", "pptx", "xlsx", "xls", "ods",
-  "txt", "md", "csv", "tsv", "json", "xml", "html", "htm",
-  "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
-  "h", "go", "rb", "sh", "css", "scss", "sql", "log", "ini", "cfg",
-  "toml", "yaml", "yml",
-  "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
-  "mp3", "wav", "ogg", "m4a", "flac",
-]);
-
-/* ── Mode metadata for the sidebar ──────────────────────────────────────── */
-
-/** Turn raw page_info metadata (e.g. "page:3", "slide:2") into a readable label. */
-function formatPageLabel(meta?: string): string {
-  if (!meta) return "";
-  if (meta.startsWith("page:")) return `Page ${meta.split(":")[1]}`;
-  if (meta.startsWith("slide:")) return `Slide ${meta.split(":")[1]}`;
-  if (meta.startsWith("paragraph:")) return `Paragraph ${meta.split(":")[1]}`;
-  return meta;
-}
-
-const MODE_CONFIG: {
-  mode: ChatMode;
-  label: string;
-  icon: React.ElementType;
-  desc: string;
-}[] = [
-    { mode: "text", label: "Chat", icon: MessageSquare, desc: "Text conversation" },
-    { mode: "vision", label: "Vision", icon: Eye, desc: "Image analysis" },
-    { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
-    { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
-    { mode: "mindmap", label: "Mindmap", icon: Share2, desc: "Visual idea map" },
-  ];
-
-function extractTaskText(response: unknown): string {
-  if (typeof response === "string") return response;
-  if (response && typeof response === "object") {
-    const record = response as Record<string, unknown>;
-    if (typeof record.Text === "string") return record.Text;
-    if (typeof record.Error === "string") throw new Error(record.Error);
-  }
-  return JSON.stringify(response ?? "");
-}
-
-function extractJsonObject(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{")) return trimmed;
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
-
-  return null;
-}
-
-function normalizeMindMapNode(input: unknown): MindMapNode {
-  const node = (input ?? {}) as Record<string, unknown>;
-  const label = typeof node.label === "string" && node.label.trim().length > 0
-    ? node.label.trim()
-    : "Untitled";
-
-  const childrenRaw = Array.isArray(node.children) ? node.children : [];
-  return {
-    id: crypto.randomUUID(),
-    label,
-    children: childrenRaw.map((child) => normalizeMindMapNode(child)),
-  };
-}
-
-function parseMindMapGraph(
-  raw: string,
-  query: string,
-  generatedFrom: "documents" | "model",
-  sourceCount: number
-): MindMapGraph {
-  const jsonText = extractJsonObject(raw);
-  if (!jsonText) {
-    throw new Error("Model did not return JSON mindmap output.");
-  }
-
-  const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-  const title = typeof parsed.title === "string" && parsed.title.trim().length > 0
-    ? parsed.title.trim()
-    : query;
-  const rootRaw = parsed.root as unknown;
-  const root = normalizeMindMapNode(rootRaw ?? { label: title, children: [] });
-
-  return {
-    id: crypto.randomUUID(),
-    title,
-    query,
-    generatedFrom,
-    sourceCount,
-    root,
-    createdAt: Date.now(),
-  };
-}
-
-function normalizeMindMapGraph(raw: unknown): MindMapGraph | null {
-  if (!raw || typeof raw !== "object") return null;
-  const graph = raw as Partial<MindMapGraph>;
-  if (!graph.root || typeof graph.root !== "object") return null;
-
-  return {
-    id: typeof graph.id === "string" && graph.id ? graph.id : crypto.randomUUID(),
-    title: typeof graph.title === "string" && graph.title ? graph.title : "Mindmap",
-    query: typeof graph.query === "string" ? graph.query : "",
-    generatedFrom: graph.generatedFrom === "documents" ? "documents" : "model",
-    sourceCount: typeof graph.sourceCount === "number" ? graph.sourceCount : 0,
-    root: normalizeMindMapNode(graph.root),
-    createdAt: typeof graph.createdAt === "number" ? graph.createdAt : Date.now(),
-  };
-}
-
-function normalizeMindmapsStore(raw: unknown): Record<string, MindMapGraph[]> {
-  if (!raw || typeof raw !== "object") return {};
-  const store = raw as Record<string, unknown>;
-  const normalized: Record<string, MindMapGraph[]> = {};
-
-  Object.entries(store).forEach(([sessionId, value]) => {
-    if (Array.isArray(value)) {
-      const items = value
-        .map((entry) => normalizeMindMapGraph(entry))
-        .filter((entry): entry is MindMapGraph => !!entry);
-      if (items.length > 0) normalized[sessionId] = items;
-      return;
-    }
-
-    const single = normalizeMindMapGraph(value);
-    if (single) normalized[sessionId] = [single];
-  });
-
-  return normalized;
-}
-
-// ── Session helpers (pure functions, no hooks) ──────────────────────────────
-
-/** Create a fresh, empty ChatSession with a unique ID. */
-function createEmptySession(): ChatSession {
-  return {
-    id: crypto.randomUUID(),
-    title: "New Chat",
-    messages: [],
-    streamingContent: "",
-    loading: false,
-    audioOutputs: [],
-    cancelled: false,
-    ragResult: null,
-    mediaAssets: {},
-    createdAt: Date.now(),
-  };
-}
-
-/** Derive a short title from the first user message in a session. */
-function deriveTitleFromMessage(text: string): string {
-  const trimmed = text.trim().replace(/\n+/g, " ");
-  return trimmed.length > 32 ? trimmed.slice(0, 32) + "…" : trimmed || "New Chat";
-}
-
-/** Ensure persisted sessions are safely shaped after loading from localStorage. */
-function normalizeSession(raw: Partial<ChatSession>): ChatSession {
-  const messages = Array.isArray(raw.messages)
-    ? raw.messages.filter((m): m is ChatMessage =>
-      !!m &&
-      (m.role === "user" || m.role === "assistant" || m.role === "system") &&
-      typeof m.content === "string"
-    )
-    : [];
-
-  return {
-    id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
-    title: typeof raw.title === "string" && raw.title ? raw.title : "New Chat",
-    messages,
-    streamingContent: "",
-    loading: false,
-    audioOutputs: Array.isArray(raw.audioOutputs)
-      ? raw.audioOutputs
-      : (typeof raw.audioOutput === "string" && raw.audioOutput ? [raw.audioOutput] : []),
-    cancelled: false,
-    ragResult: raw.ragResult ?? null,
-    mediaAssets: raw.mediaAssets ?? {},
-    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-  };
-}
 
 function App() {
   // ── Model state ────────────────────────────────────────────────────────────
@@ -409,6 +174,8 @@ function App() {
   // ── Thinking/Reasoning state ───────────────────────────────────────────────
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [streamingThinking, setStreamingThinking] = useState<string>("");
+  const [contextUsageBySession, setContextUsageBySession] = useState<Record<string, ChatContextUsage>>({});
+  const [contextCompacting, setContextCompacting] = useState(false);
 
   // ── Vision state ───────────────────────────────────────────────────────────
   const [imagePath, setImagePath] = useState<string | null>(null);
@@ -420,12 +187,7 @@ function App() {
   const [ragIngesting, setRagIngesting] = useState(false);
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null);
   const [mindmapsBySession, setMindmapsBySession] = useState<Record<string, MindMapGraph[]>>({});
-  const [activeMindmapOverlay, setActiveMindmapOverlay] = useState<{
-    sessionId: string;
-    mindmapId: string | null;
-    isGenerating?: boolean;
-    query?: string;
-  } | null>(null);
+  const [activeMindmapOverlay, setActiveMindmapOverlay] = useState<MindmapOverlayState | null>(null);
 
   // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
   const [docPanelOpen, setDocPanelOpen] = useState(false);
@@ -436,20 +198,7 @@ function App() {
   const startupPresenceNoticeShownRef = useRef(false);
   const legacySessionStorageDisabledRef = useRef(false);
   const sessionQuotaPromptedRef = useRef(false);
-  const [startupModelToast, setStartupModelToast] = useState<{
-    open: boolean;
-    phase: "prompt" | "downloading" | "done" | "declined" | "info";
-    message: string;
-    missingIds: string[];
-    missingNames: string[];
-    missingSizesMb: number[];
-    selectedIds: string[];
-    doneIds: string[];
-    failedIds: string[];
-    completed: number;
-    total: number;
-    failed: number;
-  }>({
+  const [startupModelToast, setStartupModelToast] = useState<StartupModelToastState>({
     open: false,
     phase: "info",
     message: "",
@@ -545,6 +294,16 @@ function App() {
         topK: parseModelParamNumber(params.top_k),
         repeatPenalty: parseModelParamNumber(params.repeat_penalty),
       };
+    },
+    [getModelParams, parseModelParamNumber]
+  );
+
+  const getContextWindowTokens = useCallback(
+    (modelIdentifier: string | null | undefined): number => {
+      const params = getModelParams(modelIdentifier);
+      const ctxSize = parseModelParamNumber(params.ctx_size);
+      if (ctxSize === undefined) return 4096;
+      return Math.max(1024, Math.min(262_144, Math.round(ctxSize)));
     },
     [getModelParams, parseModelParamNumber]
   );
@@ -726,6 +485,12 @@ function App() {
       // Abort any in-flight request for this session
       abortControllersRef.current.get(sessionId)?.abort();
       abortControllersRef.current.delete(sessionId);
+      setContextUsageBySession((prev) => {
+        if (!(sessionId in prev)) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
       setMindmapsBySession((prev) => {
         const next = { ...prev };
         delete next[sessionId];
@@ -800,36 +565,17 @@ function App() {
   );
 
   const refreshWorkspaceRegistry = useCallback(async () => {
-    try {
-      const [all, active] = await Promise.all([
-        Api.listWorkspaces(),
-        Api.getActiveWorkspace(),
-      ]);
-      setWorkspaces(all);
-      setActiveWorkspace(active);
-    } catch (err) {
-      console.warn("Failed to refresh workspace registry:", err);
-    }
+    await refreshWorkspaceRegistryAction({
+      setWorkspaces,
+      setActiveWorkspace,
+    });
   }, []);
 
   // ── RAG helpers ────────────────────────────────────────────────────────────
   // NOTE: This must be declared before any hook dependency arrays that reference
   // `loadRagDocs` (e.g. workspace switching), otherwise it hits TDZ at runtime.
   const loadRagDocs = useCallback(async () => {
-    try {
-      const docs = await Api.listRagDocuments();
-      // Preserve placeholder entries (doc_id < 0) for files still being ingested
-      // that haven't appeared in the backend list yet.
-      setRagDocs((prev) => {
-        const completedPaths = new Set(docs.map((d) => d.file_path));
-        const remainingPlaceholders = prev.filter(
-          (d) => d.doc_id < 0 && !completedPaths.has(d.file_path)
-        );
-        return [...remainingPlaceholders, ...docs];
-      });
-    } catch (e) {
-      console.error("Failed to load RAG docs:", e);
-    }
+    await loadRagDocsAction({ setRagDocs });
   }, []);
 
   useEffect(() => {
@@ -1070,223 +816,150 @@ function App() {
     });
   }, [workspaceScope, sessionStoreReady, sessions, activeSessionId, openSessionIds, mindmapsBySession, selectedModel, selectedTtsEngine, selectedVisionModel, buildWorkspaceFrontendState, promptClearSessionStorage]);
 
+  const refreshWorkspaceListOnly = useCallback(async () => {
+    await refreshWorkspaceListOnlyAction({ setWorkspaces });
+  }, []);
+
   const switchWorkspaceById = useCallback(async (workspaceId: string) => {
-    if (workspaceBusy) return;
-    try {
-      setWorkspaceBusy(true);
-      setSessionStoreReady(false);
-      setRagDocs([]);
-      // Clear per-workspace frontend state immediately to avoid any brief cross-workspace mix.
-      setSessions([]);
-      setOpenSessionIds([]);
-      setActiveSessionId("");
-      setMindmapsBySession({});
-      setActiveMindmapOverlay(null);
-      const opened = await Api.openWorkspace(workspaceId);
-      const scope = await Api.getWorkspaceScope();
-      setActiveWorkspace(opened);
-      setWorkspaceScope(scope || `workspace:${opened.id}`);
-      await refreshWorkspaceRegistry();
-      await loadRagDocs();
-    } catch (err) {
-      console.error("Failed to switch workspace:", err);
-      setSessionStoreReady(true);
-    } finally {
-      setWorkspaceBusy(false);
-    }
-  }, [workspaceBusy, refreshWorkspaceRegistry, loadRagDocs]);
+    await switchWorkspaceByIdAction(workspaceId, {
+      workspaceBusy,
+      setWorkspaceBusy,
+      setSessionStoreReady,
+      setRagDocs,
+      setSessions,
+      setOpenSessionIds,
+      setActiveSessionId,
+      setMindmapsBySession,
+      setActiveMindmapOverlay,
+      setActiveWorkspace,
+      setWorkspaceScope,
+      setStartupContinueWorkspace,
+      refreshWorkspaceRegistry,
+      refreshWorkspaceListOnly,
+      loadRagDocs,
+    });
+  }, [workspaceBusy, refreshWorkspaceRegistry, refreshWorkspaceListOnly, loadRagDocs]);
 
   const createNewWorkspace = useCallback(async () => {
-    if (workspaceBusy) return;
-    try {
-      setWorkspaceBusy(true);
-      setSessionStoreReady(false);
-      setRagDocs([]);
-      setSessions([]);
-      setOpenSessionIds([]);
-      setActiveSessionId("");
-      setMindmapsBySession({});
-      setActiveMindmapOverlay(null);
-      const created = await Api.createWorkspace();
-      const scope = await Api.getWorkspaceScope();
-      setActiveWorkspace(created);
-      setWorkspaceScope(scope || `workspace:${created.id}`);
-      await refreshWorkspaceRegistry();
-      await loadRagDocs();
-    } catch (err) {
-      console.error("Failed to create workspace:", err);
-      setSessionStoreReady(true);
-    } finally {
-      setWorkspaceBusy(false);
-    }
-  }, [workspaceBusy, refreshWorkspaceRegistry, loadRagDocs]);
+    await createNewWorkspaceAction({
+      workspaceBusy,
+      setWorkspaceBusy,
+      setSessionStoreReady,
+      setRagDocs,
+      setSessions,
+      setOpenSessionIds,
+      setActiveSessionId,
+      setMindmapsBySession,
+      setActiveMindmapOverlay,
+      setActiveWorkspace,
+      setWorkspaceScope,
+      setStartupContinueWorkspace,
+      refreshWorkspaceRegistry,
+      refreshWorkspaceListOnly,
+      loadRagDocs,
+    });
+  }, [workspaceBusy, refreshWorkspaceRegistry, refreshWorkspaceListOnly, loadRagDocs]);
 
   const saveWorkspaceAsFile = useCallback(async () => {
-    if (workspaceBusy || !activeSession) return;
-    try {
-      setWorkspaceBusy(true);
-      const path = await save({
-        title: "Save NELA Workspace As",
-        filters: [{ name: "NELA Workspace", extensions: ["nela"] }],
-        defaultPath: `${activeWorkspace?.name ?? "workspace"}.nela`,
-      });
-      if (!path) return;
-
-      const safeActive = sessions.some((s) => s.id === activeSessionId)
-        ? activeSessionId
-        : sessions[0]?.id ?? "";
-      const frontendState = buildWorkspaceFrontendState(safeActive);
-      const savedWorkspace = await Api.saveWorkspaceAsNela(path, frontendState);
-      setActiveWorkspace(savedWorkspace);
-      await refreshWorkspaceRegistry();
-    } catch (err) {
-      console.error("Failed to save workspace as .nela:", err);
-    } finally {
-      setWorkspaceBusy(false);
-    }
-  }, [workspaceBusy, activeSession, activeWorkspace?.name, sessions, activeSessionId, buildWorkspaceFrontendState, refreshWorkspaceRegistry]);
+    await saveWorkspaceAsFileAction({
+      workspaceBusy,
+      activeSession,
+      activeWorkspace,
+      sessions,
+      activeSessionId,
+      buildWorkspaceFrontendState,
+      setWorkspaceBusy,
+      setActiveWorkspace,
+      refreshWorkspaceRegistry,
+    });
+  }, [
+    workspaceBusy,
+    activeSession,
+    activeWorkspace,
+    sessions,
+    activeSessionId,
+    buildWorkspaceFrontendState,
+    refreshWorkspaceRegistry,
+  ]);
 
   const saveWorkspaceFile = useCallback(async () => {
-    if (workspaceBusy || !activeWorkspace) return;
-    try {
-      if (!activeWorkspace.nela_path) {
-        await saveWorkspaceAsFile();
-        return;
-      }
-
-      setWorkspaceBusy(true);
-      const safeActive = sessions.some((s) => s.id === activeSessionId)
-        ? activeSessionId
-        : sessions[0]?.id ?? "";
-      const frontendState = buildWorkspaceFrontendState(safeActive);
-      const savedWorkspace = await Api.saveWorkspaceNela(frontendState);
-      setActiveWorkspace(savedWorkspace);
-      await refreshWorkspaceRegistry();
-    } catch (err) {
-      console.error("Failed to save workspace .nela:", err);
-    } finally {
-      setWorkspaceBusy(false);
-    }
-  }, [workspaceBusy, activeWorkspace, sessions, activeSessionId, buildWorkspaceFrontendState, saveWorkspaceAsFile, refreshWorkspaceRegistry]);
+    await saveWorkspaceFileAction({
+      workspaceBusy,
+      activeSession,
+      activeWorkspace,
+      sessions,
+      activeSessionId,
+      buildWorkspaceFrontendState,
+      setWorkspaceBusy,
+      setActiveWorkspace,
+      refreshWorkspaceRegistry,
+      saveWorkspaceAsFile,
+    });
+  }, [
+    workspaceBusy,
+    activeSession,
+    activeWorkspace,
+    sessions,
+    activeSessionId,
+    buildWorkspaceFrontendState,
+    refreshWorkspaceRegistry,
+    saveWorkspaceAsFile,
+  ]);
 
   const openWorkspaceFromFile = useCallback(async () => {
-    if (workspaceBusy) return;
-    try {
-      setWorkspaceBusy(true);
-      setSessionStoreReady(false);
-      setRagDocs([]);
-      setSessions([]);
-      setOpenSessionIds([]);
-      setActiveSessionId("");
-      setMindmapsBySession({});
-      setActiveMindmapOverlay(null);
-      const selected = await open({
-        title: "Open NELA Workspace",
-        multiple: false,
-        filters: [{ name: "NELA Workspace", extensions: ["nela"] }],
-      });
-      if (!selected || Array.isArray(selected)) return;
-
-      const result = await Api.openWorkspaceNela(selected);
-      const scope = await Api.getWorkspaceScope();
-      setActiveWorkspace(result.workspace);
-      setWorkspaceScope(scope || `workspace:${result.workspace.id}`);
-      await refreshWorkspaceRegistry();
-      await loadRagDocs();
-    } catch (err) {
-      console.error("Failed to open .nela workspace:", err);
-      setSessionStoreReady(true);
-    } finally {
-      setWorkspaceBusy(false);
-    }
-  }, [workspaceBusy, refreshWorkspaceRegistry, loadRagDocs]);
-
-  const refreshWorkspaceListOnly = useCallback(async () => {
-    try {
-      const all = await Api.listWorkspaces();
-      setWorkspaces(all);
-    } catch (err) {
-      console.warn("Failed to refresh workspace list:", err);
-    }
-  }, []);
+    await openWorkspaceFromFileAction({
+      workspaceBusy,
+      setWorkspaceBusy,
+      setSessionStoreReady,
+      setRagDocs,
+      setSessions,
+      setOpenSessionIds,
+      setActiveSessionId,
+      setMindmapsBySession,
+      setActiveMindmapOverlay,
+      setActiveWorkspace,
+      setWorkspaceScope,
+      setStartupContinueWorkspace,
+      refreshWorkspaceRegistry,
+      refreshWorkspaceListOnly,
+      loadRagDocs,
+    });
+  }, [workspaceBusy, refreshWorkspaceRegistry, refreshWorkspaceListOnly, loadRagDocs]);
 
   const renameWorkspaceById = useCallback(
     async (workspaceId: string, newName: string) => {
-      if (workspaceBusy) return;
-      const trimmed = newName.trim();
-      if (!trimmed) return;
-
-      try {
-        setWorkspaceBusy(true);
-        await Api.renameWorkspace(workspaceId, trimmed);
-
-        // In the "empty window" state, do NOT ask backend for active workspace,
-        // otherwise we'd accidentally exit the empty state.
-        if (activeWorkspace) {
-          await refreshWorkspaceRegistry();
-        } else {
-          await refreshWorkspaceListOnly();
-        }
-      } catch (err) {
-        console.error("Failed to rename workspace:", err);
-      } finally {
-        setWorkspaceBusy(false);
-      }
+      await renameWorkspaceByIdAction(workspaceId, newName, {
+        workspaceBusy,
+        activeWorkspace,
+        setWorkspaceBusy,
+        refreshWorkspaceRegistry,
+        refreshWorkspaceListOnly,
+      });
     },
     [workspaceBusy, activeWorkspace, refreshWorkspaceRegistry, refreshWorkspaceListOnly]
   );
 
   const deleteWorkspaceById = useCallback(
     async (workspaceId: string) => {
-      if (workspaceBusy) return;
-      const deletingActive = activeWorkspace?.id === workspaceId;
-
-      try {
-        setWorkspaceBusy(true);
-        const nextActiveFromBackend = await Api.deleteWorkspace(workspaceId);
-
-        if (!deletingActive) {
-          // Non-active deletion: keep current workspace scope/session state untouched.
-          await refreshWorkspaceListOnly();
-          return;
-        }
-
-        // Active deletion: clear state immediately, then bind to backend-selected fallback workspace.
-        setSessionStoreReady(false);
-        setSessions([]);
-        setOpenSessionIds([]);
-        setActiveSessionId("");
-        setMindmapsBySession({});
-        setActiveMindmapOverlay(null);
-        setRagDocs([]);
-
-        if (nextActiveFromBackend) {
-          const scope = await Api.getWorkspaceScope();
-          setActiveWorkspace(nextActiveFromBackend);
-          setWorkspaceScope(scope || `workspace:${nextActiveFromBackend.id}`);
-          await refreshWorkspaceRegistry();
-          await loadRagDocs();
-        } else {
-          setActiveWorkspace(null);
-          setStartupContinueWorkspace(null);
-          setWorkspaceScope("workspace:none");
-          await refreshWorkspaceListOnly();
-          setSessionStoreReady(true);
-        }
-      } catch (err) {
-        console.error("Failed to delete workspace:", err);
-        setSessionStoreReady(true);
-      } finally {
-        setWorkspaceBusy(false);
-      }
+      await deleteWorkspaceByIdAction(workspaceId, {
+        workspaceBusy,
+        setWorkspaceBusy,
+        setSessionStoreReady,
+        setRagDocs,
+        setSessions,
+        setOpenSessionIds,
+        setActiveSessionId,
+        setMindmapsBySession,
+        setActiveMindmapOverlay,
+        setActiveWorkspace,
+        setWorkspaceScope,
+        setStartupContinueWorkspace,
+        refreshWorkspaceRegistry,
+        refreshWorkspaceListOnly,
+        loadRagDocs,
+      });
     },
-    [
-      workspaceBusy,
-      activeWorkspace,
-      refreshWorkspaceRegistry,
-      refreshWorkspaceListOnly,
-      loadRagDocs,
-    ]
+    [workspaceBusy, refreshWorkspaceRegistry, refreshWorkspaceListOnly, loadRagDocs]
   );
 
   // Keep active session aligned with currently open viewer tabs.
@@ -1308,6 +981,22 @@ function App() {
     setOpenSessionIds((prev) => {
       const valid = prev.filter((id) => sessions.some((s) => s.id === id));
       return valid.length > 0 ? valid : [sessions[0].id];
+    });
+  }, [sessions]);
+
+  useEffect(() => {
+    const valid = new Set(sessions.map((session) => session.id));
+    setContextUsageBySession((prev) => {
+      let changed = false;
+      const next: Record<string, ChatContextUsage> = {};
+      Object.entries(prev).forEach(([sessionId, usage]) => {
+        if (valid.has(sessionId)) {
+          next[sessionId] = usage;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
     });
   }, [sessions]);
 
@@ -1354,6 +1043,53 @@ function App() {
   useEffect(() => {
     setModeSwitchNotice(null);
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSession) return;
+    if (chatMode !== "text" && chatMode !== "mindmap") return;
+
+    let cancelled = false;
+
+    const analyzeContext = async () => {
+      try {
+        const generation = getChatGenerationOptions(selectedModel);
+        const result = await Api.compactChatContext({
+          messages: toContextMessages(activeSession.messages),
+          contextWindowTokens: getContextWindowTokens(selectedModel),
+          reservedOutputTokens: resolveReservedOutputTokens(generation.maxTokens),
+          thresholdPercent: CONTEXT_COMPACTION_THRESHOLD,
+          allowAutoCompaction: false,
+          forceCompaction: false,
+          preserveRecentMessages: CONTEXT_COMPACTION_KEEP_RECENT,
+          modelOverride: selectedModel || null,
+        });
+
+        if (cancelled) return;
+        setContextUsageBySession((prev) => ({
+          ...prev,
+          [activeSession.id]: result.usage,
+        }));
+      } catch (err) {
+        if (!cancelled) {
+          console.warn("Failed to analyze context usage:", err);
+        }
+      }
+    };
+
+    void analyzeContext();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeSession,
+    activeSession?.id,
+    activeSession?.messages,
+    chatMode,
+    selectedModel,
+    getChatGenerationOptions,
+    getContextWindowTokens,
+  ]);
 
   // On first entry to the chat screen, notify user which optional models are present.
   useEffect(() => {
@@ -1461,7 +1197,7 @@ function App() {
 
 
   // ── Download state ─────────────────────────────────────────────────────────
-  const [downloads, setDownloads] = useState<Record<string, { progress: number; status: string; speedBps?: number }>>({});
+  const [downloads, setDownloads] = useState<DownloadStateMap>({});
   const startupCancelRequestedRef = useRef(false);
   const [startupCancellingIds, setStartupCancellingIds] = useState<string[]>([]);
   const [startupCancelledIds, setStartupCancelledIds] = useState<string[]>([]);
@@ -2120,553 +1856,63 @@ function App() {
 
   // ── Main send handler ─────────────────────────────────────────────────────
 
-  const handleSend = async (text: string) => {
-    // Snapshot the session ID at the time of send — this ensures all async
-    // callbacks write to the correct session even if the user switches tabs.
-    const sid = activeSessionId;
-    const session = sessions.find((s) => s.id === sid);
-    if (!session || session.loading) return; // Prevent concurrent requests in the same session
-
-    const currentVisionImagePath = chatMode === "vision" ? imagePath : null;
-
-    const visionAttachment =
-      chatMode === "vision" && currentVisionImagePath
-        ? {
-            path: currentVisionImagePath,
-            name: currentVisionImagePath.split(/[/\\]/).pop() ?? "image",
-          }
-        : undefined;
-
-    const newMsg: ChatMessage = {
-      role: "user",
-      content: text,
-      ...(visionAttachment ? { visionImage: visionAttachment } : {}),
-    };
-
-    // Derive title from first user message
-    const isFirstMessage = session.messages.length === 0;
-    const titlePatch = isFirstMessage ? { title: deriveTitleFromMessage(text) } : {};
-
-    updateSession(sid, (prev) => ({
-      messages: [...prev.messages, newMsg],
-      loading: true,
-      streamingContent: "",
-      audioOutputs: prev.audioOutputs ?? [],
-      cancelled: false,
-      ...titlePatch,
-    }));
-
-    // In vision mode, clear the input attachment chip after sending while
-    // preserving the image on the stored user message above.
-    if (chatMode === "vision" && currentVisionImagePath) {
-      clearImage();
-    }
-
-    // Create a fresh AbortController for this session's request
-    const ctrl = new AbortController();
-    abortControllersRef.current.set(sid, ctrl);
-    const generationOptions = getChatGenerationOptions(selectedModel);
-
-    try {
-      // ── Mindmap Mode (RAG-grounded when relevant) ──────────────────────
-      if (chatMode === "mindmap") {
-        try {
-          setActiveMindmapOverlay({ sessionId: sid, mindmapId: null, isGenerating: true, query: text });
-          setGeneralGenerating(true);
-          setGeneralElapsedTime(0);
-          setGeneralGenerationTime(null);
-          const startTime = Date.now();
-
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          generalIntervalRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
-            setGeneralElapsedTime(elapsed);
-          }, 100);
-
-          let generatedFrom: "documents" | "model" = "model";
-          let sourceCount = 0;
-          let sourceContext = "";
-
-          if (ragDocs.length > 0) {
-            try {
-              const setup = await Api.queryRagStream(text);
-              updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });
-              if (!setup.no_retrieval && setup.sources.length > 0) {
-                generatedFrom = "documents";
-                sourceCount = setup.sources.length;
-                sourceContext = setup.sources
-                  .map((source, index) => `Source ${index + 1} (${source.doc_title}):\n${source.text}`)
-                  .join("\n\n");
-              }
-            } catch (e) {
-              console.warn("Mindmap RAG grounding failed; using model knowledge.", e);
-            }
-          }
-
-          const prompt = generatedFrom === "documents"
-            ? [
-                `User query: ${text}`,
-                "Build a concise mindmap grounded ONLY in the provided sources.",
-                "Return ONLY valid JSON and no markdown/code fences.",
-                "Schema:",
-                '{"title":"string","root":{"label":"string","children":[{"label":"string","children":[...]}]}}',
-                "Rules:",
-                "- 3 to 6 first-level branches.",
-                "- Keep labels short (2 to 8 words).",
-                "- Depth max 3.",
-                "- Do not invent unsupported facts.",
-                "Sources:",
-                sourceContext,
-              ].join("\n")
-            : [
-                `User query: ${text}`,
-                "Create a concise conceptual mindmap from your own knowledge.",
-                "Return ONLY valid JSON and no markdown/code fences.",
-                "Schema:",
-                '{"title":"string","root":{"label":"string","children":[{"label":"string","children":[...]}]}}',
-                "Rules:",
-                "- 3 to 6 first-level branches.",
-                "- Keep labels short (2 to 8 words).",
-                "- Depth max 3.",
-              ].join("\n");
-
-          let graph: MindMapGraph | undefined;
-          let lastError: unknown;
-          
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              const raw = await Api.routeRequest("mindmap", prompt, selectedModel || undefined);
-              const modelText = extractTaskText(raw);
-              graph = parseMindMapGraph(modelText, text, generatedFrom, sourceCount);
-              break; // Success! Exit loop.
-            } catch (e) {
-              console.warn(`Mindmap generation attempt ${attempt} failed:`, e);
-              lastError = e;
-            }
-          }
-          
-          if (!graph) {
-            throw lastError; // Propagate the error to trigger the fallback UI
-          }
-
-          setMindmapsBySession((prev) => ({
+  const handleSend = useCallback(
+    async (text: string) => {
+      await executeHandleSend(text, {
+        activeSessionId,
+        sessions,
+        chatMode,
+        imagePath,
+        ragDocs,
+        selectedModel,
+        selectedVisionModel,
+        selectedTtsEngine,
+        ttsVoice,
+        ttsSpeed,
+        thinkingEnabled,
+        abortControllersRef,
+        visionUnlistenRef,
+        generalIntervalRef,
+        ttsIntervalRef,
+        updateSession,
+        setActiveMindmapOverlay,
+        setGeneralGenerating,
+        setGeneralElapsedTime,
+        setGeneralGenerationTime,
+        setMindmapsBySession,
+        setStreamingThinking,
+        setTtsGenerating,
+        setTtsElapsedTime,
+        setTtsGenerationTime,
+        setContextUsageForSession: (sessionId, usage) => {
+          setContextUsageBySession((prev) => ({
             ...prev,
-            [sid]: [...(prev[sid] ?? []), graph],
-          }));
-          setActiveMindmapOverlay({
-            sessionId: sid,
-            mindmapId: graph.id,
-            isGenerating: false,
-            query: text,
-          });
-
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
-          setGeneralGenerating(false);
-          setGeneralElapsedTime(totalTime);
-          setGeneralGenerationTime(totalTime);
-
-          updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              {
-                role: "assistant" as const,
-                content:
-                  generatedFrom === "documents"
-                    ? `Mindmap generated from ${sourceCount} retrieved document source${sourceCount === 1 ? "" : "s"}.`
-                    : "Mindmap generated from model knowledge.",
-                generateTime: totalTime,
-              },
-            ],
-            streamingContent: "",
-            loading: false,
-          }));
-        } catch (e) {
-          setActiveMindmapOverlay(null);
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          setGeneralGenerating(false);
-          console.error("Mindmap generation failed:", e);
-          updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              {
-                role: "assistant" as const,
-                content: "Mindmap generation failed. The model produced malformed data. Try selecting a larger model or rewording your input.",
-              },
-            ],
-            loading: false,
-          }));
-        }
-        return;
-      }
-
-      // ── RAG-enhanced Chat (auto-activates when documents are ingested) ──
-      if (chatMode === "text" && ragDocs.length > 0) {
-        try {
-          // Start timer
-          setGeneralGenerating(true);
-          setGeneralElapsedTime(0);
-          setGeneralGenerationTime(null);
-          const ragStartTime = Date.now();
-
-          // Set up interval to update elapsed time
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          generalIntervalRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - ragStartTime) / 100) / 10;
-            setGeneralElapsedTime(elapsed);
-          }, 100);
-
-          // Phase 1: Retrieval — sources come back immediately
-          const setup = await Api.queryRagStream(text);
-          updateSession(sid, { ragResult: { answer: "", sources: setup.sources } });
-
-          // If no relevant docs found, fall through to normal text chat
-          if (!setup.prompt || setup.sources.length === 0) {
-            // Fall through to normal text chat below
-          } else {
-            // Phase 2: Stream the answer from llama-server SSE
-            let fullAnswer = "";
-            let fullThinking = "";
-            let firstTokenTimeMs: number | null = null;
-            await Api.streamChat(
-              [
-                { role: "system", content: "You are a helpful assistant. Answer the question using the provided reference text. Write a clear, natural response without repeating source labels, tags, or brackets. If the user asks for a specific format (table, list, bullet points, etc.), use that format. If the reference text does not cover the question, say you don't know." },
-                { role: "user", content: setup.prompt },
-              ],
-              (chunk) => {
-                if (firstTokenTimeMs === null) {
-                  firstTokenTimeMs = Date.now();
-                }
-                fullAnswer += chunk;
-                updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + chunk }));
-              },
-              (thinkingChunk) => {
-                fullThinking += thinkingChunk;
-                setStreamingThinking((prev) => prev + thinkingChunk);
-              },
-              () => {
-                // Stop timer
-                if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-                const totalTime = Math.floor((Date.now() - ragStartTime) / 100) / 10;
-                const timeToFirstToken = firstTokenTimeMs ? Math.floor((firstTokenTimeMs - ragStartTime) / 100) / 10 : null;
-
-                setGeneralGenerating(false);
-                setGeneralElapsedTime(totalTime);
-                setGeneralGenerationTime(totalTime);
-                setStreamingThinking(""); // Clear streaming thinking
-
-                updateSession(sid, (prev) => {
-                  const updated: ChatMessage[] = [
-                    ...prev.messages,
-                    {
-                      role: "assistant",
-                      content: fullAnswer,
-                      thinking: fullThinking || undefined,
-                      generateTime: totalTime,
-                      firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
-                    },
-                  ];
-                  const assistantIdx = updated.length - 1;
-                  Api.retrieveMediaForResponse(fullAnswer)
-                    .then((assets) => {
-                      console.log(`Media retrieval: found ${assets.length} assets`);
-                      if (assets.length > 0) {
-                        updateSession(sid, (prev2) => ({
-                          mediaAssets: {
-                            ...prev2.mediaAssets,
-                            [assistantIdx]: assets,
-                          },
-                        }));
-                      }
-                    })
-                    .catch((e) =>
-                      console.error("Media retrieval failed:", e)
-                    );
-                  return {
-                    messages: updated,
-                    ragResult: prev.ragResult ? { ...prev.ragResult, answer: fullAnswer } : null,
-                    streamingContent: "",
-                    loading: false,
-                  };
-                });
-              },
-              (err) => {
-                console.error("RAG stream error:", err);
-                updateSession(sid, (prev) => ({
-                  messages: [
-                    ...prev.messages,
-                    { role: "assistant" as const, content: `RAG query error: ${err}` },
-                  ],
-                  loading: false,
-                }));
-              },
-              setup.llama_port,
-              ctrl.signal,
-              !thinkingEnabled,
-              generationOptions
-            );
-            return;
-          }
-        } catch (e) {
-          // Stop timer on error
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          setGeneralGenerating(false);
-          console.error("RAG attempt failed, falling back to normal chat:", e);
-          // Fall through to normal text chat
-        }
-      }
-
-      // ── Audio Mode ──────────────────────────────────────────────────────
-      if (chatMode === "audio" && selectedTtsEngine) {
-        try {
-          // Start timer
-          setTtsGenerating(true);
-          setTtsElapsedTime(0);
-          setTtsGenerationTime(null);
-          const startTime = Date.now();
-
-          // Set up interval to update elapsed time
-          if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
-          ttsIntervalRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startTime) / 100) / 10; // One decimal place, in seconds
-            setTtsElapsedTime(elapsed);
-          }, 100);
-
-          const audioUrl = await Api.generateSpeech(
-            text,
-            {
-              voice: ttsVoice,
-              speed: ttsSpeed,
-            }
-          );
-
-          // Stop timer and calculate total time
-          if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
-          const totalTime = Math.floor((Date.now() - startTime) / 100) / 10; // One decimal place, in seconds
-          setTtsGenerating(false);
-          setTtsElapsedTime(totalTime);
-          setTtsGenerationTime(totalTime);
-
-          updateSession(sid, (prev) => ({
-            audioOutputs: [(prev.audioOutputs ?? []), audioUrl].flat(),
-            audioOutput: audioUrl, // for backward compatibility
-            messages: [
-              ...prev.messages,
-              {
-                role: "assistant" as const,
-                content: `🔊 Audio generated (${ttsVoice}, ${ttsSpeed}x speed).`,
-                generateTime: totalTime,
-                audioUrl: audioUrl,
-              },
-            ],
-          }));
-        } catch (e) {
-          console.error(e);
-          // Stop timer on error
-          if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
-          setTtsGenerating(false);
-          updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              { role: "assistant" as const, content: `Error generating audio: ${e}` },
-            ],
-          }));
-        }
-        updateSession(sid, { loading: false });
-        return;
-      }
-
-      // ── Vision Mode (streaming via Tauri events) ────────────────────────
-      if (chatMode === "vision") {
-        try {
-          // Start timer
-          setGeneralGenerating(true);
-          setGeneralElapsedTime(0);
-          setGeneralGenerationTime(null);
-          const startTime = Date.now();
-
-          // Set up interval to update elapsed time
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          generalIntervalRef.current = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startTime) / 100) / 10;
-            setGeneralElapsedTime(elapsed);
-          }, 100);
-
-          // Clean up any previous listener
-          visionUnlistenRef.current?.();
-          visionUnlistenRef.current = null;
-
-          let visionResponse = "";
-          let firstTokenTimeMs: number | null = null;
-
-          const unlisten = await listen<{ chunk: string; done: boolean }>(
-            "vision-stream",
-            (event) => {
-              if (event.payload.done) {
-                // Stop timer
-                if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-                const totalTime = Math.floor((Date.now() - startTime) / 100) / 10;
-                const timeToFirstToken = firstTokenTimeMs ? Math.floor((firstTokenTimeMs - startTime) / 100) / 10 : null;
-
-                setGeneralGenerating(false);
-                setGeneralElapsedTime(totalTime);
-                setGeneralGenerationTime(totalTime);
-
-                if (visionResponse) {
-                  updateSession(sid, (prev) => ({
-                    messages: [
-                      ...prev.messages,
-                      {
-                        role: "assistant" as const,
-                        content: visionResponse,
-                        generateTime: totalTime,
-                        firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
-                      },
-                    ],
-                    streamingContent: "",
-                    loading: false,
-                  }));
-                } else {
-                  updateSession(sid, { loading: false });
-                }
-                visionUnlistenRef.current?.();
-                visionUnlistenRef.current = null;
-              } else if (event.payload.chunk) {
-                if (firstTokenTimeMs === null) {
-                  firstTokenTimeMs = Date.now();
-                }
-                visionResponse += event.payload.chunk;
-                updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + event.payload.chunk }));
-              }
-            }
-          );
-          visionUnlistenRef.current = unlisten;
-
-          // Start the streaming vision chat
-          const visionPrompt = text || (currentVisionImagePath ? "What's in this image?" : "Hello! Let's chat.");
-          await Api.visionChatStream(
-            currentVisionImagePath || undefined,
-            visionPrompt,
-            selectedVisionModel || undefined
-          );
-        } catch (e) {
-          console.error(e);
-          // Stop timer on error
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          setGeneralGenerating(false);
-          updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              { role: "assistant" as const, content: `Vision error: ${e}` },
-            ],
-            loading: false,
-          }));
-          visionUnlistenRef.current?.();
-          visionUnlistenRef.current = null;
-        }
-        return;
-      }
-
-      // ── Text Chat Mode (streaming via SSE) ─────────────────────────────
-      // Start timer
-      setGeneralGenerating(true);
-      setGeneralElapsedTime(0);
-      setGeneralGenerationTime(null);
-      const chatStartTime = Date.now();
-
-      // Set up interval to update elapsed time
-      if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-      generalIntervalRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - chatStartTime) / 100) / 10;
-        setGeneralElapsedTime(elapsed);
-      }, 100);
-
-      let fullResponse = "";
-      let fullThinking = "";
-      let textFirstTokenTimeMs: number | null = null;
-
-      // Build the messages array from the session's messages (including the new user msg)
-      const sessionMessages = session.messages;
-      const apiMessages = [...sessionMessages, newMsg].map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
-      Api.streamChat(
-        apiMessages,
-        (chunk) => {
-          if (textFirstTokenTimeMs === null) {
-            textFirstTokenTimeMs = Date.now();
-          }
-          updateSession(sid, (prev) => ({ streamingContent: prev.streamingContent + chunk }));
-          fullResponse += chunk;
-        },
-        (thinkingChunk) => {
-          fullThinking += thinkingChunk;
-          setStreamingThinking((prev) => prev + thinkingChunk);
-        },
-        () => {
-          // Stop timer
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          const totalTime = Math.floor((Date.now() - chatStartTime) / 100) / 10;
-          const timeToFirstToken = textFirstTokenTimeMs ? Math.floor((textFirstTokenTimeMs - chatStartTime) / 100) / 10 : null;
-
-          setGeneralGenerating(false);
-          setGeneralElapsedTime(totalTime);
-          setGeneralGenerationTime(totalTime);
-          setStreamingThinking(""); // Clear streaming thinking
-
-          if (fullResponse) {
-            updateSession(sid, (prev) => ({
-              messages: [
-                ...prev.messages,
-                {
-                  role: "assistant" as const,
-                  content: fullResponse,
-                  thinking: fullThinking || undefined,
-                  generateTime: totalTime,
-                  firstTokenTime: timeToFirstToken !== null ? timeToFirstToken : undefined
-                },
-              ],
-              streamingContent: "",
-              loading: false,
-            }));
-          } else {
-            updateSession(sid, { loading: false });
-          }
-        },
-        (err) => {
-          // Stop timer on error
-          if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-          setGeneralGenerating(false);
-          setStreamingThinking(""); // Clear streaming thinking on error
-          console.error("Stream error", err);
-          updateSession(sid, (prev) => ({
-            messages: [
-              ...prev.messages,
-              { role: "assistant" as const, content: `Error: ${err}` },
-            ],
-            loading: false,
+            [sessionId]: usage,
           }));
         },
-        undefined,
-        ctrl.signal,
-        !thinkingEnabled,
-        generationOptions
-      );
-    } catch (err) {
-      // Stop timer on error
-      if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
-      setGeneralGenerating(false);
-      console.error(err);
-      updateSession(sid, (prev) => ({
-        messages: [
-          ...prev.messages,
-          { role: "assistant" as const, content: "An unexpected error occurred." },
-        ],
-        loading: false,
-      }));
-    }
-  };
+        clearImage,
+        getContextWindowTokens,
+        getChatGenerationOptions,
+      });
+    },
+    [
+      activeSessionId,
+      sessions,
+      chatMode,
+      imagePath,
+      ragDocs,
+      selectedModel,
+      selectedVisionModel,
+      selectedTtsEngine,
+      ttsVoice,
+      ttsSpeed,
+      thinkingEnabled,
+      updateSession,
+      clearImage,
+      getContextWindowTokens,
+      getChatGenerationOptions,
+    ]
+  );
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -2714,6 +1960,12 @@ function App() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const currentModeConfig = MODE_CONFIG.find((m) => m.mode === chatMode)!;
+  const activeContextUsage = activeSession ? contextUsageBySession[activeSession.id] ?? null : null;
+  const canManualCompactContext =
+    !!activeSession &&
+    !activeSession.loading &&
+    (chatMode === "text" || chatMode === "mindmap");
+
   const openViewerSessions = openSessionIds
     .map((id) => sessions.find((s) => s.id === id))
     .filter((s): s is ChatSession => !!s);
@@ -2786,6 +2038,78 @@ function App() {
     }));
   };
 
+  const handleManualContextCompaction = useCallback(async () => {
+    if (!activeSession) return;
+    if (activeSession.loading) return;
+    if (chatMode !== "text" && chatMode !== "mindmap") return;
+
+    setContextCompacting(true);
+    try {
+      const generation = getChatGenerationOptions(selectedModel);
+      const result = await Api.compactChatContext({
+        messages: toContextMessages(activeSession.messages),
+        contextWindowTokens: getContextWindowTokens(selectedModel),
+        reservedOutputTokens: resolveReservedOutputTokens(generation.maxTokens),
+        thresholdPercent: CONTEXT_COMPACTION_THRESHOLD,
+        allowAutoCompaction: false,
+        forceCompaction: true,
+        preserveRecentMessages: CONTEXT_COMPACTION_KEEP_RECENT,
+        modelOverride: selectedModel || null,
+      });
+
+      setContextUsageBySession((prev) => ({
+        ...prev,
+        [activeSession.id]: result.usage,
+      }));
+
+      if (result.compacted) {
+        const rebuilt = applyCompactionResultToSession(
+          activeSession.messages,
+          activeSession.mediaAssets ?? {},
+          result
+        );
+
+        updateSession(activeSession.id, {
+          messages: rebuilt.messages,
+          mediaAssets: rebuilt.mediaAssets,
+        });
+
+        setAppModal({
+          open: true,
+          kind: "info",
+          title: "Context compacted",
+          message: `Conversation context was compacted. ${result.droppedMessages} message(s) were compressed or removed to free context space.`,
+          confirmLabel: "OK",
+          cancelLabel: "Cancel",
+          showCancel: false,
+        });
+      } else {
+        setAppModal({
+          open: true,
+          kind: "info",
+          title: "Context already efficient",
+          message: "No additional compaction was needed for the current session context.",
+          confirmLabel: "OK",
+          cancelLabel: "Cancel",
+          showCancel: false,
+        });
+      }
+    } catch (err) {
+      console.error("Manual context compaction failed:", err);
+      showError(`Failed to compact context: ${String(err)}`);
+    } finally {
+      setContextCompacting(false);
+    }
+  }, [
+    activeSession,
+    chatMode,
+    getChatGenerationOptions,
+    getContextWindowTokens,
+    selectedModel,
+    showError,
+    updateSession,
+  ]);
+
   const handlePodcastGenerated = useCallback(
     ({ query, result }: { query: string; result: PodcastResult }) => {
       const trimmedQuery = query.trim();
@@ -2854,55 +2178,37 @@ function App() {
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      {/* Startup Modal Overlay */}
-      {showStartupModal && (
-        <StartupModal
-          onContinueWorkspace={continueExistingWorkspace}
-          canContinueWorkspace={canContinueStartupWorkspace}
-          continueWorkspaceName={startupContinueWorkspace?.name ?? null}
-          onNewProject={createWorkspaceFromStartup}
-          onImportProject={importWorkspaceFromStartup}
-          onStartTour={startTourFromStartup}
-          busy={workspaceBusy}
-        />
-      )}
-
-      <AppModal
-        isOpen={appModal.open}
-        kind={appModal.kind}
-        title={appModal.title}
-        message={appModal.message}
-        confirmLabel={appModal.confirmLabel}
-        cancelLabel={appModal.cancelLabel}
-        showCancel={appModal.showCancel}
-        onConfirm={handleModalConfirm}
-        onCancel={handleModalCancel}
-      />
-
-      <ModelsSettingsModal
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        models={registeredModels}
+      <AppDialogsLayer
+        showStartupModal={showStartupModal}
+        onContinueWorkspace={continueExistingWorkspace}
+        canContinueWorkspace={canContinueStartupWorkspace}
+        continueWorkspaceName={startupContinueWorkspace?.name ?? null}
+        onNewProject={createWorkspaceFromStartup}
+        onImportProject={importWorkspaceFromStartup}
+        onStartTour={startTourFromStartup}
+        workspaceBusy={workspaceBusy}
+        appModal={appModal}
+        onModalConfirm={handleModalConfirm}
+        onModalCancel={handleModalCancel}
+        settingsOpen={settingsOpen}
+        onCloseSettings={() => setSettingsOpen(false)}
+        registeredModels={registeredModels}
         modelCatalog={modelCatalog}
         onModelsUpdated={refreshModels}
         downloads={downloads}
-        onDownload={handleDownloadModel}
+        onDownloadModel={handleDownloadModel}
         onCancelDownload={handleCancelDownload}
-        onUninstall={handleUninstall}
+        onUninstallModel={handleUninstall}
         onDownloadMissingOptional={downloadMissingOptionalModels}
-        onConfirm={confirmAction}
-        workspaceId={activeWorkspace?.id}
-      />
-
-      <HuggingFaceModal
-        isOpen={hfModalOpen}
-        onClose={() => setHfModalOpen(false)}
+        onConfirmAction={confirmAction}
+        activeWorkspaceId={activeWorkspace?.id}
+        hfModalOpen={hfModalOpen}
+        onCloseHfModal={() => setHfModalOpen(false)}
+        hfModalPreset={hfModalPreset}
         onModelImported={refreshModels}
-        defaultFolder={hfModalPreset.folder}
-        defaultImportProfile={hfModalPreset.profile}
+        toursOpen={toursOpen}
+        onCloseTours={() => setToursOpen(false)}
       />
-
-      <ToursModal isOpen={toursOpen} onClose={() => setToursOpen(false)} />
 
       {/* Main app content stays visible in background behind startup modal */}
       <div className="flex h-full w-full relative z-10">
@@ -2918,8 +2224,8 @@ function App() {
         canExport={!!activeWorkspace}
       />
       {/* Vertical blue line when sidebar is minimized */}
-          {sidebarSection === null && (
-        <div className="w-[4px] min-w-[4px] h-full bg-[#00d4ff] rounded-full mx-1 shadow-[0_0_16px_#00d4ff88] transition-all duration-200 opacity-100" />
+      {sidebarSection === null && (
+        <div className="w-1 min-w-1 h-full bg-neon rounded-full mx-1 shadow-[0_0_16px_#00d4ff88] transition-all duration-200 opacity-100" />
       )}
       {/* Side section (chats/audio/mindmaps) */}
       {sidebarSection !== null && (
@@ -2935,607 +2241,163 @@ function App() {
             />
           )}
           {sidebarSection === "audio" && (
-            <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col">
-              <div className="h-10 px-4 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2 text-txt">
-                  <span className="text-2xl font-semibold mt-2">Audio</span>
-                </div>
-              </div>
-              <div className="flex-1 p-2 flex flex-col">
-                <div className="flex-1 bg-void-900 border border-glass-border rounded-xl p-2 flex flex-col gap-2 shadow-md overflow-y-auto overflow-x-hidden">
-                  {(() => {
-                    // Gather all audio messages from all sessions
-                    const allAudio = sessions.flatMap((session) =>
-                      session.messages
-                        .map((msg, idx, arr) => {
-                          if (!msg.audioUrl || msg.audioSaved === false) return null;
-                          // Find the most recent user message before this assistant message
-                          let userMsg = null;
-                          for (let i = idx - 1; i >= 0; i--) {
-                            if (arr[i].role === "user") {
-                              userMsg = arr[i];
-                              break;
-                            }
-                          }
-                          return {
-                            audioUrl: msg.audioUrl,
-                            sessionId: session.id,
-                            sessionTitle: session.title,
-                            msgIdx: idx,
-                            userQuery: userMsg ? userMsg.content : "(Unknown query)"
-                          };
-                        })
-                        .filter(Boolean)
-                    );
-                    const filteredAudio = allAudio.filter(Boolean);
-                    return filteredAudio.length > 0 ? (
-                      <ul className="flex flex-col gap-2">
-                        {filteredAudio.map((item) => (
-                          <li key={item!.audioUrl} className="flex flex-col gap-1 group relative">
-                            <span className="text-[0.82rem] font-medium truncate">
-                              {item!.userQuery}
-                            </span>
-                            <span className="text-[0.75rem] text-txt-muted truncate">{item!.sessionTitle}</span>
-                            <AudioPlayer src={item!.audioUrl} barCount={20} />
-                            <button
-                              className="absolute top-1 right-1 opacity-60 group-hover:opacity-100 transition-opacity text-danger hover:text-danger/80"
-                              title="Delete audio"
-                              onClick={() => {
-                                updateSession(item!.sessionId, (prev) => ({
-                                  messages: prev.messages.map((m, i) => i === item!.msgIdx ? { ...m, audioSaved: false } : m)
-                                }));
-                              }}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="text-[0.9rem] text-txt-muted">No audio generated yet for any session.</div>
-                    );
-                  })()}
-                </div>
-              </div>
-            </aside>
+            <AudioSidebar
+              sessions={sessions}
+              onDeleteAudio={(sessionId, msgIdx) => {
+                updateSession(sessionId, (prev) => ({
+                  messages: prev.messages.map((m, i) =>
+                    i === msgIdx ? { ...m, audioSaved: false } : m
+                  ),
+                }));
+              }}
+            />
           )}
           {sidebarSection === "mindmaps" && (
-            <aside className="w-[280px] min-w-[280px] border-r border-glass-border bg-void-800/80 backdrop-blur-xl flex flex-col">
-              <div className="h-10 px-4 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2 text-txt">
-                  <span className="text-2xl font-semibold mt-2">Mindmaps</span>
-                </div>
-              </div>
-
-              <div className="flex-1 p-2 flex flex-col">
-                <div className="flex-1 bg-void-900 border border-glass-border rounded-xl p-2 flex flex-col gap-1.5 shadow-md overflow-y-auto">
-                  {mindmaps.length === 0 ? (
-                    <div className="text-[0.9rem] text-txt-muted p-2">No mindmaps generated yet.</div>
-                  ) : (
-                    mindmaps.map((mm) => {
-                      const isOpen =
-                        activeMindmapOverlay?.mindmapId === mm.id &&
-                        activeMindmapOverlay?.sessionId === mm.sessionId;
-
-                      return (
-                        <button
-                          key={mm.id}
-                          className={`group relative w-full text-left rounded-xl border px-3 py-2.5 transition-all duration-150 ${
-                            isOpen
-                              ? "bg-neon-subtle border-neon/30 text-txt shadow-[0_0_14px_rgba(0,212,255,0.08)]"
-                              : "bg-void-700/65 border-glass-border text-txt-secondary hover:border-neon/20 hover:text-txt"
-                          }`}
-                          onClick={() => openMindmapOverlay(mm.sessionId, mm.id)}
-                          title={mm.name}
-                        >
-                          <div className="flex flex-col min-w-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[0.82rem] font-medium truncate">{mm.name}</span>
-                              <span className="text-[0.68rem] text-txt-muted shrink-0">
-                                {new Date(mm.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[0.72rem] text-txt-muted leading-snug max-h-[2.4em] overflow-hidden">
-                              {mm.query || "No query"}
-                            </p>
-                            <div className="mt-1.5 text-[0.68rem] text-txt-muted">
-                              {mm.generatedFrom === "documents" ? "Document-grounded" : "Model knowledge"}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </aside>
+            <MindmapsSidebar
+              mindmaps={mindmaps}
+              activeMindmapOverlay={activeMindmapOverlay}
+              onOpenMindmap={openMindmapOverlay}
+            />
           )}
           {/* Vertical blue line between side section and chat window (less blue) */}
-          <div className="w-[4px] min-w-[4px] h-full bg-[#00d4ff]/40 rounded-full mx-1 shadow-[0_0_8px_#00d4ff33] transition-all duration-200 opacity-60" />
+          <div className="w-1 min-w-1 h-full bg-neon/40 rounded-full mx-1 shadow-[0_0_8px_#00d4ff33] transition-all duration-200 opacity-60" />
         </>
       )}
 
-      {/* ══════════ MAIN CONTENT ══════════ */}
-      <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
-        {chatMode !== "podcast" && (
-          <ChatTabBar
-            sessions={openViewerSessions}
-            activeSessionId={activeSessionId}
-            onSelectSession={setActiveSessionId}
-            onNewSession={addNewSession}
-            onCloseSession={closeViewerTab}
-            onReorderSessions={reorderViewerTabs}
-          />
-        )}
+      <AppMainContent
+        chatMode={chatMode}
+        openViewerSessions={openViewerSessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={setActiveSessionId}
+        onNewSession={addNewSession}
+        onCloseSession={closeViewerTab}
+        onReorderSessions={reorderViewerTabs}
+        currentModeConfig={currentModeConfig}
+        workspaces={workspaces}
+        activeWorkspace={activeWorkspace}
+        onSelectWorkspace={(id) => {
+          void switchWorkspaceById(id);
+        }}
+        onCreateWorkspace={() => {
+          void createNewWorkspace();
+        }}
+        onDeleteWorkspace={(id) => {
+          void deleteWorkspaceById(id);
+        }}
+        onRenameWorkspace={renameWorkspaceById}
+        workspaceBusy={workspaceBusy}
+        modelLoadingStatus={modelLoadingStatus}
+        models={models}
+        selectedModel={selectedModel}
+        onModelChange={handleModelChange}
+        onAddModel={handleAddModel}
+        onDownloadModel={handleDownloadModel}
+        onCancelDownload={handleCancelDownload}
+        onUninstallModel={handleUninstall}
+        onConfirmAction={confirmAction}
+        downloads={downloads}
+        ttsEngines={ttsEngines}
+        selectedTtsEngine={selectedTtsEngine}
+        onSelectTtsEngine={setSelectedTtsEngine}
+        visionModels={visionModels}
+        selectedVisionModel={selectedVisionModel}
+        onSelectVisionModel={setSelectedVisionModel}
+        onAddVisionModel={handleAddVisionModel}
+        activeRuntimeParamTarget={activeRuntimeParamTarget}
+        paramsDockOpen={paramsDockOpen}
+        onToggleParamsDock={() => setParamsDockOpen((open) => !open)}
+        contextUsage={activeContextUsage}
+        onCompactContext={() => {
+          void handleManualContextCompaction();
+        }}
+        canCompactContext={canManualCompactContext}
+        isCompactingContext={contextCompacting}
+        ragDocs={ragDocs}
+        modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
+        onSelectMode={handleModeSwitch}
+        onPodcastGenerated={handlePodcastGenerated}
+        activeSession={activeSession}
+        onSend={(text) => {
+          void handleSend(text);
+        }}
+        onCancel={handleCancel}
+        placeholder={getPlaceholder()}
+        ragIngesting={ragIngesting}
+        enrichmentStatus={enrichmentStatus}
+        onIngestFile={() => {
+          void ingestFile();
+        }}
+        onIngestDir={() => {
+          void ingestDir();
+        }}
+        onSelectVisionImage={() => {
+          void selectImage();
+        }}
+        visionImagePath={imagePath}
+        visionImagePreview={imagePreview}
+        onClearVisionImage={clearImage}
+        docPanelOpen={docPanelOpen}
+        onToggleDocPanel={() => setDocPanelOpen((v) => !v)}
+        modeSwitchNotice={modeSwitchNotice}
+        onSaveAudioToSidebar={handleSaveAudioToSidebar}
+        streamingThinking={streamingThinking}
+        thinkingEnabled={thinkingEnabled}
+        onToggleThinking={() => setThinkingEnabled(!thinkingEnabled)}
+        activeMindmapOverlay={activeMindmapOverlay}
+        activeMindmapGraph={activeMindmapGraph}
+        onCloseMindmapOverlay={() => setActiveMindmapOverlay(null)}
+        pdfLoading={pdfLoading}
+        pdfViewerData={pdfViewerData}
+        onClosePdfViewer={closePdfViewer}
+        docViewerFile={docViewerFile}
+        onCloseDocViewer={closeDocViewer}
+      />
 
-        {/* ── Top Bar ── */}
-        <header className="min-h-14 py-2 flex items-center justify-between px-6 border-b border-glass-border bg-void-800/80 backdrop-blur-xl shrink-0 z-20">
-          <div className="flex flex-col items-start gap-1.5">
-            <div className="flex items-center gap-2.5">
-              <currentModeConfig.icon size={18} strokeWidth={1.8} className="text-neon" />
-              <h1 className="text-[0.95rem] font-semibold m-0 text-txt">{currentModeConfig.label}</h1>
-              <span className="text-[0.78rem] text-txt-muted pl-2.5 border-l border-glass-border">{currentModeConfig.desc}</span>
-            </div>
-            <WorkspaceSelector
-              workspaces={workspaces}
-              activeWorkspaceId={activeWorkspace?.id ?? null}
-              onSelectWorkspace={(id) => void switchWorkspaceById(id)}
-              onCreateWorkspace={() => void createNewWorkspace()}
-              onDeleteWorkspace={(id) => void deleteWorkspaceById(id)}
-              onRenameWorkspace={(id, name) => renameWorkspaceById(id, name)}
-              busy={workspaceBusy}
-            />
-            {modelLoadingStatus.loading && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-900/30 border border-amber-500/40 rounded-lg text-amber-300 text-xs">
-                <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                <span>{modelLoadingStatus.message || "Loading model..."}</span>
-              </div>
-            )}
-          </div>
+      <StartupModelToast
+        toast={startupModelToast}
+        minimized={startupToastMinimized}
+        downloads={downloads}
+        startupCancelledIds={startupCancelledIds}
+        startupCancellingIds={startupCancellingIds}
+        startupOverallSpeedBps={startupOverallSpeedBps}
+        startupSelectedTotalMb={startupSelectedTotalMb}
+        onToggleMinimized={setStartupToastMinimized}
+        onDecline={handleStartupToastDecline}
+        onAccept={() => {
+          void handleStartupToastAccept();
+        }}
+        onToggleModelSelection={toggleStartupModelSelection}
+        onCancelAllDownloads={() => {
+          void handleStartupToastCancelDownloads();
+        }}
+        onCancelSingleDownload={(modelId) => {
+          void handleStartupToastCancelSingleDownload(modelId);
+        }}
+      />
 
-          <div className="flex items-center gap-3">
-            {(chatMode === "text" || chatMode === "mindmap") && (
-              <ModelSelector
-                models={models}
-                selectedModel={selectedModel}
-                onSelect={handleModelChange}
-                type="llm"
-                onAdd={handleAddModel}
-                onDownload={handleDownloadModel}
-                onCancelDownload={handleCancelDownload}
-                onUninstall={handleUninstall}
-                onConfirm={confirmAction}
-                downloads={downloads}
-              />
-            )}
-            {chatMode === "audio" && ttsEngines.length > 0 && (
-              <div className="flex items-center gap-2.5">
-                <ModelSelector
-                    models={ttsEngines.map(m => ({ name: m.name, path: m.id, is_downloaded: m.is_downloaded, gdrive_id: m.gdrive_id }))}
-                    selectedModel={selectedTtsEngine}
-                    onSelect={setSelectedTtsEngine}
-                    type="audio"
-                    onDownload={handleDownloadModel}
-                    onCancelDownload={handleCancelDownload}
-                    onUninstall={handleUninstall}
-                    onConfirm={confirmAction}
-                    downloads={downloads}
-                  />
-
-                {selectedTtsEngine === "kitten-tts"}
-              </div>
-            )}
-            {chatMode === "vision" && visionModels.length > 0 && (
-              <ModelSelector
-                  models={visionModels.map(m => ({ name: m.name, path: m.id, is_downloaded: m.is_downloaded, gdrive_id: m.gdrive_id }))}
-                  selectedModel={selectedVisionModel}
-                  onSelect={setSelectedVisionModel}
-                  type="vision"
-                  onAdd={handleAddVisionModel}
-                  onDownload={handleDownloadModel}
-                  onCancelDownload={handleCancelDownload}
-                  onUninstall={handleUninstall}
-                  onConfirm={confirmAction}
-                  downloads={downloads}
-                />
-            )}
-
-            {activeRuntimeParamTarget && (
-              <button
-                className={`glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer transition-all duration-200 border backdrop-blur-md ${paramsDockOpen ? "bg-neon-subtle text-neon border-neon/30 shadow-[0_0_12px_rgba(0,212,255,0.12)]" : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon hover:text-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.08)]"}`}
-                onClick={() => setParamsDockOpen((open) => !open)}
-                title="Toggle runtime parameter panel"
-              >
-                <SlidersHorizontal size={14} />
-                {paramsDockOpen ? "Hide Params" : "Show Params"}
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* ── Podcast Mode ── */}
-        {chatMode === "podcast" ? (
-          <PodcastTab
-            hasDocuments={ragDocs.length > 0}
-            modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
-            currentMode={chatMode}
-            onSelectMode={handleModeSwitch}
-            onPodcastGenerated={handlePodcastGenerated}
-          />
-        ) : !activeSession ? (
-          <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">
-            {activeWorkspace
-              ? "Open a chat from the left sidebar or create a new chat."
-              : "No workspace selected. Create a workspace from the left sidebar."}
-          </div>
-        ) : (
-          <ChatWindow
-            key={activeSession.id}
-            messages={activeSession.messages}
-            streamingContent={activeSession.streamingContent}
-            isLoading={activeSession.loading}
-            onSend={handleSend}
-            onCancel={handleCancel}
-            cancelled={activeSession.cancelled}
-            audioSrc={activeSession.audioOutput}
-            audioOutputs={activeSession.audioOutputs}
-            placeholder={getPlaceholder()}
-            mediaAssets={activeSession.mediaAssets}
-            ragDocs={ragDocs}
-            ragIngesting={ragIngesting}
-            enrichmentStatus={enrichmentStatus}
-            onIngestFile={ingestFile}
-            onIngestDir={ingestDir}
-            onSelectVisionImage={selectImage}
-            visionImagePath={imagePath}
-            visionImagePreview={imagePreview}
-            onClearVisionImage={clearImage}
-            onToggleDocPanel={() => setDocPanelOpen((v) => !v)}
-            chatMode={chatMode}
-            showRagControls={chatMode === "text" || chatMode === "mindmap"}
-            docPanelOpen={docPanelOpen}
-            modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
-            currentMode={chatMode}
-            onSelectMode={handleModeSwitch}
-            modeSwitchNotice={modeSwitchNotice}
-            saveAudioToSidebar={handleSaveAudioToSidebar}
-            session={activeSession}
-            streamingThinking={streamingThinking}
-            thinkingEnabled={thinkingEnabled}
-            onToggleThinking={() => setThinkingEnabled(!thinkingEnabled)}
-          />
-        )}
-
-        {activeMindmapOverlay && (activeMindmapGraph || activeMindmapOverlay.isGenerating) && (
-          <MindMapOverlay
-            graph={activeMindmapGraph}
-            isGenerating={!!activeMindmapOverlay.isGenerating}
-            query={activeMindmapOverlay.query}
-            onClose={() => setActiveMindmapOverlay(null)}
-          />
-        )}
-
-        {/* ── PDF Viewer Overlay ── */}
-        {pdfLoading && (
-          <div className="absolute inset-0 z-[55] bg-void-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 text-txt-muted text-sm">
-            <div className="pdf-spinner" />
-            <span>Loading PDF...</span>
-          </div>
-        )}
-        {pdfViewerData && (
-          <PdfViewer pdfData={pdfViewerData.data} title={pdfViewerData.title} onClose={closePdfViewer} />
-        )}
-
-        {/* ── Document Viewer Overlay ── */}
-        {docViewerFile && (
-          <DocumentViewer key={docViewerFile.filePath} filePath={docViewerFile.filePath} title={docViewerFile.title} onClose={closeDocViewer} />
-        )}
-      </main>
-
-      {startupModelToast.open && startupToastMinimized && (
-        <button
-          onClick={() => setStartupToastMinimized(false)}
-          className="fixed bottom-10 right-0 z-[90] w-12 h-12 rounded-l-full bg-void-800 border-y border-l border-neon/60 shadow-[0_4px_16px_rgba(0,212,255,0.25)] flex items-center justify-center text-neon hover:bg-void-700 transition-all group"
-          title="Expand Download Status"
-        >
-          <ChevronLeft className="w-6 h-6 shrink-0 ml-1 group-hover:-translate-x-0.5 transition-transform" />
-        </button>
-      )}
-
-      {startupModelToast.open && !startupToastMinimized && (
-        <div className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[92vw] rounded-xl border border-neon/60 bg-void-800/95 shadow-[0_12px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
-          <div className="px-4 py-3 text-sm text-txt">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <div className="font-medium">
-                {startupModelToast.phase === "prompt"
-                  ? "Model(s) absent"
-                  : startupModelToast.phase === "downloading"
-                    ? "Downloading models"
-                    : "Model setup"}
-              </div>
-              <button
-                type="button"
-                className="p-1 rounded text-txt-muted hover:text-txt hover:bg-void-700/50"
-                onClick={() => setStartupToastMinimized(true)}
-                title="Minimize"
-              >
-                <Minus size={14} />
-              </button>
-            </div>
-            {startupModelToast.phase === "downloading" && (
-              <div className="mb-1 text-[11px] text-neon">
-                Overall speed: {formatDownloadSpeedLabel(startupOverallSpeedBps)}
-              </div>
-            )}
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-txt-muted leading-relaxed">
-                {startupModelToast.message}
-              </div>
-              {startupModelToast.phase === "downloading" && (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    className="px-2 py-1 rounded border border-glass-border text-[11px] text-txt-muted hover:text-txt hover:border-neon"
-                    onClick={() => void handleStartupToastCancelDownloads()}
-                    title="Cancel startup downloads"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {startupModelToast.phase === "prompt" && startupModelToast.missingNames.length > 0 && (
-              <div className="mt-2 text-xs leading-relaxed">
-                <div className="text-txt-muted">The following models are not present:</div>
-                <ul className="mt-2 space-y-1">
-                  {startupModelToast.missingIds.map((modelId, idx) => {
-                    const name = startupModelToast.missingNames[idx] ?? modelId;
-                    const sizeLabel = formatModelSizeLabel(startupModelToast.missingSizesMb[idx]);
-                    const checked = startupModelToast.selectedIds.includes(modelId);
-                    return (
-                      <li key={modelId}>
-                        <label className="flex items-center gap-2 cursor-pointer rounded px-1 py-0.5 hover:bg-void-700/40">
-                          <input
-                            type="checkbox"
-                            className="accent-neon"
-                            checked={checked}
-                            onChange={() => toggleStartupModelSelection(modelId)}
-                          />
-                          <span className="text-neon font-medium truncate" title={name}>{name}</span>
-                          <span className="ml-auto text-[11px] text-txt-muted">{sizeLabel}</span>
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-                <div className="mt-2 text-[11px] text-txt-muted">
-                  Total selected size:{" "}
-                  <span className="text-neon font-medium">{formatTotalSizeLabel(startupSelectedTotalMb)}</span>
-                </div>
-              </div>
-            )}
-
-            {startupModelToast.phase === "downloading" && (
-              <div className="mt-2 space-y-2">
-                <div className="flex items-center gap-2 text-neon text-xs">
-                  <Loader2 size={13} className="animate-spin" />
-                  <span>
-                    Progress: {startupModelToast.completed}/{startupModelToast.total}
-                  </span>
-                </div>
-                {startupModelToast.selectedIds.map((modelId) => {
-                  const dl = downloads[modelId];
-                  const isDone = startupModelToast.doneIds.includes(modelId);
-                  const isFailed = startupModelToast.failedIds.includes(modelId);
-                  const isCancelled = startupCancelledIds.includes(modelId);
-                  const isCancelling = startupCancellingIds.includes(modelId);
-                  const pct = isDone
-                    ? 100
-                    : typeof dl?.progress === "number"
-                      ? Math.max(0, Math.min(100, dl.progress))
-                      : 0;
-                  const idx = startupModelToast.missingIds.indexOf(modelId);
-                  const name = idx >= 0 ? startupModelToast.missingNames[idx] ?? modelId : modelId;
-                  return (
-                    <div key={modelId} className="space-y-1">
-                      <div className="flex items-center justify-between text-[11px] text-txt-muted gap-2">
-                        <span className="truncate max-w-[220px]" title={name}>{name}</span>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span>
-                            {isDone
-                              ? "Done"
-                              : isCancelled
-                                ? "Cancelled"
-                                : isFailed
-                                  ? "Failed"
-                                  : isCancelling
-                                    ? "Cancelling..."
-                                    : dl
-                                      ? `${pct.toFixed(0)}%`
-                                      : "Queued"}
-                          </span>
-                          {!isDone && !isFailed && !isCancelled && (
-                            <button
-                              type="button"
-                              className="px-1.5 py-0.5 rounded border border-glass-border hover:border-neon hover:text-txt disabled:opacity-60"
-                              title="Cancel and delete partial download"
-                              aria-label={`Cancel download for ${name}`}
-                              onClick={() => void handleStartupToastCancelSingleDownload(modelId)}
-                              disabled={isCancelling}
-                            >
-                              <span className="inline-flex items-center gap-1">
-                                <Trash2 size={10} />
-                                {isCancelling ? "..." : "Delete"}
-                              </span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="h-1.5 w-full rounded bg-void-700/80 overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-300 ${isFailed ? (isCancelled ? "bg-yellow-500" : "bg-red-500") : "bg-neon"}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {startupModelToast.phase === "prompt" && (
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  className="px-3 py-1.5 rounded-md border border-glass-border text-txt-muted text-xs hover:text-txt"
-                  onClick={handleStartupToastDecline}
-                >
-                  No
-                </button>
-                <button
-                  className="px-3 py-1.5 rounded-md bg-neon text-void-900 text-xs font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => void handleStartupToastAccept()}
-                  disabled={startupModelToast.selectedIds.length === 0}
-                >
-                  Yes, download ({startupModelToast.selectedIds.length})
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ══════════ RIGHT SIDEBAR — Runtime Params / Knowledge Base ══════════ */}
-      {showRightSidebar && (
-        <aside className={`kb-sidebar overflow-hidden bg-void-800 flex shrink-0 ${showParamsDock && docPanelOpen ? "w-[640px] min-w-[640px]" : "w-[320px] min-w-[320px]"} border-l border-glass-border`}>
-          {showParamsDock && activeRuntimeParamTarget && (
-            <div className="w-[320px] min-w-[320px] h-full">
-              <ActiveModelParamsDock
-                target={activeRuntimeParamTarget}
-                onApply={handleApplyRuntimeParams}
-                onClose={() => setParamsDockOpen(false)}
-              />
-            </div>
-          )}
-
-      <div className={`overflow-hidden bg-void-800 flex flex-col shrink-0 ${docPanelOpen ? "w-[320px] min-w-[320px]" : "w-0 min-w-0"} ${showParamsDock && docPanelOpen ? "border-l border-glass-border" : "border-l-0"}`} data-tour="kb-sidebar">
-        <div className={`kb-sidebar-inner flex flex-col h-full w-[320px] ${docPanelOpen ? "opacity-100" : "opacity-0"}`}>
-          {/* Header */}
-          <div className="flex items-center justify-between py-3.5 px-4 border-b border-glass-border shrink-0">
-            <div className="flex items-center gap-2 text-[0.85rem] font-semibold text-txt">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-              </svg>
-              Knowledge Base
-            </div>
-            <button
-              className="glass-btn bg-transparent! border border-transparent! text-txt-muted! cursor-pointer p-1.5! rounded-lg! flex items-center justify-center transition-all duration-200 hover:text-txt! hover:border-glass-border! hover:bg-void-700!"
-              onClick={() => setDocPanelOpen(false)}
-              title="Close panel"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-1.5 py-3 px-4 border-b border-glass-border shrink-0">
-            <button onClick={ingestFile} disabled={ragIngesting}
-              className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
-              <FileText size={14} /> Add Files
-            </button>
-            <button onClick={ingestDir} disabled={ragIngesting}
-              className="glass-btn inline-flex items-center gap-1.5 py-1.5 px-3 text-[0.78rem] font-medium rounded-lg cursor-pointer text-txt-secondary border border-glass-border transition-all duration-200 hover:text-txt hover:border-neon hover:shadow-[0_0_12px_rgba(0,212,255,0.1)] disabled:opacity-45 disabled:cursor-not-allowed">
-              <FolderOpen size={14} /> Add Folder
-            </button>
-          </div>
-
-          {/* Status */}
-          {(ragIngesting || enrichmentStatus) && (
-            <div className="flex items-center gap-2 py-2 px-4 shrink-0">
-              {ragIngesting && (
-                <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.72rem] font-medium bg-[rgba(251,191,36,0.1)] text-warning">
-                  <Loader2 size={12} className="spin" /> Ingesting...
-                </span>
-              )}
-              {enrichmentStatus && (
-                <span className="inline-flex items-center gap-1.5 py-0.5 px-2.5 rounded-full text-[0.72rem] font-medium bg-[rgba(34,197,94,0.1)] text-success">
-                  <CheckCircle2 size={12} /> {enrichmentStatus}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Document List */}
-          <div className="kb-sidebar-docs flex-1 overflow-y-auto p-2">
-            {ragDocs.length === 0 ? (
-              <p className="text-txt-muted text-[0.82rem] m-1">
-                No documents ingested yet. Use the buttons above to add files.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {ragDocs.map((doc) => {
-                  const ext = doc.file_path?.split(".").pop()?.toLowerCase() || "";
-                  const isViewable = ext === "pdf" || VIEWABLE_EXTS.has(ext);
-                  const isPlaceholder = doc.doc_id < 0;
-                  return (
-                    <div
-                      key={doc.doc_id}
-                      className={`flex items-center gap-2 py-2 px-2.5 bg-void-700 rounded-lg text-[0.78rem] border border-transparent transition-colors duration-150 flex-wrap hover:border-glass-border ${isViewable ? "cursor-pointer hover:bg-[rgba(0,212,255,0.06)] hover:border-[rgba(0,212,255,0.2)]" : ""}`}
-                      onClick={() => isViewable && openDocViewer(doc)}
-                      title={isViewable ? `Click to view ${ext.toUpperCase()}` : doc.title}
-                    >
-                      <FileText size={14} className="text-txt-muted shrink-0" />
-                      <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-txt font-medium text-[0.78rem]">{doc.title}</span>
-                      {!isPlaceholder && (
-                        <span className="text-txt-muted text-[0.7rem] whitespace-nowrap">{doc.total_chunks} chunks</span>
-                      )}
-                      <span className={`py-0.5 px-2 rounded-full text-[0.65rem] font-semibold whitespace-nowrap capitalize ${doc.phase.includes("phase2_complete") ? "bg-[rgba(34,197,94,0.15)] text-success" : "bg-[rgba(0,212,255,0.1)] text-[#66e5ff]"}`}>
-                        {isPlaceholder ? (
-                          <span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> ingesting</span>
-                        ) : doc.phase.replace(/_/g, " ")}
-                      </span>
-                      {!isPlaceholder && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteRagDoc(doc.doc_id); }}
-                          className="p-1! bg-transparent! text-txt-muted! border-none! rounded! cursor-pointer flex items-center justify-center transition-all duration-150 hover:text-danger! hover:bg-[rgba(239,68,68,0.1)]!"
-                          title="Remove document"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* RAG Source Citations */}
-          {activeSession?.ragResult && activeSession.ragResult.sources.length > 0 && (
-            <div className="kb-sidebar-sources border-t border-glass-border py-3 px-3 shrink-0 max-h-[250px] overflow-y-auto">
-              <div className="flex items-center gap-1.5 mb-2 text-[0.82rem] text-txt-secondary">
-                <FileText size={14} />
-                <strong>Sources ({activeSession.ragResult.sources.length})</strong>
-              </div>
-              {activeSession.ragResult.sources.map((src, i) => (
-                <details key={src.chunk_id} className="mb-1 text-[0.78rem]">
-                  <summary className="cursor-pointer text-[#66e5ff] py-1 transition-colors duration-150 hover:text-[#99eeff]">
-                    [Source {i + 1}] {src.doc_title}
-                    {src.page_info ? `, ${formatPageLabel(src.page_info)}` : ""}
-                    {" "}(score: {src.score.toFixed(4)})
-                  </summary>
-                  <pre className="whitespace-pre-wrap text-[0.72rem] text-txt-secondary p-2.5 bg-void-900 border border-glass-border rounded-lg mt-1 max-h-[150px] overflow-y-auto">{src.text}</pre>
-                </details>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-        </aside>
-      )}
+      <AppRightSidebar
+        showRightSidebar={showRightSidebar}
+        showParamsDock={showParamsDock}
+        docPanelOpen={docPanelOpen}
+        activeRuntimeParamTarget={activeRuntimeParamTarget}
+        onApplyRuntimeParams={handleApplyRuntimeParams}
+        onCloseParamsDock={() => setParamsDockOpen(false)}
+        ragIngesting={ragIngesting}
+        enrichmentStatus={enrichmentStatus}
+        ragDocs={ragDocs}
+        activeSession={activeSession}
+        onCloseDocPanel={() => setDocPanelOpen(false)}
+        onIngestFile={() => {
+          void ingestFile();
+        }}
+        onIngestDir={() => {
+          void ingestDir();
+        }}
+        onOpenDocViewer={openDocViewer}
+        onDeleteRagDoc={(docId) => {
+          void deleteRagDoc(docId);
+        }}
+      />
     </div>
 
     </div>
