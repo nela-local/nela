@@ -2,11 +2,15 @@
 import argparse
 import csv
 import json
+import math
 import os
+import platform
 import re
 import shutil
 import signal
+import statistics
 import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -39,6 +43,9 @@ class Sample:
     elapsed_s: float
     rss_mb: float
     cpu_percent: float
+    cpu_user_percent: float
+    cpu_system_percent: float
+    cpu_percent_normalized: float
     process_count: int
 
 
@@ -52,6 +59,9 @@ class ExtendedSample:
     uss_mb: Optional[float]
     shared_mb: Optional[float]
     cpu_percent: float
+    cpu_user_percent: float
+    cpu_system_percent: float
+    cpu_percent_normalized: float
     process_count: int
     threads: int
     open_fds: Optional[int]
@@ -108,6 +118,8 @@ class BenchmarkRunner:
         self._last_faults: Optional[Tuple[float, int, int]] = None
 
         self._log_lock = threading.Lock()
+        self.capabilities = self._detect_capabilities()
+        self._last_cpu_snapshot: Optional[Dict[str, float]] = None
 
     def run(self):
         metrics: Optional[dict] = None
@@ -122,8 +134,11 @@ class BenchmarkRunner:
             if getattr(self.args, "run_until_exit", False):
                 self._wait_until_exit()
             else:
-                self._capture_idle_metrics_phase()
-                self._capture_model_loading_phase()
+                if float(getattr(self.args, "duration_s", 0.0)) > 0:
+                    self._capture_fixed_duration_phase()
+                else:
+                    self._capture_idle_metrics_phase()
+                    self._capture_model_loading_phase()
             self._capture_disk_and_binary_metrics()
             metrics = self._finalize_metrics()
             self._write_outputs(metrics)
@@ -192,15 +207,18 @@ class BenchmarkRunner:
         if getattr(self.args, "sanitize_launch_env", False):
             env = self._sanitize_launch_env(env)
 
-        self.root_process = subprocess.Popen(
-            ["bash", "-lc", launch_cmd],
-            cwd=str(self.repo_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
+        popen_kwargs = {
+            "cwd": str(self.repo_root),
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "bufsize": 1,
+            "env": env,
+        }
+        if os.name == "nt":
+            self.root_process = subprocess.Popen(launch_cmd, shell=True, **popen_kwargs)
+        else:
+            self.root_process = subprocess.Popen(["bash", "-lc", launch_cmd], **popen_kwargs)
         self.root_pid = self.root_process.pid
         self.measure_pid = self.root_pid
 
@@ -456,11 +474,23 @@ class BenchmarkRunner:
                 self._maybe_discover_app_pid()
 
                 rss_mb = self._rss_mb_tree()
-                cpu_pct = self._cpu_percent_tree()
+                cpu_stats = self._cpu_percent_tree()
+                cpu_pct = cpu_stats["total"]
                 process_count = self._process_count_tree()
-                self.samples.append(Sample(ts, elapsed, rss_mb, cpu_pct, process_count))
+                self.samples.append(
+                    Sample(
+                        ts=ts,
+                        elapsed_s=elapsed,
+                        rss_mb=rss_mb,
+                        cpu_percent=cpu_pct,
+                        cpu_user_percent=cpu_stats["user"],
+                        cpu_system_percent=cpu_stats["system"],
+                        cpu_percent_normalized=cpu_stats["normalized"],
+                        process_count=process_count,
+                    )
+                )
 
-                self._maybe_collect_extended_sample(ts, elapsed, rss_mb, cpu_pct, process_count)
+                self._maybe_collect_extended_sample(ts, elapsed, rss_mb, cpu_pct, cpu_stats, process_count)
                 time.sleep(self.args.sample_interval_s)
 
         threading.Thread(target=monitor_loop, daemon=True).start()
@@ -493,6 +523,18 @@ class BenchmarkRunner:
             event.wait(timeout=self.args.model_load_window_s)
         else:
             time.sleep(self.args.model_load_window_s)
+
+    def _capture_fixed_duration_phase(self):
+        duration_s = float(getattr(self.args, "duration_s", 0.0))
+        if duration_s <= 0:
+            return
+        print(f"\n=== Fixed-Duration Mode ({duration_s:.1f}s) ===")
+        end_at = time.time() + duration_s
+        while True:
+            remaining = end_at - time.time()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.5, remaining))
 
     def _capture_disk_and_binary_metrics(self):
         return
@@ -570,7 +612,15 @@ class BenchmarkRunner:
             return None
         return best_pid
 
-    def _maybe_collect_extended_sample(self, ts: float, elapsed: float, rss_mb: float, cpu_pct: float, process_count: int):
+    def _maybe_collect_extended_sample(
+        self,
+        ts: float,
+        elapsed: float,
+        rss_mb: float,
+        cpu_pct: float,
+        cpu_stats: Dict[str, float],
+        process_count: int,
+    ):
         interval = float(getattr(self.args, "extended_sample_interval_s", 5.0))
         if interval <= 0:
             return
@@ -617,6 +667,9 @@ class BenchmarkRunner:
                 uss_mb=stats.get("uss_mb"),
                 shared_mb=stats.get("shared_mb"),
                 cpu_percent=cpu_pct,
+                cpu_user_percent=cpu_stats.get("user", 0.0),
+                cpu_system_percent=cpu_stats.get("system", 0.0),
+                cpu_percent_normalized=cpu_stats.get("normalized", 0.0),
                 process_count=process_count,
                 threads=int(stats.get("threads", 0)),
                 open_fds=stats.get("open_fds"),
@@ -665,11 +718,11 @@ class BenchmarkRunner:
         uss_kb: Optional[int] = 0
         shared_kb: Optional[int] = 0
 
-        enable_smaps = bool(getattr(self.args, "enable_smaps_rollup", False))
-        enable_io = bool(getattr(self.args, "enable_proc_io", True))
-        enable_faults = bool(getattr(self.args, "enable_proc_faults", True))
-        enable_fds = bool(getattr(self.args, "enable_proc_fds", True))
-        enable_ctx = bool(getattr(self.args, "enable_proc_ctx_switches", True))
+        enable_smaps = bool(self.capabilities.get("smaps_rollup", False))
+        enable_io = bool(self.capabilities.get("proc_io", False))
+        enable_faults = bool(self.capabilities.get("proc_faults", False))
+        enable_fds = bool(self.capabilities.get("open_fds", False))
+        enable_ctx = bool(self.capabilities.get("proc_ctx_switches", False))
 
         for pid in pids:
             # psutil vms + threads are cheap.
@@ -870,6 +923,12 @@ class BenchmarkRunner:
         time.sleep(self.args.sample_interval_s * 1.2)
 
         all_samples = self.samples or []
+        all_rss = [s.rss_mb for s in all_samples]
+        all_cpu = [s.cpu_percent for s in all_samples]
+        all_cpu_user = [s.cpu_user_percent for s in all_samples]
+        all_cpu_system = [s.cpu_system_percent for s in all_samples]
+        all_cpu_norm = [s.cpu_percent_normalized for s in all_samples]
+        all_proc = [float(s.process_count) for s in all_samples]
 
         # "Idle" should represent steady-state after the app becomes interactive.
         idle_samples: List[Sample] = []
@@ -881,10 +940,35 @@ class BenchmarkRunner:
             idle_end = ready_elapsed + max(0.0, self.args.idle_window_s)
             idle_samples = [s for s in all_samples if idle_start <= s.elapsed_s <= idle_end]
 
-        idle_memory_mb = self._median([s.rss_mb for s in idle_samples]) if idle_samples else 0.0
-        idle_cpu_percent = self._median([s.cpu_percent for s in idle_samples]) if idle_samples else 0.0
-        peak_memory_mb = max([s.rss_mb for s in all_samples], default=0.0)
-        peak_process_count = max([s.process_count for s in all_samples], default=0)
+        idle_rss = [s.rss_mb for s in idle_samples]
+        idle_cpu = [s.cpu_percent for s in idle_samples]
+        idle_cpu_user_vals = [s.cpu_user_percent for s in idle_samples]
+        idle_cpu_system_vals = [s.cpu_system_percent for s in idle_samples]
+        idle_cpu_norm_vals = [s.cpu_percent_normalized for s in idle_samples]
+        idle_proc = [float(s.process_count) for s in idle_samples]
+
+        rss_stats_all = self._series_stats(all_rss)
+        cpu_stats_all = self._series_stats(all_cpu)
+        cpu_user_stats_all = self._series_stats(all_cpu_user)
+        cpu_system_stats_all = self._series_stats(all_cpu_system)
+        cpu_norm_stats_all = self._series_stats(all_cpu_norm)
+        proc_stats_all = self._series_stats(all_proc)
+        rss_stats_idle = self._series_stats(idle_rss)
+        cpu_stats_idle = self._series_stats(idle_cpu)
+        cpu_user_stats_idle = self._series_stats(idle_cpu_user_vals)
+        cpu_system_stats_idle = self._series_stats(idle_cpu_system_vals)
+        cpu_norm_stats_idle = self._series_stats(idle_cpu_norm_vals)
+        proc_stats_idle = self._series_stats(idle_proc)
+
+        idle_memory_mb = rss_stats_idle["median"]
+        idle_cpu_percent = cpu_stats_idle["median"]
+        idle_cpu_user_percent = cpu_user_stats_idle["median"]
+        idle_cpu_system_percent = cpu_system_stats_idle["median"]
+        idle_cpu_percent_normalized = cpu_norm_stats_idle["median"]
+        peak_memory_mb = rss_stats_all["max"]
+        peak_cpu_percent = cpu_stats_all["max"]
+        peak_cpu_percent_normalized = cpu_norm_stats_all["max"]
+        peak_process_count = int(round(proc_stats_all["max"]))
 
         idle_pss_mb = None
         idle_uss_mb = None
@@ -949,8 +1033,10 @@ class BenchmarkRunner:
             app_reported_shutdown_time_s = max(0.0, (self.shutdown_end_ms - self.shutdown_begin_ms) / 1000.0)
 
         metrics = {
+            "profile": self.args.profile,
             "mode": self.args.mode,
             "timestamp": datetime.now().isoformat(),
+            "duration_s": round(float(getattr(self.args, "duration_s", 0.0)), 2),
             "root_pid": self.root_pid,
             "app_pid": self.app_pid,
             "measure_pid": self.measure_pid,
@@ -974,6 +1060,11 @@ class BenchmarkRunner:
             "models_disk_bytes": int(models_disk_bytes),
             "models_disk_human": models_disk_human,
             "idle_cpu_percent": round(idle_cpu_percent, 2),
+            "idle_cpu_user_percent": round(idle_cpu_user_percent, 2),
+            "idle_cpu_system_percent": round(idle_cpu_system_percent, 2),
+            "idle_cpu_percent_normalized": round(idle_cpu_percent_normalized, 2),
+            "peak_cpu_percent": round(peak_cpu_percent, 2),
+            "peak_cpu_percent_normalized": round(peak_cpu_percent_normalized, 2),
             "idle_cpu_pidstat_percent": round(idle_cpu_pidstat, 2) if idle_cpu_pidstat is not None else None,
             "peak_process_count": int(peak_process_count),
             "peak_llama_server_count": int(peak_llama_server_count)
@@ -989,6 +1080,33 @@ class BenchmarkRunner:
             "event_count": int(len(self.events)),
             "sample_count": int(len(self.samples)),
             "extended_sample_count": int(len(self.extended_samples)),
+            "collector_capabilities": self.capabilities,
+            "series_stats": {
+                "rss_mb": {
+                    "all": self._round_stats(rss_stats_all),
+                    "idle": self._round_stats(rss_stats_idle),
+                },
+                "cpu_percent": {
+                    "all": self._round_stats(cpu_stats_all),
+                    "idle": self._round_stats(cpu_stats_idle),
+                },
+                "cpu_user_percent": {
+                    "all": self._round_stats(cpu_user_stats_all),
+                    "idle": self._round_stats(cpu_user_stats_idle),
+                },
+                "cpu_system_percent": {
+                    "all": self._round_stats(cpu_system_stats_all),
+                    "idle": self._round_stats(cpu_system_stats_idle),
+                },
+                "cpu_percent_normalized": {
+                    "all": self._round_stats(cpu_norm_stats_all),
+                    "idle": self._round_stats(cpu_norm_stats_idle),
+                },
+                "process_count": {
+                    "all": self._round_stats(proc_stats_all),
+                    "idle": self._round_stats(proc_stats_idle),
+                },
+            },
             "tooling": {
                 "time": "internal wall clock + launch timestamps",
                 "ps": self._which("ps"),
@@ -1023,7 +1141,19 @@ class BenchmarkRunner:
         )
 
         with (self.results_dir / "samples.csv").open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=["ts", "elapsed_s", "rss_mb", "cpu_percent", "process_count"])
+            writer = csv.DictWriter(
+                file,
+                fieldnames=[
+                    "ts",
+                    "elapsed_s",
+                    "rss_mb",
+                    "cpu_percent",
+                    "cpu_user_percent",
+                    "cpu_system_percent",
+                    "cpu_percent_normalized",
+                    "process_count",
+                ],
+            )
             writer.writeheader()
             for sample in self.samples:
                 writer.writerow(
@@ -1032,6 +1162,9 @@ class BenchmarkRunner:
                         "elapsed_s": round(sample.elapsed_s, 4),
                         "rss_mb": round(sample.rss_mb, 4),
                         "cpu_percent": round(sample.cpu_percent, 4),
+                        "cpu_user_percent": round(sample.cpu_user_percent, 4),
+                        "cpu_system_percent": round(sample.cpu_system_percent, 4),
+                        "cpu_percent_normalized": round(sample.cpu_percent_normalized, 4),
                         "process_count": sample.process_count,
                     }
                 )
@@ -1047,6 +1180,9 @@ class BenchmarkRunner:
                     "uss_mb",
                     "shared_mb",
                     "cpu_percent",
+                    "cpu_user_percent",
+                    "cpu_system_percent",
+                    "cpu_percent_normalized",
                     "process_count",
                     "threads",
                     "open_fds",
@@ -1075,6 +1211,9 @@ class BenchmarkRunner:
                             "uss_mb": round(s.uss_mb, 4) if s.uss_mb is not None else None,
                             "shared_mb": round(s.shared_mb, 4) if s.shared_mb is not None else None,
                             "cpu_percent": round(s.cpu_percent, 4),
+                            "cpu_user_percent": round(s.cpu_user_percent, 4),
+                            "cpu_system_percent": round(s.cpu_system_percent, 4),
+                            "cpu_percent_normalized": round(s.cpu_percent_normalized, 4),
                             "process_count": s.process_count,
                             "threads": s.threads,
                             "open_fds": s.open_fds,
@@ -1107,9 +1246,35 @@ class BenchmarkRunner:
             for row in self.model_load_rows:
                 writer.writerow(row)
 
+        stats = metrics.get("series_stats", {})
+        if isinstance(stats, dict) and stats:
+            with (self.results_dir / "percentile_metrics.csv").open("w", newline="", encoding="utf-8") as file:
+                fieldnames = ["metric", "window", "min", "max", "mean", "median", "p95", "p99", "stddev"]
+                writer = csv.DictWriter(file, fieldnames=fieldnames)
+                writer.writeheader()
+                for metric_name, windows in stats.items():
+                    if not isinstance(windows, dict):
+                        continue
+                    for window_name, row in windows.items():
+                        if not isinstance(row, dict):
+                            continue
+                        writer.writerow(
+                            {
+                                "metric": metric_name,
+                                "window": window_name,
+                                "min": row.get("min"),
+                                "max": row.get("max"),
+                                "mean": row.get("mean"),
+                                "median": row.get("median"),
+                                "p95": row.get("p95"),
+                                "p99": row.get("p99"),
+                                "stddev": row.get("stddev"),
+                            }
+                        )
+
     def _run_plotter(self):
         plotter = Path(__file__).resolve().parent / "plot_results.py"
-        python_bin = shutil.which("python3") or "python3"
+        python_bin = shutil.which("python3") or shutil.which("python") or sys.executable or "python"
         subprocess.run([python_bin, str(plotter), "--results-dir", str(self.results_dir)], check=False)
 
     def _print_summary(self, metrics: dict):
@@ -1170,20 +1335,74 @@ class BenchmarkRunner:
                 continue
         return total / (1024 * 1024)
 
-    def _cpu_percent_tree(self) -> float:
+    def _cpu_percent_tree(self) -> Dict[str, float]:
+        """Return process-tree CPU usage as percent of one core using time deltas.
+
+        Using psutil.Process.cpu_percent(interval=0.0) can return unstable zeros without
+        per-process priming. This delta-based method is deterministic across platforms.
+        """
         pid = self.measure_pid or self.root_pid
         if not pid or not psutil.pid_exists(pid):
-            return 0.0
+            self._last_cpu_snapshot = None
+            return {
+                "total": 0.0,
+                "user": 0.0,
+                "system": 0.0,
+                "normalized": 0.0,
+            }
 
         pids = [pid] + self._descendant_pids(pid)
-        total = 0.0
+        total_user = 0.0
+        total_system = 0.0
         for pid in pids:
             try:
                 proc = psutil.Process(pid)
-                total += proc.cpu_percent(interval=0.0)
+                cpu_times = proc.cpu_times()
+                total_user += float(getattr(cpu_times, "user", 0.0))
+                total_system += float(getattr(cpu_times, "system", 0.0))
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        return total
+
+        now = time.time()
+        current = {
+            "ts": now,
+            "user_s": total_user,
+            "system_s": total_system,
+        }
+
+        if self._last_cpu_snapshot is None:
+            self._last_cpu_snapshot = current
+            return {
+                "total": 0.0,
+                "user": 0.0,
+                "system": 0.0,
+                "normalized": 0.0,
+            }
+
+        dt = max(0.0, current["ts"] - self._last_cpu_snapshot["ts"])
+        delta_user = max(0.0, current["user_s"] - self._last_cpu_snapshot["user_s"])
+        delta_system = max(0.0, current["system_s"] - self._last_cpu_snapshot["system_s"])
+        self._last_cpu_snapshot = current
+
+        if dt <= 0.0:
+            return {
+                "total": 0.0,
+                "user": 0.0,
+                "system": 0.0,
+                "normalized": 0.0,
+            }
+
+        total_pct = ((delta_user + delta_system) / dt) * 100.0
+        user_pct = (delta_user / dt) * 100.0
+        system_pct = (delta_system / dt) * 100.0
+        cpu_count = max(1, int(psutil.cpu_count(logical=True) or 1))
+        normalized_pct = total_pct / float(cpu_count)
+        return {
+            "total": total_pct,
+            "user": user_pct,
+            "system": system_pct,
+            "normalized": normalized_pct,
+        }
 
     def _process_count_tree(self) -> int:
         pid = self.measure_pid or self.root_pid
@@ -1476,14 +1695,112 @@ class BenchmarkRunner:
     def _which(self, cmd: str) -> Optional[str]:
         return shutil.which(cmd)
 
+    def _detect_capabilities(self) -> dict:
+        has_procfs = Path("/proc").exists()
+        supports_num_fds = hasattr(psutil.Process, "num_fds")
+        return {
+            "platform": platform.system().lower(),
+            "procfs": has_procfs,
+            "smaps_rollup": has_procfs and bool(getattr(self.args, "enable_smaps_rollup", True)),
+            "proc_io": has_procfs and bool(getattr(self.args, "enable_proc_io", True)),
+            "proc_faults": has_procfs and bool(getattr(self.args, "enable_proc_faults", True)),
+            "proc_ctx_switches": has_procfs and bool(getattr(self.args, "enable_proc_ctx_switches", True)),
+            "open_fds": supports_num_fds and bool(getattr(self.args, "enable_proc_fds", True)),
+            "backend_process_telemetry": True,
+        }
+
+    def _round_stats(self, stats: Dict[str, float], ndigits: int = 4) -> Dict[str, float]:
+        return {k: round(float(v), ndigits) for k, v in stats.items()}
+
+    def _percentile(self, values: List[float], percentile: float) -> float:
+        if not values:
+            return 0.0
+        arr = sorted(float(v) for v in values)
+        if len(arr) == 1:
+            return arr[0]
+        rank = (len(arr) - 1) * (percentile / 100.0)
+        lower = int(math.floor(rank))
+        upper = int(math.ceil(rank))
+        if lower == upper:
+            return arr[lower]
+        weight = rank - lower
+        return arr[lower] * (1.0 - weight) + arr[upper] * weight
+
+    def _series_stats(self, values: List[float]) -> Dict[str, float]:
+        arr = [float(v) for v in values]
+        if not arr:
+            return {
+                "min": 0.0,
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "p95": 0.0,
+                "p99": 0.0,
+                "stddev": 0.0,
+            }
+        stddev = statistics.pstdev(arr) if len(arr) > 1 else 0.0
+        return {
+            "min": min(arr),
+            "max": max(arr),
+            "mean": statistics.fmean(arr),
+            "median": self._median(arr),
+            "p95": self._percentile(arr, 95.0),
+            "p99": self._percentile(arr, 99.0),
+            "stddev": stddev,
+        }
+
+
+PROFILE_DEFAULTS = {
+    "quick": {
+        "sample_interval_s": 1.0,
+        "extended_sample_interval_s": 5.0,
+        "idle_window_s": 30,
+        "model_load_window_s": 60,
+    },
+    "standard": {
+        "sample_interval_s": 1.0,
+        "extended_sample_interval_s": 5.0,
+        "idle_window_s": 90,
+        "model_load_window_s": 180,
+    },
+    "long": {
+        "sample_interval_s": 0.5,
+        "extended_sample_interval_s": 2.0,
+        "idle_window_s": 180,
+        "model_load_window_s": 300,
+    },
+}
+
+
+def _apply_profile_defaults(args: argparse.Namespace, argv: List[str]) -> argparse.Namespace:
+    defaults = PROFILE_DEFAULTS.get(args.profile, PROFILE_DEFAULTS["standard"])
+    flag_map = {
+        "sample_interval_s": ["--sample-interval-s"],
+        "extended_sample_interval_s": ["--extended-sample-interval-s"],
+        "idle_window_s": ["--idle-window-s"],
+        "model_load_window_s": ["--model-load-window-s"],
+    }
+    for attr, value in defaults.items():
+        if not any(flag in argv for flag in flag_map[attr]):
+            setattr(args, attr, value)
+    if float(getattr(args, "duration_s", 0.0)) < 0:
+        raise ValueError("--duration-s must be >= 0")
+    return args
+
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="GenHat benchmark suite (system + model metrics + graphs)")
+    parser = argparse.ArgumentParser(description="GenHat application benchmark suite (system + model metrics + charts)")
 
     parser.add_argument("--repo-root", default=".", help="Repo root (contains genhat-desktop and models)")
     parser.add_argument("--models-dir", default=None, help="Path to models directory")
     parser.add_argument("--output-dir", default="benchmark/results", help="Output directory for benchmark runs")
+    parser.add_argument(
+        "--profile",
+        choices=["quick", "standard", "long"],
+        default="standard",
+        help="Benchmark profile that sets default sampling and timing windows.",
+    )
 
     parser.add_argument("--mode", choices=["launch", "attach"], default="launch", help="launch: start app, attach: monitor existing process")
     parser.add_argument("--launch-cmd", default="cd genhat-desktop && npx tauri dev", help="Command used in launch mode")
@@ -1553,12 +1870,19 @@ def parse_args():
         action="store_true",
         help="Keep sampling until the app process exits (close the app normally to stop).",
     )
+    parser.add_argument(
+        "--duration-s",
+        type=float,
+        default=0.0,
+        help="Fixed benchmark duration in seconds after readiness (0 keeps idle/model window phases).",
+    )
 
     parser.add_argument("--app-binary-path", default=None, help="Path to app binary (if known)")
     parser.add_argument("--shutdown-after-benchmark", action="store_true", help="Gracefully shut down launched app and measure shutdown time")
     parser.add_argument("--shutdown-timeout-s", type=int, default=45, help="Shutdown timeout before SIGKILL")
 
-    return parser.parse_args()
+    parsed = parser.parse_args()
+    return _apply_profile_defaults(parsed, sys.argv[1:])
 
 
 if __name__ == "__main__":

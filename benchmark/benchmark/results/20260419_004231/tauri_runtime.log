@@ -1,0 +1,136 @@
+     Running BeforeDevCommand (`npm run dev`)
+
+> genhat-desktop@0.1.1 dev
+> vite
+
+[33mYou are using Node.js 22.11.0. Vite requires Node.js version 20.19+ or 22.12+. Please upgrade your Node.js version.[39m
+
+  [32m[1mVITE[22m v7.3.1[39m  [2mready in [0m[1m1096[22m[2m[0m ms[22m
+
+  [32mâžœ[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+[2m  [32mâžœ[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching D:\nela\genhat-desktop\src-tauri for changes...
+[1m[92m   Compiling[0m app v0.1.1 (D:\nela\genhat-desktop\src-tauri)
+[1m[96m    Building[0m [=======================> ] 762/766: app(buiâ€¦
+[1m[96m    Building[0m [=======================> ] 763/766: app(buiâ€¦
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+[1m[93mwarning[0m[1m[97m: unused variable: `pid`[0m
+   [1m[96m--> [0msrc\backends\llama_server.rs:421:36
+    [1m[96m|[0m
+[1m[96m421[0m [1m[96m|[0m async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), String> {
+    [1m[96m|[0m                                    [1m[93m^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: `_pid`[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+[1m[93mwarning[0m[1m[97m: unused variable: `stuck_check_after`[0m
+   [1m[96m--> [0msrc\backends\llama_server.rs:433:9
+    [1m[96m|[0m
+[1m[96m433[0m [1m[96m|[0m     let stuck_check_after = std::time::Duration::from_secs(15);
+    [1m[96m|[0m         [1m[93m^^^^^^^^^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: `_stuck_check_after`[0m
+
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+memory allocation of 299024 bytes failed
+stack backtrace:
+   0:     0x7ffa295267d2 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   1:     0x7ffa2953bac1 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   2:     0x7ffa294eee54 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   3:     0x7ffa2950c0af - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   4:     0x7ffa2950c19c - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   5:     0x7ffa2950741f - <unknown>
+   6:     0x7ffa2950c16b - <unknown>
+   7:     0x7ffa294e97a8 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   8:     0x7ffa2d5f38aa - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+   9:     0x7ffa2a33ee98 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  10:     0x7ffa2a32cd0e - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  11:     0x7ffa28f8c805 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  12:     0x7ffa2904a0f8 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  13:     0x7ffa2a6819b3 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  14:     0x7ffa29da12c8 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  15:     0x7ffa29d75990 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  16:     0x7ffa29d07263 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  17:     0x7ffa29ca46c5 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  18:     0x7ffa2a35586b - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  19:     0x7ffa2a3fba04 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  20:     0x7ffa290357b5 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  21:     0x7ffa2956866b - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  22:     0x7ffa29570efb - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  23:     0x7ffa28f68f3a - <unknown>
+  24:     0x7ffa28f740b6 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  25:     0x7ffa290518ac - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  26:     0x7ffa26a99f17 - <unknown>
+  27:     0x7ffa26a92d6f - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  28:     0x7ffa26aa0859 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  29:     0x7ffa294ffa28 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  30:     0x7ffb096be8d7 - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+  31:     0x7ffb0ab0c3fc - <unknown>
+[1m[96m    Building[0m [=======================> ] 764/766: app     
+                                                            
+[1m[93mwarning[0m: `app` (lib) generated 2 warnings (run `cargo fix --lib -p app` to apply 2 suggestions)
+[1m[91merror[0m: could not compile `app` (lib); 2 warnings emitted
+
+Caused by:
+  process didn't exit successfully: `C:\Users\assas\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name app_lib --edition=2021 src\lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type staticlib --crate-type cdylib --crate-type rlib --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values())" -C metadata=567249eac327452f --out-dir D:\nela\genhat-desktop\src-tauri\target\debug\deps -C incremental=D:\nela\genhat-desktop\src-tauri\target\debug\incremental -L dependency=D:\nela\genhat-desktop\src-tauri\target\debug\deps --extern async_trait=D:\nela\genhat-desktop\src-tauri\target\debug\deps\async_trait-812f458834e0a22d.dll --extern base64=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libbase64-b548805f762d34b4.rlib --extern cpal=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libcpal-79e6374c9a6aad52.rlib --extern crossbeam_channel=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libcrossbeam_channel-6b095608c42a1ce1.rlib --extern dashmap=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libdashmap-69982b7f5394a585.rlib --extern docx_rs=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libdocx_rs-8c210acd49d4d944.rlib --extern fancy_regex=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libfancy_regex-fdb9a13e283e3ea5.rlib --extern futures_util=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libfutures_util-7a5cc3fba71a116d.rlib --extern hound=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libhound-feda7edfccb9764f.rlib --extern image=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libimage-536175171bbefbfc.rlib --extern log=D:\nela\genhat-desktop\src-tauri\target\debug\deps\liblog-753ca99fbcb8d51f.rlib --extern ort=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libort-68e1649bb76f661a.rlib --extern pdf_extract=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libpdf_extract-657a59a31756a5b3.rlib --extern pdfium_render=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libpdfium_render-481c852adf018855.rlib --extern portpicker=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libportpicker-1170da3fdfd46e8e.rlib --extern r2d2=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libr2d2-aed238f98079b2fb.rlib --extern r2d2_sqlite=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libr2d2_sqlite-3fda189536a5a3cd.rlib --extern rayon=D:\nela\genhat-desktop\src-tauri\target\debug\deps\librayon-c4b0e92338d49eaa.rlib --extern realfft=D:\nela\genhat-desktop\src-tauri\target\debug\deps\librealfft-80216fa767a7ebce.rlib --extern regex=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libregex-1eda9de34ae9892a.rlib --extern reqwest=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libreqwest-1cc8a86feed3368c.rlib --extern rusqlite=D:\nela\genhat-desktop\src-tauri\target\debug\deps\librusqlite-6d9802ced39dd09c.rlib --extern serde=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libserde-619baf5f0b6e34c7.rlib --extern serde_json=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libserde_json-1764622f66fe7fc8.rlib --extern sha2=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libsha2-bedde2053b612ec7.rlib --extern symphonia=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libsymphonia-063e6f2eccfcf13c.rlib --extern sysinfo=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libsysinfo-6bb6bc3c9ca2e3c5.rlib --extern tantivy=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtantivy-462e1425e7714adf.rlib --extern tauri=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtauri-c0456e2cce03de6f.rlib --extern tauri_plugin_dialog=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtauri_plugin_dialog-22701070fbd3d1e0.rlib --extern tauri_plugin_log=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtauri_plugin_log-4f6589c356fea638.rlib --extern tempfile=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtempfile-df6cbecef1c46ef0.rlib --extern tokenizers=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtokenizers-7a3225f6e30a9f52.rlib --extern tokio=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtokio-128b829c7426a2f6.rlib --extern toml=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libtoml-0d24b2b280d338b3.rlib --extern uuid=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libuuid-f89385ca8fdb2172.rlib --extern wide=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libwide-705aacbf6775d51b.rlib --extern xml=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libxml-26483044fbb9318c.rlib --extern zip=D:\nela\genhat-desktop\src-tauri\target\debug\deps\libzip-ef9458462323dfc7.rlib -L native=D:\nela\genhat-desktop\src-tauri\target\debug\build\libsqlite3-sys-dbb85698306e9d6d\out -L native=D:\nela\genhat-desktop\src-tauri\target\debug\build\zstd-sys-a19387b80268f8fe\out -L native=D:\nela\genhat-desktop\src-tauri\target\debug\build\webview2-com-sys-889cb3fd622ff5aa\out\x64 -L native=D:\nela\genhat-desktop\src-tauri\target\debug\build\onig_sys-072fedd1aba7b09d\out -L native=D:\nela\genhat-desktop\src-tauri\target\debug\build\bzip2-sys-b54971fb18769c2e\out\lib -L native=D:\nela\genhat-desktop\src-tauri\target\debug\build\lzma-sys-2528dad06c82f22a\out -L native=C:\Users\assas\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows_x86_64_msvc-0.52.6\lib -L native=C:\Users\assas\AppData\Local\ort.pyke.io\dfbin\x86_64-pc-windows-msvc\a03948a02dec0c38485febb0e54ccb89af070d3adcbcb91e2e4fa5fec278943a -L "native=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\atlmfc\lib\x64" -L native=C:\Users\assas\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows_x86_64_msvc-0.53.1\lib -L "native=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\atlmfc\lib\x64" -L "native=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\atlmfc\lib\x64" -L "native=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\atlmfc\lib\x64" -L "native=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\atlmfc\lib\x64" --cfg desktop --cfg dev --check-cfg cfg(desktop) --check-cfg cfg(mobile) --check-cfg cfg(dev)` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)
+npm notice
+npm notice New minor version of npm available! 11.6.4 -> 11.12.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+npm notice To update run: npm install -g npm@11.12.1
+npm notice

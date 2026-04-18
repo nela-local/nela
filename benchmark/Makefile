@@ -1,12 +1,6 @@
-CC ?= gcc
-CFLAGS ?= -O2 -std=c11 -Wall -Wextra -pedantic
-
 .PHONY: all clean
 
-all: llama_bench_sweep
-
-llama_bench_sweep: llama_bench_sweep.c
-	$(CC) $(CFLAGS) $< -o $@
+all:
 
 clean:
-	rm -f llama_bench_sweep
+	@echo "No build artifacts to clean (application benchmarking only)."

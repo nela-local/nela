@@ -1,15 +1,16 @@
-# GenHat Benchmark Suite
+# GenHat Application Benchmark Suite
 
-This folder contains a benchmark-only (no app code changes required) pipeline that captures:
+This folder contains an application-only benchmark pipeline (no app code changes required) that captures:
 
 - Startup timing (cold start)
 - Process-tree resource use over time (CPU, RSS, process count)
-- Extended Linux `/proc` metrics (PSS/USS, I/O bytes + rates, page faults + rates, threads, open FDs, context switches)
-- Per-model load time + memory deltas (parsed from existing runtime logs; best-effort)
+- Extended collector metrics (best-effort; full Linux `/proc` support, graceful fallback on Windows/macOS)
+- Per-model load time + memory deltas (parsed from runtime logs)
 - Disk footprint (models + app binary)
-- Graceful shutdown time (launch mode)
+- Graceful shutdown timing (launch mode)
+- Aggregated series statistics (min/max/mean/median/p95/p99/stddev)
 
-It also generates visual graphs automatically.
+The suite generates both PNG charts and interactive HTML charts.
 
 ---
 
@@ -23,15 +24,15 @@ source .venv-benchmark/bin/activate
 pip install -r benchmark/requirements.txt
 ```
 
-Optional Linux tools (recommended):
+Optional Linux tools (recommended for deeper validation):
 
 ```bash
 sudo apt-get install -y smem sysstat psmisc procps
 ```
 
-- `smem` → extra memory validation
-- `pidstat` (from `sysstat`) → CPU profiling
-- `pstree` (from `psmisc`) → process tree snapshots
+- `smem` for extra memory validation
+- `pidstat` (from `sysstat`) for CPU profiling
+- `pstree` (from `psmisc`) for process tree snapshots
 
 ---
 
@@ -39,80 +40,102 @@ sudo apt-get install -y smem sysstat psmisc procps
 
 Launches GenHat and benchmarks from startup.
 
-If your environment has Snap/loader issues (common on some Ubuntu setups), keep `--sanitize-launch-env` enabled (default).
-
 ```bash
 python3 benchmark/run_benchmark.py \
   --repo-root . \
   --mode launch \
   --launch-cmd "cd genhat-desktop && npx tauri dev" \
+  --profile standard \
   --interactive \
-  --shutdown-after-benchmark \
-  --sanitize-launch-env
+  --shutdown-after-benchmark
 ```
 
-### Launch mode, but run until you close the app
-
-This keeps collecting metrics while you use the app normally, and stops when you close the app window (no forced shutdown step):
+### Run until the app exits
 
 ```bash
 python3 benchmark/run_benchmark.py \
   --repo-root . \
   --mode launch \
   --launch-cmd "cd genhat-desktop && npx tauri dev" \
-  --run-until-exit \
-  --sanitize-launch-env
+  --profile standard \
+  --run-until-exit
 ```
 
-During the interactive model phase, load models from the UI, then press Enter.
+### Fixed duration mode
+
+```bash
+python3 benchmark/run_benchmark.py \
+  --repo-root . \
+  --mode launch \
+  --launch-cmd "cd genhat-desktop && npx tauri dev" \
+  --profile quick \
+  --duration-s 180
+```
 
 ---
 
-## 3) Attach Mode (recommended if you start the app yourself)
+## 3) Attach Mode
 
-Attach mode is the most robust if you prefer launching the app in a “known-good” terminal session (and then letting the benchmark only observe the process tree).
+Attach mode is useful when you launch the app in a separate known-good terminal and only want benchmark observation:
 
 ```bash
 python3 benchmark/run_benchmark.py \
   --repo-root . \
   --mode attach \
   --attach-name app \
-  --interactive
+  --profile standard
 ```
 
-If your process name is different, try `--attach-name genhat` (or use `--attach-pid`).
-
-If `--attach-name app` doesn’t match on your machine, find the PID and use `--attach-pid`:
+If name matching fails, use a PID:
 
 ```bash
-pgrep -af "target/debug/app|genhat" \
-  | head
+python3 benchmark/run_benchmark.py \
+  --repo-root . \
+  --mode attach \
+  --attach-pid <PID>
 ```
 
-For best model-load metrics in attach mode, provide a live tauri log file:
+For better model event parsing in attach mode, provide a live tauri log file:
 
 ```bash
 python3 benchmark/run_benchmark.py \
   --repo-root . \
   --mode attach \
   --attach-pid <PID> \
-  --tauri-log-file /path/to/tauri.log \
-  --interactive
+  --tauri-log-file /path/to/tauri.log
 ```
 
 ---
 
-## 4) Outputs
+## 4) Profiles
+
+`--profile` sets default timing/sampling values unless explicitly overridden.
+
+- `quick`: short check, faster turnaround
+- `standard`: balanced default for day-to-day benchmarking
+- `long`: denser sampling and longer steady-state windows
+
+You can still override any profile default directly:
+
+- `--sample-interval-s`
+- `--extended-sample-interval-s`
+- `--idle-window-s`
+- `--model-load-window-s`
+
+---
+
+## 5) Outputs
 
 Each run creates a timestamped folder in `benchmark/results/<timestamp>/`:
 
-- `metrics.json` → all core metrics
-- `events.json` → structured event timeline parsed from logs (spawn/ready and optional `[BENCH]` markers)
-- `samples.csv` → time series samples (`rss_mb`, `cpu_percent`, `process_count`)
-- `extended_samples.csv` → extended samples (best-effort Linux `/proc` stats: PSS/USS, I/O, faults, threads, fds, ctx switches, llama-server count)
-- `model_metrics.csv` → per-model load time + memory delta
-- `tauri_runtime.log` → captured runtime logs
-- `plots/`:
+- `metrics.json`: core metrics, capabilities, and aggregate stats
+- `events.json`: structured event timeline parsed from logs
+- `samples.csv`: time-series core samples (`rss_mb`, `cpu_percent`, `cpu_user_percent`, `cpu_system_percent`, `cpu_percent_normalized`, `process_count`)
+- `extended_samples.csv`: extended samples (collector-dependent)
+- `model_metrics.csv`: per-model load time + memory delta
+- `percentile_metrics.csv`: per-series window stats (`min/max/mean/median/p95/p99/stddev`)
+- `tauri_runtime.log`: captured runtime logs
+- `plots/` PNG outputs:
   - `rss_over_time.png`
   - `cpu_over_time.png`
   - `process_count_over_time.png`
@@ -120,161 +143,86 @@ Each run creates a timestamped folder in `benchmark/results/<timestamp>/`:
   - `io_rates_over_time.png`
   - `fault_rates_over_time.png`
   - `threads_fds_over_time.png`
-  - `llama_server_count_over_time.png`
+  - `llama_server_count_over_time.png` (backend process telemetry)
   - `model_load_time.png`
   - `model_memory_delta.png`
   - `summary_metrics.png`
+- `plots/` HTML outputs (interactive):
+  - `rss_over_time.html`
+  - `cpu_over_time.html`
+  - `process_count_over_time.html`
+  - `memory_breakdown_over_time.html`
+  - `io_rates_over_time.html`
+  - `fault_rates_over_time.html`
+  - `threads_fds_over_time.html`
+  - `backend_process_count_over_time.html`
+  - `model_load_time.html`
+  - `model_memory_delta.html`
+  - `summary_metrics.html`
+  - `dashboard.html`
 
 ---
 
-## 5) Exhaustive Metrics Checklist (benchmark-only)
+## 6) Metrics Coverage
 
-This suite is designed to work without any app-side instrumentation.
+### Timing
 
-### A) Timing
+- Cold start time: launch timestamp to readiness marker/regex
+- Shutdown time (launch mode): `SIGTERM` to process tree exit
 
-- Cold start time (best-effort): launch timestamp → “app ready” heuristic (or `[BENCH]` markers if present in logs)
-- Shutdown time (launch mode): `SIGTERM` issued → process tree exits
+### Process tree time series
 
-### B) Background overhead
+- CPU% over time
+- CPU user/system split over time
+- CPU normalized by logical core count
+- RSS MB over time
+- Process count over time
 
-- Lifecycle / health-check overhead: best-effort CPU% overhead estimate from the periodic health-check loop
+### Extended collectors (best-effort)
 
-### C) Process tree (what gets sampled)
+Linux provides full `/proc` collection where available:
 
-- The runner discovers the “real app PID” from the launch wrapper process tree (filters out `node/npx/npm/cargo/vite` wrappers) and samples the full descendant tree.
+- PSS/USS/shared memory
+- I/O bytes and rates
+- Minor/major faults and rates
+- Voluntary/involuntary context switches
+- Open file descriptor counts
 
-### D) Resource time series
+Windows and macOS runs still collect core process telemetry and write explicit capability flags so missing collectors do not fail the benchmark.
 
-- CPU% over time (process tree)
-- RSS MB over time (process tree)
-- Process count over time (process tree)
+### Per-model metrics
 
-### E) Extended Linux `/proc` metrics (best-effort)
+- Model spawn to ready load time
+- RSS delta (ready minus spawn)
 
-- PSS MB / USS MB over time (from `/proc/<pid>/smaps_rollup` when permitted)
-- I/O bytes and read/write rates (from `/proc/<pid>/io`)
-- Minor/major faults and derived fault rates (from `/proc/<pid>/stat`)
-- Voluntary/involuntary context switches (from `/proc/<pid>/status`)
-- Thread count, VMS, open file descriptors (via `psutil` where allowed)
-- `llama-server` process count within the measured process tree
+### Aggregate statistics
 
-### F) Per-model metrics (log-derived)
+For `rss_mb`, `cpu_percent`, and `process_count`, both full-run and idle-window stats include:
 
-- Model load time (spawn → ready) parsed from existing runtime logs
-- Per-model RSS delta (RSS at ready − RSS at spawn)
+- `min`
+- `max`
+- `mean`
+- `median`
+- `p95`
+- `p99`
+- `stddev`
 
-### G) Disk footprint
+---
 
-- App binary size
-- Models directory footprint
+## 7) Useful Flags
 
-## 6) Useful Flags
-
-- `--sample-interval-s` / `--extended-sample-interval-s`: tune sampling frequency
-- `--no-smaps-rollup`, `--no-proc-io`, `--no-proc-faults`, `--no-proc-fds`, `--no-proc-ctx-switches`: disable expensive collectors
-- `--sanitize-launch-env`: strips Snap-injected loader paths (helps avoid `libpthread` / `GLIBC_PRIVATE` symbol errors)
-
-## 7) llama-bench Model Throughput Sweeper (C)
-
-If you want to find the best `llama-bench` tokens/s for each local GGUF model across key knobs (threads, prompt length, flash-attn, KV cache type), use the benchmark-only sweeper:
-
-### Build
-
-```bash
-cd benchmark
-make
-```
-
-### Run (from repo root)
-
-Fast-ish default sweep (threads × flash-attn × cache types):
-
-```bash
-./benchmark/llama_bench_sweep
-```
-
-More exhaustive example (adjust to taste):
-
-```bash
-./benchmark/llama_bench_sweep \
-  --threads 1,2,4,6,8,12,16 \
-  --prompt 256,512,1024,2048 \
-  --gen 64,128 \
-  --flash-attn 0,1 \
-  --cache f16,q8_0,q4_0 \
-  --reps 1
-```
-
-If you want to target a specific model (useful when some models fail to load due to RAM), pass `--model`:
-
-```bash
-./benchmark/llama_bench_sweep \
-  --model models/LLM/Qwen3.5-0.8B-UD-Q4_K_XL.gguf \
-  --threads 2,4,8 \
-  --flash-attn 0,1 \
-  --cache-k f16,q8_0 \
-  --cache-v f16,q8_0 \
-  --reps 1
-```
-
-### Complete sweep behavior with `--model`
-
-When you run only:
-
-```bash
-./benchmark/llama_bench_sweep --model <model_path>
-```
-
-the tool now automatically uses a broad full-grid profile (across threads, prompt/gen sizes, flash-attn, cache-k/cache-v, batch/ubatch, reps) and runs every combination sequentially, waiting for each `llama-bench` result before moving to the next combination.
-
-During execution it prints a live progress line with:
-- overall runs completed / total runs
-- current model progress
-- successful run count
-- run rate (`run/s`)
-- ETA
-
-Default full-grid profile for `--model` (unless overridden):
-- `--threads 1,2,4,6,8,12,16`
-- `--prompt 64,128,256,512,1024,2048,4096`
-- `--gen 32,64,128,256,512`
-- `--flash-attn 0,1`
-- `--cache-k f16,q8_0,q4_0`
-- `--cache-v f16,q8_0,q4_0`
-- `--batch-list 256,512,1024,2048,4096`
-- `--ubatch-list 64,128,256,512,1024`
-- `--reps-list 1`
-
-You can override any field with your own list flags (`--threads`, `--prompt`, `--gen`, `--cache-k`, `--cache-v`, `--batch-list`, `--ubatch-list`, `--reps-list`) or force compact defaults with `--quick`.
-
-If you want to cross-test different K/V cache types independently:
-
-```bash
-./benchmark/llama_bench_sweep \
-  --threads 4,8 \
-  --prompt 512 \
-  --gen 128 \
-  --flash-attn 0,1 \
-  --cache-k f16,q8_0 \
-  --cache-v f16,q8_0,q4_0 \
-  --reps 1
-```
-
-Outputs are written under `benchmark/results/llama_bench_sweep_<timestamp>/`:
-- `all_results.csv` (every run)
-- `best_by_model.csv` (best `tg` tok/s config per model)
-- `best_by_model_pp.csv` (best `pp` tok/s config per model)
-- `summary.json` (includes both best-by-tg and best-by-pp)
+- `--profile quick|standard|long`
+- `--duration-s <seconds>`
+- `--interactive`
+- `--run-until-exit`
+- `--sample-interval-s` / `--extended-sample-interval-s`
+- `--no-smaps-rollup`, `--no-proc-io`, `--no-proc-faults`, `--no-proc-fds`, `--no-proc-ctx-switches`
+- `--sanitize-launch-env`
 
 ---
 
 ## 8) Notes
 
-- For the most complete benchmark (shutdown timing + full capture), use `--mode launch` and `--shutdown-after-benchmark`.
-- Per-model metrics depend on runtime logs that contain:
-  - `Spawning new instance ... for model ...`
-  - `Instance ... for model ... is ready`
-- If `[BENCH]` markers exist in logs, the runner will use them, but they are not required.
-- In-process models may show smaller or mixed memory deltas compared to child-process backends.
-- If `smem/pidstat/pstree` are not installed, the benchmark still runs (they are optional).
+- This folder now benchmarks application behavior only.
+- If `[BENCH]` markers exist in logs, they are used when present, but they are not required.
+- If optional Linux tools are not installed, the benchmark still runs.
