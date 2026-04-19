@@ -4,7 +4,7 @@
 
 ---
 
-IMPORTANT NOTE: This file has to be updated by the agents on every change to the repo. It serves as the single source of truth for how the application works, how it's structured, and how to develop on it. Always keep it up to date with the latest architectural decisions, file structure, and development guidelines. If anything is removed mention it here, if anything is added mention it here. A new agent must be able to get the complete picture of the current state of the project by just reading this MD file.
+IMPORTANT NOTE: The `.github` customization set is part of the repository contract. Update this file and the related `.github` files (`.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, and `.github/agents/*.agent.md`) whenever code, architecture, workflow, or command behavior changes. If a user asks to revert a change, also revert or delete the matching updates in these `.github` files in the same revert scope.
 
 ## 1. Project Overview
 
