@@ -17,6 +17,9 @@ applyTo:
 
 - Use Tauri command boundaries via existing API wrappers in `src/api.ts` and adjacent app utilities.
 - Keep mode behavior aligned with current app flows (chat, vision, audio, podcast, mindmap, RAG knowledge base).
+- In text chat, support both document grounding paths via the RAG toggle: `on` uses ingested knowledge-base retrieval (`query_rag_stream`), `off` uses direct file-to-prompt attachments (`prepare_direct_document_prompt`).
+- Keep RAG toggle default to `off` and keep runtime parameter dock hidden by default until explicitly opened.
+- Runtime parameter apply actions should resolve to a registered runtime model ID and must fail loudly instead of silently falling back to session-only overrides.
 - When command names or payload contracts change, update frontend call sites and matching Rust commands together.
 
 # Verification

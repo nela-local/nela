@@ -7,6 +7,7 @@ import type {
   IngestionStatus,
   RagResult,
   RagStreamSetup,
+  DirectDocumentPromptSetup,
   MediaAsset,
   PodcastRequest,
   PodcastResult,
@@ -447,6 +448,22 @@ export const Api = {
     topK?: number
   ): Promise<RagStreamSetup> {
     return invoke<RagStreamSetup>("query_rag_stream", { query, topK });
+  },
+
+  /**
+   * Build a direct-to-model prompt from attached files, bypassing RAG retrieval.
+   */
+  async prepareDirectDocumentPrompt(
+    query: string,
+    filePaths: string[],
+    options?: { maxCharsPerDocument?: number; maxTotalChars?: number }
+  ): Promise<DirectDocumentPromptSetup> {
+    return invoke<DirectDocumentPromptSetup>("prepare_direct_document_prompt", {
+      query,
+      filePaths,
+      maxCharsPerDocument: options?.maxCharsPerDocument ?? null,
+      maxTotalChars: options?.maxTotalChars ?? null,
+    });
   },
 
   /** List all ingested documents with their ingestion status. */

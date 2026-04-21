@@ -97,8 +97,14 @@ interface ChatWindowProps {
   ragDocs?: IngestionStatus[];
   ragIngesting?: boolean;
   enrichmentStatus?: string | null;
+  ragEnabled?: boolean;
+  onToggleRagEnabled?: (enabled: boolean) => void;
   onIngestFile?: () => void;
   onIngestDir?: () => void;
+  onAttachDirectDocuments?: () => void;
+  directDocumentPaths?: string[];
+  onRemoveDirectDocument?: (path: string) => void;
+  onClearDirectDocuments?: () => void;
   onSelectVisionImage?: () => void;
   visionImagePath?: string | null;
   visionImagePreview?: string | null;
@@ -242,8 +248,14 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
   ragDocs = [],
   ragIngesting = false,
   enrichmentStatus = null,
+  ragEnabled = false,
+  onToggleRagEnabled,
   onIngestFile,
   onIngestDir,
+  onAttachDirectDocuments,
+  directDocumentPaths = [],
+  onRemoveDirectDocument,
+  onClearDirectDocuments,
   onSelectVisionImage,
   visionImagePath = null,
   visionImagePreview = null,
@@ -342,22 +354,54 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       );
     }
 
+    if (chatMode === "text" && !ragEnabled) {
+      return (
+        <button
+          className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
+          onClick={() => {
+            onAttachDirectDocuments?.();
+            setShowAttachMenu(false);
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          <div className="flex flex-col items-start">
+            <span className="font-medium">Attach Files</span>
+            <span className="text-[0.68rem] text-txt-muted">Send directly to model</span>
+          </div>
+        </button>
+      );
+    }
+
     return (
       <>
-        <button className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
-          onClick={() => { onIngestFile?.(); setShowAttachMenu(false); }}>
+        <button
+          className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
+          onClick={() => {
+            onIngestFile?.();
+            setShowAttachMenu(false);
+          }}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" />
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
           </svg>
           <div className="flex flex-col items-start">
             <span className="font-medium">Add Files</span>
             <span className="text-[0.68rem] text-txt-muted">PDF, DOCX, TXT, code...</span>
           </div>
         </button>
-        <button className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
-          onClick={() => { onIngestDir?.(); setShowAttachMenu(false); }}>
+        <button
+          className="w-full flex items-center gap-2.5 py-2 px-3 rounded-lg text-sm text-txt-secondary bg-transparent border-none cursor-pointer transition-all duration-150 hover:bg-glass-hover hover:text-txt"
+          onClick={() => {
+            onIngestDir?.();
+            setShowAttachMenu(false);
+          }}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <div className="flex flex-col items-start">
             <span className="font-medium">Add Folder</span>
@@ -365,6 +409,37 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           </div>
         </button>
       </>
+    );
+  };
+
+  const renderRagToggle = () => {
+    if (chatMode !== "text" || !onToggleRagEnabled) return null;
+
+    return (
+      <div className="flex items-center justify-center mb-2">
+        <button
+          className={`inline-flex items-center gap-2 py-1 px-2 rounded-full border text-[0.72rem] transition-all duration-200 ${
+            ragEnabled
+              ? "bg-neon-subtle text-neon border-neon/40"
+              : "bg-glass-bg text-txt-secondary border-glass-border hover:border-neon/30 hover:text-neon"
+          }`}
+          onClick={() => onToggleRagEnabled(!ragEnabled)}
+          title="Toggle RAG retrieval"
+        >
+          <span className="font-semibold">RAG {ragEnabled ? "On" : "Off"}</span>
+          <span
+            className={`relative inline-flex h-4 w-8 rounded-full transition-colors ${
+              ragEnabled ? "bg-neon" : "bg-void-700"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                ragEnabled ? "translate-x-4" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
     );
   };
 
@@ -406,6 +481,51 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     );
   };
 
+  const renderDirectDocumentAttachments = () => {
+    if (chatMode !== "text" || directDocumentPaths.length === 0) return null;
+
+    return (
+      <div className="w-full mb-2">
+        <div className="flex items-start gap-2 mb-1.5">
+          <span className="text-[0.7rem] text-txt-muted">
+            Direct docs ({directDocumentPaths.length})
+          </span>
+          <button
+            className="text-[0.68rem] text-txt-muted hover:text-danger"
+            onClick={onClearDirectDocuments}
+            title="Clear all attached documents"
+          >
+            Clear all
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {directDocumentPaths.map((path) => {
+            const name = path.split(/[/\\]/).pop() ?? "document";
+            return (
+              <span
+                key={path}
+                className="inline-flex items-center gap-1 py-1 px-2 rounded-lg bg-void-700 border border-glass-border text-[0.68rem] text-txt-secondary max-w-55"
+                title={path}
+              >
+                <span className="truncate">{name}</span>
+                <button
+                  className="w-4 h-4 inline-flex items-center justify-center rounded text-txt-muted hover:text-danger"
+                  onClick={() => onRemoveDirectDocument?.(path)}
+                  title="Remove document"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // ─── Centered Welcome State (Claude/Copilot style) ───
   if (!hasMessages) {
     return (
@@ -427,6 +547,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         {/* Centered Input */}
         <div className="relative z-10 w-full max-w-2xl">
+          {renderRagToggle()}
+
           {/* RAG doc indicators */}
           {showRagControls && ragDocs.length > 0 && (
             <div className="flex items-center gap-2 mb-2 justify-center">
@@ -458,13 +580,20 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
           <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-3 py-2 transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
             {renderVisionAttachment()}
+            {renderDirectDocumentAttachments()}
             <div className="flex items-end gap-2">
             {showAttachButton && (
               <div className="relative" ref={attachMenuRef}>
                 <button
                   className="glass-btn flex items-center justify-center w-9 h-9 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
                   onClick={() => setShowAttachMenu(!showAttachMenu)}
-                  title={chatMode === "vision" ? "Upload image" : "Add documents to knowledge base"}
+                  title={
+                    chatMode === "vision"
+                      ? "Upload image"
+                      : chatMode === "text" && !ragEnabled
+                        ? "Attach documents directly to the model"
+                        : "Add documents to knowledge base"
+                  }
                   disabled={isLoading}
                   data-tour="attach-button"
                 >
@@ -604,6 +733,23 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                             />
                           </div>
                         )}
+                        {msg.directDocuments && msg.directDocuments.length > 0 && (
+                          <div className="mb-2 flex flex-wrap gap-1.5">
+                            {msg.directDocuments.map((doc, docIdx) => (
+                              <span
+                                key={`${doc.path}-${docIdx}`}
+                                className="inline-flex items-center gap-1 py-0.5 px-2 rounded-md bg-void-800/70 border border-glass-border text-[0.68rem] text-txt-secondary"
+                                title={doc.path}
+                              >
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <polyline points="14 2 14 8 20 8" />
+                                </svg>
+                                <span className="max-w-45 truncate">{doc.name}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {msg.content}
                       </div>
                     </div>
@@ -740,6 +886,8 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
       {/* ── Input Area ── */}
       <div className="px-6 py-3 shrink-0 border-t border-glass-border bg-void-900">
+        {renderRagToggle()}
+
         {/* RAG doc indicators */}
         {showRagControls && ragDocs.length > 0 && (
           <div className="flex items-center gap-2 mb-2 max-w-3xl mx-auto">
@@ -771,13 +919,20 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
           <div className="input-wrapper glass-strong flex flex-col gap-2 rounded-2xl px-3 py-2 max-w-3xl mx-auto transition-all duration-200 shadow-[0_4px_24px_rgba(0,0,0,0.3)] focus-within:border-neon focus-within:shadow-[0_0_24px_rgba(0,212,255,0.15),0_4px_24px_rgba(0,0,0,0.3)]">
             {renderVisionAttachment()}
+            {renderDirectDocumentAttachments()}
             <div className="flex items-end gap-2">
           {showAttachButton && (
             <div className="relative" ref={attachMenuRef}>
               <button
                 className="glass-btn flex items-center justify-center w-9 h-9 bg-glass-bg border border-glass-border text-txt-muted cursor-pointer rounded-lg transition-all duration-200 backdrop-blur-sm hover:text-neon hover:border-neon/30 hover:shadow-[0_0_8px_rgba(0,212,255,0.1)] disabled:opacity-40"
                 onClick={() => setShowAttachMenu(!showAttachMenu)}
-                title={chatMode === "vision" ? "Upload image" : "Add documents to knowledge base"}
+                title={
+                  chatMode === "vision"
+                    ? "Upload image"
+                    : chatMode === "text" && !ragEnabled
+                      ? "Attach documents directly to the model"
+                      : "Add documents to knowledge base"
+                }
                 disabled={isLoading}
                 data-tour="attach-button"
               >

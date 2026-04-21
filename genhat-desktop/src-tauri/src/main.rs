@@ -258,6 +258,7 @@ fn main() {
             // Streaming RAG commands
             app_lib::commands::rag::query_rag_stream,
             app_lib::commands::rag::query_rag_with_raptor_stream,
+            app_lib::commands::rag::prepare_direct_document_prompt,
             // Media retrieval commands
             app_lib::commands::rag::retrieve_media_for_response,
             app_lib::commands::rag::get_media_for_document,

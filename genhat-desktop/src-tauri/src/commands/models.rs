@@ -299,6 +299,25 @@ fn model_def_from_discovered_unit(unit: &DiscoveredModelUnit) -> ModelDef {
     }
 }
 
+fn merge_discovered_params(
+    existing: Option<&ModelInfo>,
+    discovered: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut merged = existing.map(|model| model.params.clone()).unwrap_or_default();
+
+    // If a previously vision-capable unit no longer has an mmproj companion,
+    // clear the stale pointer while preserving all other user-tuned values.
+    if !discovered.contains_key("mmproj_file") {
+        merged.remove("mmproj_file");
+    }
+
+    for (key, value) in discovered {
+        merged.insert(key.clone(), value.clone());
+    }
+
+    merged
+}
+
 async fn sync_discovered_models_internal(pm: &Arc<ProcessManager>) -> Result<(), String> {
     let models_dir = crate::paths::resolve_models_dir();
     let units = discover_local_units(&models_dir);
@@ -317,23 +336,23 @@ async fn sync_discovered_models_internal(pm: &Arc<ProcessManager>) -> Result<(),
     for def in discovered_defs {
         discovered_ids.insert(def.id.clone());
         let desired_tasks: Vec<String> = def.tasks.iter().map(|t| t.to_string()).collect();
+        let existing = existing_by_id.get(&def.id);
 
-        let needs_update = match existing_by_id.get(&def.id) {
+        let needs_update = match existing {
             None => true,
             Some(existing) => {
                 let existing_mmproj = existing.params.get("mmproj_file");
                 let desired_mmproj = def.params.get("mmproj_file");
-                let existing_max_tokens = existing.params.get("max_tokens");
-                let desired_max_tokens = def.params.get("max_tokens");
                 existing.model_file != def.model_file
                     || existing.tasks != desired_tasks
                     || existing_mmproj != desired_mmproj
-                    || existing_max_tokens != desired_max_tokens
             }
         };
 
         if needs_update {
-            pm.register_model(def).await?;
+            let mut next_def = def;
+            next_def.params = merge_discovered_params(existing, &next_def.params);
+            pm.register_model(next_def).await?;
         }
     }
 

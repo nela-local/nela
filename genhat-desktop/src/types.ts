@@ -39,6 +39,8 @@ export interface ChatMessage {
     path: string;
     name: string;
   };
+  /** Optional files attached directly to a user message (non-RAG document grounding). */
+  directDocuments?: DirectDocumentAttachment[];
   generateTime?: number;
   firstTokenTime?: number;
   /** Optional audio output URL for assistant messages (audio mode, podcasts, etc). */
@@ -146,6 +148,25 @@ export interface RagStreamSetup {
   prompt: string;
   llama_port: number;
   no_retrieval: boolean;
+}
+
+export interface DirectDocumentAttachment {
+  path: string;
+  name: string;
+}
+
+export interface DirectDocumentUsed {
+  file_path: string;
+  title: string;
+  chars_used: number;
+  truncated: boolean;
+}
+
+export interface DirectDocumentPromptSetup {
+  prompt: string;
+  documents: DirectDocumentUsed[];
+  warnings: string[];
+  truncated: boolean;
 }
 
 /** A media asset (image or table) extracted from an ingested document. */

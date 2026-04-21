@@ -14,6 +14,9 @@ The customization files under `.github/` are part of the repository contract.
 - `genhat-desktop/` is the main desktop app (React + TypeScript + Vite + Tauri v2).
 - `genhat-desktop/src/` contains frontend app logic and components.
 - `genhat-desktop/src-tauri/src/` contains Rust backend modules, commands, routing, and RAG pipeline code.
+- Text chat supports both document-grounding paths: KB-ingested RAG retrieval and direct file-to-prompt attachments, controlled by a RAG on/off toggle (default off = direct prompting).
+- Runtime model parameters panel is hidden by default and opened explicitly by the user.
+- Disk-scanned model sync preserves user-applied runtime params (for example `ctx_size`, `max_tokens`, `flash_attn`) instead of resetting them during model-list refreshes.
 - `benchmark/` contains runtime benchmark scripts and plotting tools.
 - `The-Bare/` contains standalone experiments/prototypes.
 

@@ -19,8 +19,10 @@ interface ModeOption {
 interface AppMainContentAreaProps {
   chatMode: ChatMode;
   ragDocs: IngestionStatus[];
+  ragEnabled: boolean;
   modeOptions: ModeOption[];
   onSelectMode: (mode: ChatMode) => void;
+  onToggleRagEnabled: (enabled: boolean) => void;
   onPodcastGenerated: (payload: { query: string; result: PodcastResult }) => void;
   activeSession: ChatSession | null;
   activeWorkspace: { id: string } | null;
@@ -31,6 +33,10 @@ interface AppMainContentAreaProps {
   enrichmentStatus: string | null;
   onIngestFile: () => void;
   onIngestDir: () => void;
+  onAttachDirectDocuments: () => void;
+  directDocumentPaths: string[];
+  onRemoveDirectDocument: (path: string) => void;
+  onClearDirectDocuments: () => void;
   onSelectVisionImage: () => void;
   visionImagePath: string | null;
   visionImagePreview: string | null;
@@ -66,8 +72,10 @@ interface AppMainContentAreaProps {
 export default function AppMainContentArea({
   chatMode,
   ragDocs,
+  ragEnabled,
   modeOptions,
   onSelectMode,
+  onToggleRagEnabled,
   onPodcastGenerated,
   activeSession,
   activeWorkspace,
@@ -78,6 +86,10 @@ export default function AppMainContentArea({
   enrichmentStatus,
   onIngestFile,
   onIngestDir,
+  onAttachDirectDocuments,
+  directDocumentPaths,
+  onRemoveDirectDocument,
+  onClearDirectDocuments,
   onSelectVisionImage,
   visionImagePath,
   visionImagePreview,
@@ -132,12 +144,18 @@ export default function AppMainContentArea({
           enrichmentStatus={enrichmentStatus}
           onIngestFile={onIngestFile}
           onIngestDir={onIngestDir}
+          onAttachDirectDocuments={onAttachDirectDocuments}
+          directDocumentPaths={directDocumentPaths}
+          onRemoveDirectDocument={onRemoveDirectDocument}
+          onClearDirectDocuments={onClearDirectDocuments}
           onSelectVisionImage={onSelectVisionImage}
           visionImagePath={visionImagePath}
           visionImagePreview={visionImagePreview}
           onClearVisionImage={onClearVisionImage}
           onToggleDocPanel={onToggleDocPanel}
           chatMode={chatMode}
+          ragEnabled={ragEnabled}
+          onToggleRagEnabled={onToggleRagEnabled}
           showRagControls={chatMode === "text" || chatMode === "mindmap"}
           docPanelOpen={docPanelOpen}
           modeOptions={modeOptions}

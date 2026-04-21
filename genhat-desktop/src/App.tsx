@@ -120,6 +120,9 @@ function App() {
           setImagePath(null);
           setImagePreview(null);
         }
+        if (mode !== "text") {
+          setDirectDocumentPaths([]);
+        }
         if (mode !== "text" && mode !== "mindmap") {
           setDocPanelOpen(false);
         }
@@ -180,9 +183,11 @@ function App() {
   // ── Vision state ───────────────────────────────────────────────────────────
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [directDocumentPaths, setDirectDocumentPaths] = useState<string[]>([]);
   const visionUnlistenRef = useRef<(() => void) | null>(null);
 
   // ── RAG state ──────────────────────────────────────────────────────────────
+  const [ragEnabled, setRagEnabled] = useState(false);
   const [ragDocs, setRagDocs] = useState<IngestionStatus[]>([]);
   const [ragIngesting, setRagIngesting] = useState(false);
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null);
@@ -191,7 +196,7 @@ function App() {
 
   // ── Right sidebar (Knowledge Base) ─────────────────────────────────────────
   const [docPanelOpen, setDocPanelOpen] = useState(false);
-  const [paramsDockOpen, setParamsDockOpen] = useState(true);
+  const [paramsDockOpen, setParamsDockOpen] = useState(false);
   const [modeSwitchNotice, setModeSwitchNotice] = useState<string | null>(null);
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const startupToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -369,10 +374,10 @@ function App() {
       return;
     }
 
-    // Re-open the panel only when switching to a different active model target.
+    // Track active target changes, but keep the params dock hidden by default
+    // until the user explicitly opens it.
     if (lastRuntimeTargetKeyRef.current !== activeRuntimeParamTarget.key) {
       lastRuntimeTargetKeyRef.current = activeRuntimeParamTarget.key;
-      setParamsDockOpen(true);
     }
   }, [activeRuntimeParamTarget]);
 
@@ -403,6 +408,12 @@ function App() {
         return next;
       });
 
+      // Ensure the selected chat model is activated so startup-level params
+      // (for example ctx_size / flash_attn / mlock) are effective immediately.
+      if (chatMode === "text" || chatMode === "mindmap") {
+        await Api.switchModel(resolved.id);
+      }
+
       await refreshModels();
 
       if (
@@ -414,11 +425,9 @@ function App() {
       return;
     }
 
-    // Fallback for models that still cannot be bound: keep session-local overrides.
-    setSessionModelParamOverrides((prev) => ({
-      ...prev,
-      [targetIdentifier]: { ...nextParams },
-    }));
+    throw new Error(
+      "Could not apply runtime parameters because the selected model is not bound to the runtime registry. Re-select the model and try again."
+    );
   };
 
   /** Immutably update a specific session by ID. */
@@ -1689,12 +1698,58 @@ function App() {
     }
   };
 
-  const clearImage = () => {
+  const clearImage = useCallback(() => {
     setImagePath(null);
     setImagePreview(null);
-  };
+  }, []);
 
   // ── RAG helpers ────────────────────────────────────────────────────────────
+
+  const DOCUMENT_PICKER_EXTENSIONS = [
+    "pdf", "docx", "pptx", "xlsx", "xls", "ods",
+    "txt", "md", "csv", "tsv", "json", "xml", "html", "htm",
+    "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
+    "h", "go", "rb", "sh", "toml", "yaml", "yml", "css",
+    "scss", "sql", "log", "ini", "cfg",
+    "mp3", "wav", "m4a", "ogg", "flac",
+  ];
+
+  const attachDirectDocuments = async () => {
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [
+          {
+            name: "Documents",
+            extensions: DOCUMENT_PICKER_EXTENSIONS,
+          },
+        ],
+      });
+      if (!selected) return;
+
+      const files = Array.isArray(selected) ? selected : [selected];
+      if (files.length === 0) return;
+
+      setDirectDocumentPaths((prev) => {
+        const merged = new Set(prev);
+        for (const filePath of files) {
+          merged.add(filePath);
+        }
+        return Array.from(merged);
+      });
+    } catch (err) {
+      console.error("Failed to select direct documents:", err);
+      showError(`Failed to select documents: ${err}`);
+    }
+  };
+
+  const removeDirectDocument = (path: string) => {
+    setDirectDocumentPaths((prev) => prev.filter((docPath) => docPath !== path));
+  };
+
+  const clearDirectDocuments = useCallback(() => {
+    setDirectDocumentPaths([]);
+  }, []);
 
   const ingestFile = async () => {
     try {
@@ -1703,14 +1758,7 @@ function App() {
         filters: [
           {
             name: "Documents",
-            extensions: [
-              "pdf", "docx", "pptx", "xlsx", "xls", "ods",
-              "txt", "md", "csv", "tsv", "json", "xml", "html", "htm",
-              "rs", "py", "js", "ts", "jsx", "tsx", "java", "c", "cpp",
-              "h", "go", "rb", "sh", "toml", "yaml", "yml", "css",
-              "scss", "sql", "log", "ini", "cfg",
-              "mp3", "wav", "m4a", "ogg", "flac",
-            ],
+            extensions: DOCUMENT_PICKER_EXTENSIONS,
           },
         ],
       });
@@ -1862,7 +1910,9 @@ function App() {
         activeSessionId,
         sessions,
         chatMode,
+        ragEnabled,
         imagePath,
+        directDocumentPaths,
         ragDocs,
         selectedModel,
         selectedVisionModel,
@@ -1891,6 +1941,7 @@ function App() {
           }));
         },
         clearImage,
+        clearDirectDocuments,
         getContextWindowTokens,
         getChatGenerationOptions,
       });
@@ -1899,7 +1950,9 @@ function App() {
       activeSessionId,
       sessions,
       chatMode,
+      ragEnabled,
       imagePath,
+      directDocumentPaths,
       ragDocs,
       selectedModel,
       selectedVisionModel,
@@ -1909,6 +1962,7 @@ function App() {
       thinkingEnabled,
       updateSession,
       clearImage,
+      clearDirectDocuments,
       getContextWindowTokens,
       getChatGenerationOptions,
     ]
@@ -1931,12 +1985,22 @@ function App() {
       setImagePath(null);
       setImagePreview(null);
     }
+    if (mode !== "text") {
+      setDirectDocumentPaths([]);
+    }
     if (mode !== "text" && mode !== "mindmap") {
       setDocPanelOpen(false);
     }
 
     setChatMode(mode);
   };
+
+  const handleRagToggle = useCallback((enabled: boolean) => {
+    setRagEnabled(enabled);
+    if (enabled) {
+      setDirectDocumentPaths([]);
+    }
+  }, []);
 
   const getPlaceholder = (): string => {
     switch (chatMode) {
@@ -1951,9 +2015,15 @@ function App() {
           ? "Ask for a mindmap (auto-grounds on relevant documents)..."
           : "Describe a topic to generate a mindmap...";
       default:
-        return ragDocs.length > 0
-          ? "Ask about your documents or chat freely..."
-          : "Message NELA...";
+        if (ragEnabled) {
+          return ragDocs.length > 0
+            ? "RAG ON: ask about your ingested documents..."
+            : "RAG ON: ingest documents or chat freely...";
+        }
+
+        return directDocumentPaths.length > 0 || ragDocs.length > 0
+          ? "RAG OFF: documents will be sent directly to the model..."
+          : "RAG OFF: attach documents or chat freely...";
     }
   };
 
@@ -2313,8 +2383,10 @@ function App() {
         canCompactContext={canManualCompactContext}
         isCompactingContext={contextCompacting}
         ragDocs={ragDocs}
+        ragEnabled={ragEnabled}
         modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
         onSelectMode={handleModeSwitch}
+        onToggleRagEnabled={handleRagToggle}
         onPodcastGenerated={handlePodcastGenerated}
         activeSession={activeSession}
         onSend={(text) => {
@@ -2330,6 +2402,12 @@ function App() {
         onIngestDir={() => {
           void ingestDir();
         }}
+        onAttachDirectDocuments={() => {
+          void attachDirectDocuments();
+        }}
+        directDocumentPaths={directDocumentPaths}
+        onRemoveDirectDocument={removeDirectDocument}
+        onClearDirectDocuments={clearDirectDocuments}
         onSelectVisionImage={() => {
           void selectImage();
         }}

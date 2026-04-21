@@ -3,6 +3,8 @@
 use crate::rag::pipeline::{IngestionStatus, RagPipeline, RagResult};
 use crate::commands::models::ProcessManagerState;
 use crate::registry::types::TaskType;
+use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -110,6 +112,176 @@ pub struct RagStreamSetup {
     pub llama_port: u16,
     /// Whether the classifier decided no retrieval was needed.
     pub no_retrieval: bool,
+}
+
+/// Metadata for one directly attached document used in a prompt.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DirectDocumentUsed {
+    /// Original absolute file path.
+    pub file_path: String,
+    /// Display title (usually filename / parsed title).
+    pub title: String,
+    /// Number of characters included from this file.
+    pub chars_used: usize,
+    /// Whether this file content had to be truncated.
+    pub truncated: bool,
+}
+
+/// Setup payload for direct document prompting (non-RAG).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DirectDocumentPromptSetup {
+    /// Prompt to send directly to the chat model.
+    pub prompt: String,
+    /// Files successfully included in the prompt.
+    pub documents: Vec<DirectDocumentUsed>,
+    /// Non-fatal issues (unsupported/failed files, empty extracts, etc.).
+    pub warnings: Vec<String>,
+    /// Whether any content was truncated due to budget limits.
+    pub truncated: bool,
+}
+
+fn clip_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !text.is_empty());
+    }
+
+    let mut iter = text.char_indices();
+    if let Some((idx, _)) = iter.nth(max_chars) {
+        return (format!("{}\n[...]", &text[..idx]), true);
+    }
+
+    (text.to_string(), false)
+}
+
+fn build_direct_document_prompt(
+    query: &str,
+    file_paths: &[String],
+    max_chars_per_document: usize,
+    max_total_chars: usize,
+) -> Result<DirectDocumentPromptSetup, String> {
+    let mut unique_paths = Vec::new();
+    let mut seen = HashSet::new();
+    for path in file_paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            unique_paths.push(trimmed.to_string());
+        }
+    }
+
+    if unique_paths.is_empty() {
+        return Err("No document paths were provided".to_string());
+    }
+
+    let mut remaining_chars = max_total_chars;
+    let mut context_blocks: Vec<String> = Vec::new();
+    let mut documents = Vec::new();
+    let mut warnings = Vec::new();
+    let mut any_truncated = false;
+
+    for path_str in unique_paths {
+        if remaining_chars < 400 {
+            any_truncated = true;
+            break;
+        }
+
+        let parsed = match crate::rag::parsers::parse_document(Path::new(&path_str)) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                warnings.push(format!("Skipped {path_str}: {err}"));
+                continue;
+            }
+        };
+
+        let title = if parsed.title.trim().is_empty() {
+            Path::new(&path_str)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Document")
+                .to_string()
+        } else {
+            parsed.title.trim().to_string()
+        };
+
+        let combined = parsed
+            .sections
+            .iter()
+            .filter_map(|section| {
+                let text = section.text.trim();
+                if text.is_empty() {
+                    return None;
+                }
+
+                if section.metadata.trim().is_empty() {
+                    Some(text.to_string())
+                } else {
+                    Some(format!("[{}]\n{}", section.metadata.trim(), text))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        if combined.trim().is_empty() {
+            warnings.push(format!("Skipped {path_str}: no extractable text content"));
+            continue;
+        }
+
+        let budget = remaining_chars.min(max_chars_per_document);
+        let (snippet, truncated_doc) = clip_chars(&combined, budget);
+        let chars_used = snippet.chars().count();
+
+        if chars_used == 0 {
+            warnings.push(format!("Skipped {path_str}: no usable content within budget"));
+            continue;
+        }
+
+        remaining_chars = remaining_chars.saturating_sub(chars_used);
+        any_truncated = any_truncated || truncated_doc;
+
+        documents.push(DirectDocumentUsed {
+            file_path: path_str.clone(),
+            title: title.clone(),
+            chars_used,
+            truncated: truncated_doc,
+        });
+
+        context_blocks.push(format!(
+            "### Document: {title}\nPath: {path_str}\n\n{snippet}"
+        ));
+    }
+
+    if context_blocks.is_empty() {
+        return Err(if warnings.is_empty() {
+            "No document content could be extracted for direct prompting".to_string()
+        } else {
+            format!(
+                "No document content could be extracted for direct prompting. {}",
+                warnings.join(" | ")
+            )
+        });
+    }
+
+    let prompt = format!(
+        "Use ONLY the attached document excerpts to answer the user's question.\n\
+         If the excerpts do not contain the answer, say you don't know.\n\
+         Do NOT claim to have read files beyond the provided excerpts.\n\
+         Keep your answer concise and grounded in the excerpts.\n\n\
+         Attached document excerpts:\n\
+         {}\n\n\
+         User question: {}\n\n\
+         Answer:",
+        context_blocks.join("\n\n---\n\n"),
+        query
+    );
+
+    Ok(DirectDocumentPromptSetup {
+        prompt,
+        documents,
+        warnings,
+        truncated: any_truncated,
+    })
 }
 
 /// Ingest a single document into the RAG knowledge base.
@@ -265,6 +437,34 @@ pub async fn query_rag_stream(
         llama_port,
         no_retrieval: retrieval.no_retrieval,
     })
+}
+
+/// Build a direct-to-model prompt from attached document files, bypassing RAG.
+///
+/// This is useful when users want strict "uploaded file" grounding without
+/// retrieval/classification hops.
+#[tauri::command]
+pub async fn prepare_direct_document_prompt(
+    query: String,
+    file_paths: Vec<String>,
+    max_chars_per_document: Option<usize>,
+    max_total_chars: Option<usize>,
+) -> Result<DirectDocumentPromptSetup, String> {
+    let trimmed_query = query.trim().to_string();
+    if trimmed_query.is_empty() {
+        return Err("Query cannot be empty".to_string());
+    }
+
+    let per_doc_limit = max_chars_per_document.unwrap_or(6_000).clamp(1_200, 32_000);
+    let total_limit = max_total_chars.unwrap_or(20_000).clamp(4_000, 160_000);
+
+    let join = tokio::task::spawn_blocking(move || {
+        build_direct_document_prompt(&trimmed_query, &file_paths, per_doc_limit, total_limit)
+    })
+    .await
+    .map_err(|e| format!("Direct document prompt task failed: {e}"))?;
+
+    join
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

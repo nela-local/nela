@@ -15,6 +15,7 @@ applyTo: "genhat-desktop/src-tauri/src/**/*.rs"
 - Do not silently change model IDs, task names, or IPC command names without updating all call sites.
 - Keep error messages actionable and include enough context for frontend handling.
 - Preserve local-first behavior and avoid introducing mandatory cloud dependencies for core flows.
+- When reconciling discovered/dynamic models, preserve user-updated runtime params unless the underlying model artifact or task capabilities actually changed.
 
 # Verification
 

@@ -75,8 +75,10 @@ interface AppMainContentProps {
   canCompactContext: boolean;
   isCompactingContext: boolean;
   ragDocs: IngestionStatus[];
+  ragEnabled: boolean;
   modeOptions: ModeOption[];
   onSelectMode: (mode: ChatMode) => void;
+  onToggleRagEnabled: (enabled: boolean) => void;
   onPodcastGenerated: (payload: { query: string; result: PodcastResult }) => void;
   activeSession: ChatSession | null;
   onSend: (text: string) => void;
@@ -86,6 +88,10 @@ interface AppMainContentProps {
   enrichmentStatus: string | null;
   onIngestFile: () => void;
   onIngestDir: () => void;
+  onAttachDirectDocuments: () => void;
+  directDocumentPaths: string[];
+  onRemoveDirectDocument: (path: string) => void;
+  onClearDirectDocuments: () => void;
   onSelectVisionImage: () => void;
   visionImagePath: string | null;
   visionImagePreview: string | null;
@@ -159,8 +165,10 @@ export default function AppMainContent({
   canCompactContext,
   isCompactingContext,
   ragDocs,
+  ragEnabled,
   modeOptions,
   onSelectMode,
+  onToggleRagEnabled,
   onPodcastGenerated,
   activeSession,
   onSend,
@@ -170,6 +178,10 @@ export default function AppMainContent({
   enrichmentStatus,
   onIngestFile,
   onIngestDir,
+  onAttachDirectDocuments,
+  directDocumentPaths,
+  onRemoveDirectDocument,
+  onClearDirectDocuments,
   onSelectVisionImage,
   visionImagePath,
   visionImagePreview,
@@ -247,8 +259,10 @@ export default function AppMainContent({
       <AppMainContentArea
         chatMode={chatMode}
         ragDocs={ragDocs}
+        ragEnabled={ragEnabled}
         modeOptions={modeOptions}
         onSelectMode={onSelectMode}
+        onToggleRagEnabled={onToggleRagEnabled}
         onPodcastGenerated={onPodcastGenerated}
         activeSession={activeSession}
         activeWorkspace={activeWorkspace}
@@ -259,6 +273,10 @@ export default function AppMainContent({
         enrichmentStatus={enrichmentStatus}
         onIngestFile={onIngestFile}
         onIngestDir={onIngestDir}
+        onAttachDirectDocuments={onAttachDirectDocuments}
+        directDocumentPaths={directDocumentPaths}
+        onRemoveDirectDocument={onRemoveDirectDocument}
+        onClearDirectDocuments={onClearDirectDocuments}
         onSelectVisionImage={onSelectVisionImage}
         visionImagePath={visionImagePath}
         visionImagePreview={visionImagePreview}
