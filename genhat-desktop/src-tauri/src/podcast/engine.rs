@@ -9,9 +9,100 @@ use crate::rag::pipeline::RagPipeline;
 use crate::registry::types::{TaskRequest, TaskResponse, TaskType};
 use crate::router::TaskRouter;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
+
+const PODCAST_MIN_TOP_K: usize = 6;
+const PODCAST_MAX_TOP_K: usize = 24;
+const PODCAST_FEEDBACK_WINDOW: usize = 8;
+
+#[derive(Debug, Clone, Copy)]
+struct PodcastRunFeedback {
+    requested_turns: usize,
+    produced_lines: usize,
+}
+
+fn podcast_feedback_store() -> &'static Mutex<VecDeque<PodcastRunFeedback>> {
+    static PODCAST_FEEDBACK: OnceLock<Mutex<VecDeque<PodcastRunFeedback>>> = OnceLock::new();
+    PODCAST_FEEDBACK.get_or_init(|| Mutex::new(VecDeque::with_capacity(PODCAST_FEEDBACK_WINDOW)))
+}
+
+fn record_podcast_feedback(requested_turns: usize, produced_lines: usize) {
+    if let Ok(mut store) = podcast_feedback_store().lock() {
+        if store.len() >= PODCAST_FEEDBACK_WINDOW {
+            let _ = store.pop_front();
+        }
+        store.push_back(PodcastRunFeedback {
+            requested_turns,
+            produced_lines,
+        });
+    }
+}
+
+fn adaptive_adjustment_from_feedback(
+    runs: impl DoubleEndedIterator<Item = PodcastRunFeedback>,
+    target_turns: usize,
+) -> i32 {
+    let mut weighted_shortfall = 0.0f32;
+    let mut weight_sum = 0.0f32;
+    let mut success_weight = 0.0f32;
+
+    for (idx, run) in runs.rev().take(PODCAST_FEEDBACK_WINDOW).enumerate() {
+        let recency_weight = 1.0f32 / (idx as f32 + 1.0);
+        let turn_gap = run.requested_turns.abs_diff(target_turns);
+        let similarity_weight = if turn_gap <= 6 {
+            1.0
+        } else if turn_gap <= 12 {
+            0.7
+        } else {
+            0.45
+        };
+        let weight = recency_weight * similarity_weight;
+
+        let denom = run.requested_turns.max(1) as f32;
+        let shortfall = (run.requested_turns.saturating_sub(run.produced_lines)) as f32 / denom;
+
+        weighted_shortfall += shortfall * weight;
+        weight_sum += weight;
+        if run.produced_lines >= run.requested_turns {
+            success_weight += weight;
+        }
+    }
+
+    if weight_sum <= f32::EPSILON {
+        return 0;
+    }
+
+    let avg_shortfall = weighted_shortfall / weight_sum;
+    let success_ratio = success_weight / weight_sum;
+
+    if avg_shortfall >= 0.35 {
+        4
+    } else if avg_shortfall >= 0.22 {
+        3
+    } else if avg_shortfall >= 0.12 {
+        2
+    } else if avg_shortfall >= 0.05 {
+        1
+    } else if success_ratio >= 0.95 {
+        -1
+    } else {
+        0
+    }
+}
+
+fn dynamic_top_k_with_feedback(query: &str, max_turns: usize) -> usize {
+    let base_top_k = dynamic_top_k_for_podcast(query, max_turns) as i32;
+    let adjustment = podcast_feedback_store()
+        .lock()
+        .map(|store| adaptive_adjustment_from_feedback(store.iter().copied(), max_turns))
+        .unwrap_or(0);
+
+    (base_top_k + adjustment)
+        .clamp(PODCAST_MIN_TOP_K as i32, PODCAST_MAX_TOP_K as i32)
+        as usize
+}
 
 /// Run the complete podcast generation pipeline.
 ///
@@ -26,11 +117,21 @@ pub async fn generate_podcast(
     rag_pipeline: Arc<RagPipeline>,
     router: Arc<TaskRouter>,
 ) -> Result<PodcastResult, String> {
+    let uses_auto_top_k = request.top_k.is_none();
+    let top_k = request
+        .top_k
+        .unwrap_or_else(|| dynamic_top_k_with_feedback(&request.query, request.max_turns));
+
     // ─── STAGE 1: RAG Retrieval ───────────────────────────────────────────
-    emit_progress(app, "rag", "Retrieving context from documents...", 0.05);
+    emit_progress(
+        app,
+        "rag",
+        &format!("Retrieving context from documents (top_k={top_k})..."),
+        0.05,
+    );
 
     let rag_result = rag_pipeline
-        .query(&request.query, request.top_k)
+        .query(&request.query, top_k)
         .await
         .map_err(|e| format!("RAG query failed: {e}"))?;
 
@@ -114,6 +215,10 @@ pub async fn generate_podcast(
             request.max_turns,
             lines.len()
         );
+    }
+
+    if uses_auto_top_k {
+        record_podcast_feedback(request.max_turns, lines.len());
     }
 
     let script = PodcastScript {
@@ -273,5 +378,115 @@ fn truncate_str(s: &str, max: usize) -> &str {
         s
     } else {
         &s[..max]
+    }
+}
+
+/// Dynamically size RAG retrieval for podcasts.
+///
+/// Larger requested conversations need broader context coverage. We scale with
+/// requested turns and query complexity, then clamp to a safe range
+/// to avoid over-retrieval.
+fn dynamic_top_k_for_podcast(query: &str, max_turns: usize) -> usize {
+    let turns = max_turns.clamp(4, 60);
+    let query_words = query.split_whitespace().count();
+
+    // Aggressive scaling for longer episodes: roughly one context chunk per
+    // two requested turns, plus an extra boost for very long conversations.
+    let turn_component = turns.div_ceil(2);
+    let long_conversation_boost = if turns >= 30 {
+        3
+    } else if turns >= 18 {
+        2
+    } else {
+        0
+    };
+
+    let query_component = if query_words > 30 {
+        4
+    } else if query_words > 18 {
+        3
+    } else if query_words > 8 {
+        2
+    } else {
+        1
+    };
+
+    (turn_component + long_conversation_boost + query_component)
+        .clamp(PODCAST_MIN_TOP_K, PODCAST_MAX_TOP_K)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{adaptive_adjustment_from_feedback, dynamic_top_k_for_podcast, PodcastRunFeedback};
+
+    #[test]
+    fn dynamic_top_k_scales_with_turns() {
+        let short = dynamic_top_k_for_podcast("summarize transformers", 6);
+        let long = dynamic_top_k_for_podcast("summarize transformers", 24);
+        assert!(long > short, "top_k should grow with requested turns");
+    }
+
+    #[test]
+    fn dynamic_top_k_scales_with_query_complexity() {
+        let simple = dynamic_top_k_for_podcast("quantization", 10);
+        let complex = dynamic_top_k_for_podcast(
+            "compare quantization and pruning versus distillation for retrieval augmented generation tradeoffs in edge deployment scenarios",
+            10,
+        );
+        assert!(complex > simple, "top_k should grow for more complex queries");
+    }
+
+    #[test]
+    fn dynamic_top_k_is_bounded() {
+        let low = dynamic_top_k_for_podcast("a", 1);
+        let high = dynamic_top_k_for_podcast("word ".repeat(100).trim(), 200);
+        assert_eq!(low, 6);
+        assert_eq!(high, 24);
+    }
+
+    #[test]
+    fn adaptive_feedback_increases_top_k_after_shortfalls() {
+        let history = vec![
+            PodcastRunFeedback {
+                requested_turns: 20,
+                produced_lines: 11,
+            },
+            PodcastRunFeedback {
+                requested_turns: 18,
+                produced_lines: 10,
+            },
+            PodcastRunFeedback {
+                requested_turns: 22,
+                produced_lines: 13,
+            },
+        ];
+
+        let adjustment = adaptive_adjustment_from_feedback(history.into_iter(), 20);
+        assert!(adjustment >= 2, "shortfalls should increase future top_k");
+    }
+
+    #[test]
+    fn adaptive_feedback_can_reduce_top_k_after_consistent_success() {
+        let history = vec![
+            PodcastRunFeedback {
+                requested_turns: 12,
+                produced_lines: 12,
+            },
+            PodcastRunFeedback {
+                requested_turns: 10,
+                produced_lines: 11,
+            },
+            PodcastRunFeedback {
+                requested_turns: 14,
+                produced_lines: 14,
+            },
+            PodcastRunFeedback {
+                requested_turns: 12,
+                produced_lines: 12,
+            },
+        ];
+
+        let adjustment = adaptive_adjustment_from_feedback(history.into_iter(), 12);
+        assert_eq!(adjustment, -1);
     }
 }
