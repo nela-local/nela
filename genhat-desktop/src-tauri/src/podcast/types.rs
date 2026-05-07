@@ -17,13 +17,12 @@ pub struct PodcastRequest {
     pub speaker_b_name: String,
     /// Target number of dialogue turns (alternating lines).
     pub max_turns: usize,
-    /// RAG top-k retrieval count (default: 5).
-    #[serde(default = "default_top_k")]
-    pub top_k: usize,
-}
-
-fn default_top_k() -> usize {
-    5
+    /// Optional RAG top-k retrieval count.
+    ///
+    /// If omitted, the backend chooses a dynamic value based on the requested
+    /// podcast size and query complexity.
+    #[serde(default)]
+    pub top_k: Option<usize>,
 }
 
 /// A single line of podcast dialogue.
