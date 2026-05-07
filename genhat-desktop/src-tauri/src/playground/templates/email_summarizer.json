@@ -1,0 +1,71 @@
+{
+  "id": "email-summarizer-template",
+  "name": "Email Summarizer",
+  "description": "Fetches unread emails every morning at 8 AM and summarizes them. Sends a desktop notification when done.",
+  "auto_resume": true,
+  "nodes": [
+    {
+      "id": "node-trigger",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 60 },
+      "data": {
+        "label": "Every Morning",
+        "kind": "Schedule",
+        "config": {
+          "cron": "0 8 * * *"
+        }
+      }
+    },
+    {
+      "id": "node-fetch",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 200 },
+      "data": {
+        "label": "Fetch Emails",
+        "kind": "EmailFetch",
+        "config": {
+          "host": "imap.gmail.com",
+          "port": 993,
+          "username": "",
+          "password_key": "",
+          "mailbox": "INBOX",
+          "max_messages": 20,
+          "unseen_only": true
+        }
+      }
+    },
+    {
+      "id": "node-summarize",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 340 },
+      "data": {
+        "label": "Summarize",
+        "kind": "Summarize",
+        "config": {
+          "model_id": "",
+          "style": "bullet"
+        }
+      }
+    },
+    {
+      "id": "node-notify",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 480 },
+      "data": {
+        "label": "Morning Digest",
+        "kind": "Notification",
+        "config": {
+          "title": "📬 Morning Email Digest",
+          "body_template": "{{output}}"
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "node-trigger", "target": "node-fetch" },
+    { "id": "e2", "source": "node-fetch",   "target": "node-summarize" },
+    { "id": "e3", "source": "node-summarize","target": "node-notify" }
+  ],
+  "created_at": "2025-01-01T00:00:00Z",
+  "updated_at": "2025-01-01T00:00:00Z"
+}

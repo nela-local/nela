@@ -5,7 +5,6 @@ import type {
   IngestionStatus,
   MindMapGraph,
   ModelFile,
-  PodcastResult,
   RegisteredModel,
   WorkspaceRecord,
 } from "../types";
@@ -79,7 +78,6 @@ interface AppMainContentProps {
   modeOptions: ModeOption[];
   onSelectMode: (mode: ChatMode) => void;
   onToggleRagEnabled: (enabled: boolean) => void;
-  onPodcastGenerated: (payload: { query: string; result: PodcastResult }) => void;
   activeSession: ChatSession | null;
   onSend: (text: string) => void;
   onCancel: () => void;
@@ -169,7 +167,6 @@ export default function AppMainContent({
   modeOptions,
   onSelectMode,
   onToggleRagEnabled,
-  onPodcastGenerated,
   activeSession,
   onSend,
   onCancel,
@@ -263,7 +260,6 @@ export default function AppMainContent({
         modeOptions={modeOptions}
         onSelectMode={onSelectMode}
         onToggleRagEnabled={onToggleRagEnabled}
-        onPodcastGenerated={onPodcastGenerated}
         activeSession={activeSession}
         activeWorkspace={activeWorkspace}
         onSend={onSend}

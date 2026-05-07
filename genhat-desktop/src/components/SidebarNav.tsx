@@ -3,6 +3,7 @@ import {
   MessageSquare,
   Volume2,
   Share2,
+  Workflow,
   FolderOpen,
   Save,
   Settings,
@@ -10,8 +11,8 @@ import {
 } from "lucide-react";
 
 interface SidebarNavProps {
-  selected: "chats" | "audio" | "mindmaps" | null;
-  onSelect: (section: "chats" | "audio" | "mindmaps") => void;
+  selected: "chats" | "audio" | "mindmaps" | "playground" | null;
+  onSelect: (section: "chats" | "audio" | "mindmaps" | "playground") => void;
   onImportProject: () => void;
   onExportProject: () => void;
   onOpenSettings: () => void;
@@ -61,6 +62,14 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
         data-tour="sidebar-mindmaps"
       >
         <Share2 size={30} />
+      </button>
+      <button
+        className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors ${selected === "playground" ? "bg-neon-subtle text-neon" : "text-txt-secondary hover:text-neon"}`}
+        title="Playground"
+        onClick={() => onSelect("playground")}
+        data-tour="sidebar-playground"
+      >
+        <Workflow size={30} />
       </button>
 
       <div className="mt-auto flex flex-col items-center gap-2 pb-1">

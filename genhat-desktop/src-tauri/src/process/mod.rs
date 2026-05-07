@@ -539,6 +539,41 @@ impl ProcessManager {
         result
     }
 
+    /// If the request specifies a `ctx_size` larger than the model's current
+    /// ctx_size param, update the model def and stop all running instances so
+    /// the next `ensure_running` call will respawn with the larger context.
+    ///
+    /// Returns `true` if the model was restarted.
+    pub async fn ensure_ctx_size(&self, model_id: &str, requested_ctx: u32) -> Result<bool, String> {
+        let current_ctx: u32 = {
+            let models = self.models.read().await;
+            if let Some(managed) = models.get(model_id) {
+                managed.def.param_or("ctx_size", "4096").parse().unwrap_or(4096)
+            } else {
+                return Ok(false);
+            }
+        };
+
+        if requested_ctx <= current_ctx {
+            return Ok(false);
+        }
+
+        // Update the model def ctx_size
+        {
+            let mut models = self.models.write().await;
+            if let Some(managed) = models.get_mut(model_id) {
+                managed.def.params.insert("ctx_size".to_string(), requested_ctx.to_string());
+            }
+        }
+
+        // Stop all running instances so they respawn with the new ctx_size
+        self.stop_model(model_id).await?;
+        log::info!(
+            "ensure_ctx_size: restarted '{model_id}' with ctx_size={requested_ctx} (was {current_ctx})"
+        );
+        Ok(true)
+    }
+
     /// Stop a specific model (all instances).
     pub async fn stop_model(&self, model_id: &str) -> Result<(), String> {
         let backend = self.backends.read().await.get(model_id).cloned();

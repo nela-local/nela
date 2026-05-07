@@ -44,8 +44,19 @@ impl TaskRouter {
         let candidates = self.resolve_model_candidates(request).await?;
         let is_ephemeral = pool::is_ephemeral_task(&request.task_type);
 
+        // If the request specifies a larger ctx_size than the model is currently
+        // running with, stop and respawn with the new context size.
+        let requested_ctx: Option<u32> = request.extra.get("ctx_size")
+            .and_then(|v| v.parse().ok());
+
         let mut errors = Vec::new();
         for model_id in candidates {
+            // Apply ctx_size override before starting the model
+            if let Some(ctx) = requested_ctx {
+                if let Err(e) = self.process_manager.ensure_ctx_size(&model_id, ctx).await {
+                    log::warn!("ensure_ctx_size for '{model_id}' failed: {e}; proceeding anyway");
+                }
+            }
             log::info!(
                 "Routing task '{}' (req={}) → model '{}' (ephemeral={is_ephemeral})",
                 request.task_type,

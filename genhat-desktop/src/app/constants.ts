@@ -5,6 +5,7 @@ import {
   Volume2,
   Mic,
   Share2,
+  Workflow,
 } from "lucide-react";
 import type { ChatMode } from "../types";
 
@@ -46,4 +47,5 @@ export const MODE_CONFIG: ModeConfigItem[] = [
   { mode: "audio", label: "Audio", icon: Volume2, desc: "Text to speech" },
   { mode: "podcast", label: "Podcast", icon: Mic, desc: "AI podcast generation" },
   { mode: "mindmap", label: "Mindmap", icon: Share2, desc: "Visual idea map" },
+  { mode: "playground", label: "Playground", icon: Workflow, desc: "Agentic pipeline builder" },
 ];

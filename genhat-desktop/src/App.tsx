@@ -4,7 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Api } from "./api";
 import type {
   ChatContextUsage,
-  ChatMessage,
   ChatMode,
   ChatSession,
   ModelFile,
@@ -12,7 +11,6 @@ import type {
   IngestionStatus,
   KittenTtsVoice,
   MindMapGraph,
-  PodcastResult,
   WorkspaceRecord,
   ImportModelProfile,
 } from "./types";
@@ -35,7 +33,6 @@ import {
 } from "./app/mindmapUtils";
 import {
   createEmptySession,
-  deriveTitleFromMessage,
   normalizeSession,
 } from "./app/sessionUtils";
 import {
@@ -60,6 +57,7 @@ import { type RuntimeParamsTarget } from "./components/ActiveModelParamsDock";
 import type { AppModalKind } from "./components/AppModal";
 import AudioSidebar from "./components/AudioSidebar";
 import MindmapsSidebar from "./components/MindmapsSidebar";
+import PlaygroundSidebar from "./components/PlaygroundSidebar";
 import StartupModelToast from "./components/StartupModelToast";
 import AppMainContent from "./components/AppMainContent";
 import AppDialogsLayer from "./components/AppDialogsLayer";
@@ -2041,11 +2039,14 @@ function App() {
     .filter((s): s is ChatSession => !!s);
 
   // Sidebar section state with toggle logic
-  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps" | null>("chats");
+  const [sidebarSection, setSidebarSection] = useState<"chats" | "audio" | "mindmaps" | "playground" | null>("chats");
 
   // Toggle handler for sidebar
-  const handleSidebarNav = (section: "chats" | "audio" | "mindmaps") => {
+  const handleSidebarNav = (section: "chats" | "audio" | "mindmaps" | "playground") => {
     setSidebarSection((prev) => (prev === section ? null : section));
+    if (section === "playground") {
+      setChatMode("playground");
+    }
   };
 
   const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
@@ -2180,67 +2181,6 @@ function App() {
     updateSession,
   ]);
 
-  const handlePodcastGenerated = useCallback(
-    ({ query, result }: { query: string; result: PodcastResult }) => {
-      const trimmedQuery = query.trim();
-      if (!trimmedQuery) return;
-
-      const combinedAudioUrl = result.combined_audio_data_url?.trim() || "";
-      const transcriptMessages: ChatMessage[] = result.segments.map((segment) => ({
-        role: "assistant",
-        content: `🎙️ ${segment.line.speaker}: ${segment.line.text}`,
-      }));
-      const combinedAudioMessage: ChatMessage = {
-        role: "assistant",
-        content: result.script?.title
-          ? `🎧 Podcast generated: ${result.script.title}`
-          : "🎧 Podcast generated.",
-        ...(combinedAudioUrl ? { audioUrl: combinedAudioUrl, audioSaved: true } : {}),
-      };
-
-      if (!combinedAudioUrl && transcriptMessages.length === 0) return;
-
-      const targetSessionId = activeSessionId && sessions.some((session) => session.id === activeSessionId)
-        ? activeSessionId
-        : null;
-
-      if (targetSessionId) {
-        updateSession(targetSessionId, (prev) => {
-          const shouldSetTitle = prev.messages.length === 0;
-          return {
-            title: shouldSetTitle ? deriveTitleFromMessage(trimmedQuery) : prev.title,
-            messages: [
-              ...prev.messages,
-              { role: "user", content: trimmedQuery },
-              combinedAudioMessage,
-              ...transcriptMessages,
-            ],
-            audioOutputs: combinedAudioUrl
-              ? [...(prev.audioOutputs ?? []), combinedAudioUrl]
-              : prev.audioOutputs ?? [],
-            audioOutput: combinedAudioUrl || prev.audioOutput,
-          };
-        });
-        return;
-      }
-
-      const newSession = createEmptySession();
-      newSession.title = deriveTitleFromMessage(trimmedQuery);
-      newSession.messages = [
-        { role: "user", content: trimmedQuery },
-        combinedAudioMessage,
-        ...transcriptMessages,
-      ];
-      newSession.audioOutputs = combinedAudioUrl ? [combinedAudioUrl] : [];
-      newSession.audioOutput = combinedAudioUrl || undefined;
-
-      setSessions((prev) => [...prev, newSession]);
-      setOpenSessionIds((prev) => (prev.includes(newSession.id) ? prev : [...prev, newSession.id]));
-      setActiveSessionId(newSession.id);
-    },
-    [activeSessionId, sessions, updateSession]
-  );
-
   // Show startup modal if no active workspace yet (unless we're running the tour from it)
   const showStartupModal = !activeWorkspace && !suppressStartupModal;
   const showParamsDock = !!activeRuntimeParamTarget && paramsDockOpen;
@@ -2329,6 +2269,14 @@ function App() {
               onOpenMindmap={openMindmapOverlay}
             />
           )}
+          {sidebarSection === "playground" && (
+            <PlaygroundSidebar
+              onOpen={() => {
+                setChatMode("playground");
+                setSidebarSection(null);
+              }}
+            />
+          )}
           {/* Vertical blue line between side section and chat window (less blue) */}
           <div className="w-1 min-w-1 h-full bg-neon/40 rounded-full mx-1 shadow-[0_0_8px_#00d4ff33] transition-all duration-200 opacity-60" />
         </>
@@ -2387,7 +2335,6 @@ function App() {
         modeOptions={MODE_CONFIG.map(({ mode, label }) => ({ mode, label }))}
         onSelectMode={handleModeSwitch}
         onToggleRagEnabled={handleRagToggle}
-        onPodcastGenerated={handlePodcastGenerated}
         activeSession={activeSession}
         onSend={(text) => {
           void handleSend(text);

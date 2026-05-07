@@ -150,6 +150,19 @@
   color: var(--color-neon);
 }
 
+.workspace-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-void-600);
+  border: 1px solid var(--color-neon);
+  border-radius: 6px;
+  color: var(--color-txt);
+  font-size: 0.85rem;
+  padding: 2px 8px;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
+}
+
 .truncate {
   white-space: nowrap;
   overflow: hidden;

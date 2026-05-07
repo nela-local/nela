@@ -944,6 +944,40 @@ export const Api = {
     return invoke("batch_check_compatibility", { models });
   },
 };
+
+// ── Playground / Pipeline commands ─────────────────────────────────────────────
+// Imported directly by usePipelineStore to keep dependencies explicit.
+
+import type { Pipeline } from "./app/playgroundTypes";
+
+export async function listPipelines(): Promise<Pipeline[]> {
+  return invoke<Pipeline[]>("playground_list_pipelines");
+}
+
+export async function loadPipeline(id: string): Promise<Pipeline> {
+  return invoke<Pipeline>("playground_load_pipeline", { id });
+}
+
+export async function savePipeline(pipeline: Pipeline): Promise<void> {
+  return invoke<void>("playground_save_pipeline", { pipeline });
+}
+
+export async function deletePipeline(id: string): Promise<void> {
+  return invoke<void>("playground_delete_pipeline", { id });
+}
+
+export async function runPipeline(pipelineId: string): Promise<string> {
+  return invoke<string>("playground_run_pipeline", { pipelineId });
+}
+
+export async function cancelPipelineRun(runId: string): Promise<void> {
+  return invoke<void>("playground_cancel_run", { runId });
+}
+
+export async function storeCredential(key: string, value: string): Promise<void> {
+  return invoke<void>("playground_store_credential", { key, value });
+}
+
 function convertFileSrc(filePath: string): string {
   return new URL(`file://${filePath}`).href;
 }

@@ -8,6 +8,7 @@
 use app_lib::commands::audio::MicRecorderState;
 use app_lib::commands::inference::TaskRouterState;
 use app_lib::commands::models::ProcessManagerState;
+use app_lib::commands::playground::PlaygroundState;
 use app_lib::commands::rag::RagPipelineState;
 use app_lib::commands::workspace::WorkspaceState;
 use app_lib::commands::download::DownloadState;
@@ -182,11 +183,36 @@ fn main() {
 
             // 9. Register state for Tauri commands
             app.manage(ProcessManagerState(process_manager));
-            app.manage(TaskRouterState(router));
+            app.manage(TaskRouterState(router.clone()));
             app.manage(RagPipelineState(RwLock::new(rag_pipeline)));
             app.manage(WorkspaceState(workspace_manager));
             app.manage(DownloadState::default());
             app.manage(MicRecorderState::default());
+
+            // 10. Initialize playground state
+            match PlaygroundState::new(&app_data_dir) {
+                Ok(pg_state) => {
+                    let pg_store = pg_state.store.clone();
+                    app.manage(pg_state);
+
+                    // Start scheduler for auto-resume pipelines
+                    let router_for_sched = router.clone();
+                    let data_dir_for_sched = app_data_dir.clone();
+                    let app_handle_for_sched = app.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        app_lib::playground::scheduler::start_scheduler(
+                            pg_store,
+                            router_for_sched,
+                            data_dir_for_sched,
+                            app_handle_for_sched,
+                        )
+                        .await;
+                    });
+                }
+                Err(e) => {
+                    log::error!("Failed to initialize playground: {e}");
+                }
+            }
 
             Ok(())
         })
@@ -274,6 +300,14 @@ fn main() {
             app_lib::commands::system::estimate_model_memory,
             app_lib::commands::system::detect_quantization,
             app_lib::commands::system::detect_model_params,
+            // Playground commands
+            app_lib::commands::playground::playground_list_pipelines,
+            app_lib::commands::playground::playground_load_pipeline,
+            app_lib::commands::playground::playground_save_pipeline,
+            app_lib::commands::playground::playground_delete_pipeline,
+            app_lib::commands::playground::playground_run_pipeline,
+            app_lib::commands::playground::playground_cancel_run,
+            app_lib::commands::playground::playground_store_credential,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri app")

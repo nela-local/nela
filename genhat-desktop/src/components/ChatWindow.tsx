@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from "react";
-import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, X } from "lucide-react";
+import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, Workflow, X } from "lucide-react";
 import MarkdownRenderer from "./MarkdownRenderer";
 import AudioPlayer from "./AudioPlayer";
 import VoiceInputButton from "./VoiceInputButton";
@@ -14,6 +14,7 @@ const MODE_ICON_MAP: Record<ChatMode, React.ElementType> = {
   rag: FileText,
   podcast: Mic,
   mindmap: Share2,
+  playground: Workflow,
 };
 
 /** Copy button for a full assistant response */

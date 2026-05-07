@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ElementType } from "react";
-import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, ChevronDown } from "lucide-react";
+import { MessageSquare, Eye, Volume2, Mic, FileText, Share2, ChevronDown, Workflow } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { Api } from "../api";
 import type {
@@ -18,6 +18,7 @@ const MODE_ICON_MAP: Record<ChatMode, ElementType> = {
   rag: FileText,
   podcast: Mic,
   mindmap: Share2,
+  playground: Workflow,
 };
 
 interface PodcastTabProps {

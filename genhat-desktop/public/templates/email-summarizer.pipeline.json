@@ -1,0 +1,68 @@
+{
+  "id": "email-summarizer-template",
+  "name": "Email Summarizer",
+  "description": "Fetches unread emails every morning at 8 AM and summarizes them with a local LLM. Sends a desktop notification when done.",
+  "auto_resume": false,
+  "nodes": [
+    {
+      "id": "node-trigger",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 60 },
+      "data": {
+        "kind": "Schedule",
+        "label": "Every Morning",
+        "config": { "cron": "0 8 * * *" }
+      }
+    },
+    {
+      "id": "node-fetch",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 200 },
+      "data": {
+        "kind": "EmailFetch",
+        "label": "Fetch Emails",
+        "config": {
+          "host": "imap.gmail.com",
+          "port": 993,
+          "username": "",
+          "password_key": "",
+          "mailbox": "INBOX",
+          "max_messages": 20,
+          "unseen_only": true
+        }
+      }
+    },
+    {
+      "id": "node-summarize",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 340 },
+      "data": {
+        "kind": "Summarize",
+        "label": "Summarize",
+        "config": {
+          "model_id": "",
+          "style": "bullet",
+          "ctx_size": 32768,
+          "system_prompt": "You are an email summarization assistant. The input contains one or more emails separated by '---'.\nFor each email:\n  • Identify the sender (if visible) and the main subject or request.\n  • Extract any action items, deadlines, or decisions required from you.\n  • Flag anything urgent or time-sensitive.\nGroup related emails where it makes sense. Use bullet points. Be concise — skip social niceties, signatures, and boilerplate."
+        }
+      }
+    },
+    {
+      "id": "node-notify",
+      "type": "playgroundNode",
+      "position": { "x": 300, "y": 480 },
+      "data": {
+        "kind": "Notification",
+        "label": "Morning Digest",
+        "config": { "title": "📬 Morning Email Digest", "body_template": "{{output}}" }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "node-trigger", "target": "node-fetch" },
+    { "id": "e2", "source": "node-fetch", "target": "node-summarize" },
+    { "id": "e3", "source": "node-summarize", "target": "node-notify" }
+  ],
+  "created_at": 0,
+  "updated_at": 0
+}

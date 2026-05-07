@@ -129,68 +129,94 @@ pub async fn generate_podcast(
         0.35,
     );
 
-    // ─── STAGE 3: TTS for each line ───────────────────────────────────────
-    let mut segments: Vec<PodcastSegment> = Vec::new();
-    let mut all_wav_bytes: Vec<Vec<u8>> = Vec::new();
-    let total_lines = lines.len() as f32;
+    // ─── STAGE 3: TTS for each line (concurrent) ────────────────────────────
+    emit_progress(
+        app,
+        "tts",
+        &format!("Synthesizing {} dialogue lines concurrently...", lines.len()),
+        0.35,
+    );
 
-    for (i, line) in lines.iter().enumerate() {
-        let progress = 0.35 + (0.55 * (i as f32 / total_lines));
-        emit_progress(
-            app,
-            "tts",
-            &format!(
-                "Synthesizing line {}/{} ({})...",
-                i + 1,
-                lines.len(),
-                line.speaker
-            ),
-            progress,
-        );
+    // Dispatch all TTS synthesis tasks simultaneously. KittenTTS is an
+    // in-process ONNX backend: each call runs in a spawn_blocking thread and
+    // the ONNX session supports concurrent inference, so N lines take roughly
+    // the time of the single slowest line instead of N × average line time.
+    let tts_tasks: Vec<_> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let router = Arc::clone(&router);
+            let speaker = line.speaker.clone();
+            let voice = line.voice.clone();
+            let text = line.text.clone();
+            let line_clone = line.clone();
+            async move {
+                let mut extra = HashMap::new();
+                extra.insert("voice".to_string(), voice);
 
-        // Build TTS request with the voice parameter
-        let mut extra = HashMap::new();
-        extra.insert("voice".to_string(), line.voice.clone());
+                let tts_request = TaskRequest {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    task_type: TaskType::Tts,
+                    input: text,
+                    model_override: None,
+                    extra,
+                };
 
-        let tts_request = TaskRequest {
-            request_id: uuid::Uuid::new_v4().to_string(),
-            task_type: TaskType::Tts,
-            input: line.text.clone(),
-            model_override: None,
-            extra,
-        };
+                let wav_path = match router.route(&tts_request).await {
+                    Ok(TaskResponse::FilePath(path)) => path,
+                    Ok(other) => {
+                        return Err(format!(
+                            "Unexpected TTS response for line {}: {:?}",
+                            i, other
+                        ))
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "TTS failed for line {} ({}): {}",
+                            i, speaker, e
+                        ))
+                    }
+                };
 
-        let wav_path = match router.route(&tts_request).await {
-            Ok(TaskResponse::FilePath(path)) => path,
-            Ok(other) => {
-                return Err(format!(
-                    "Unexpected TTS response for line {}: {:?}",
-                    i, other
-                ))
+                let wav_bytes = std::fs::read(&wav_path)
+                    .map_err(|e| format!("Failed to read WAV for line {}: {e}", i))?;
+                let _ = std::fs::remove_file(&wav_path);
+
+                Ok::<(usize, PodcastLine, Vec<u8>), String>((i, line_clone, wav_bytes))
             }
-            Err(e) => {
-                return Err(format!("TTS failed for line {} ({}): {}", i, line.speaker, e))
-            }
-        };
+        })
+        .collect();
 
-        // Read the WAV bytes
-        let wav_bytes = std::fs::read(&wav_path)
-            .map_err(|e| format!("Failed to read WAV for line {}: {e}", i))?;
+    let tts_results = futures_util::future::join_all(tts_tasks).await;
 
-        // Clean up temp file
-        let _ = std::fs::remove_file(&wav_path);
+    // Validate all tasks succeeded and restore original script ordering.
+    // join_all preserves insertion order, but sort_unstable_by_key is cheap
+    // and makes the ordering guarantee explicit.
+    let mut indexed: Vec<(usize, PodcastLine, Vec<u8>)> = Vec::with_capacity(lines.len());
+    for result in tts_results {
+        indexed.push(result?);
+    }
+    indexed.sort_unstable_by_key(|(i, _, _)| *i);
 
-        // Create base64 data URL for individual segment
+    let mut segments: Vec<PodcastSegment> = Vec::with_capacity(indexed.len());
+    let mut all_wav_bytes: Vec<Vec<u8>> = Vec::with_capacity(indexed.len());
+
+    for (_, line, wav_bytes) in indexed {
         let b64 = STANDARD.encode(&wav_bytes);
         let data_url = format!("data:audio/wav;base64,{b64}");
-
         all_wav_bytes.push(wav_bytes);
-
         segments.push(PodcastSegment {
-            line: line.clone(),
+            line,
             audio_data_url: data_url,
         });
     }
+
+    emit_progress(
+        app,
+        "tts",
+        &format!("All {} lines synthesized", lines.len()),
+        0.90,
+    );
 
     // ─── STAGE 4: Merge audio segments ────────────────────────────────────
     emit_progress(app, "merging", "Combining audio segments...", 0.92);

@@ -200,7 +200,7 @@ export interface MindMapGraph {
   createdAt: number;
 }
 
-export type ChatMode = "text" | "vision" | "audio" | "rag" | "podcast" | "mindmap";
+export type ChatMode = "text" | "vision" | "audio" | "rag" | "podcast" | "mindmap" | "playground";
 
 // ── Multi-Chat Session ────────────────────────────────────────────────────────
 

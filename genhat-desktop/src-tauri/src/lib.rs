@@ -22,6 +22,7 @@ pub mod tts;
 pub mod asr;
 pub mod podcast;
 pub mod system;
+pub mod playground;
 
 #[cfg(windows)]
 pub mod windows_spawn;

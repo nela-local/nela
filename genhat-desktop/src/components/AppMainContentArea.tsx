@@ -3,13 +3,13 @@ import type {
   ChatSession,
   IngestionStatus,
   MindMapGraph,
-  PodcastResult,
 } from "../types";
 import PodcastTab from "./PodcastTab";
 import ChatWindow from "./ChatWindow";
 import MindMapOverlay from "./MindMapOverlay";
 import PdfViewer from "./PdfViewer";
 import DocumentViewer from "./DocumentViewer";
+import PlaygroundMode from "./PlaygroundMode";
 
 interface ModeOption {
   mode: ChatMode;
@@ -23,7 +23,6 @@ interface AppMainContentAreaProps {
   modeOptions: ModeOption[];
   onSelectMode: (mode: ChatMode) => void;
   onToggleRagEnabled: (enabled: boolean) => void;
-  onPodcastGenerated: (payload: { query: string; result: PodcastResult }) => void;
   activeSession: ChatSession | null;
   activeWorkspace: { id: string } | null;
   onSend: (text: string) => void;
@@ -76,7 +75,6 @@ export default function AppMainContentArea({
   modeOptions,
   onSelectMode,
   onToggleRagEnabled,
-  onPodcastGenerated,
   activeSession,
   activeWorkspace,
   onSend,
@@ -112,13 +110,14 @@ export default function AppMainContentArea({
 }: AppMainContentAreaProps) {
   return (
     <>
-      {chatMode === "podcast" ? (
+      {chatMode === "playground" ? (
+        <PlaygroundMode />
+      ) : chatMode === "podcast" ? (
         <PodcastTab
           hasDocuments={ragDocs.length > 0}
           modeOptions={modeOptions}
           currentMode={chatMode}
           onSelectMode={onSelectMode}
-          onPodcastGenerated={onPodcastGenerated}
         />
       ) : !activeSession ? (
         <div className="flex-1 flex items-center justify-center text-txt-muted text-sm">

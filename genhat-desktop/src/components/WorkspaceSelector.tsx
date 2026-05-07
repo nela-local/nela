@@ -23,7 +23,25 @@ const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
   busy = false,
 }) => {
   const [open, setOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const commitRename = async () => {
+    if (!renamingId) return;
+    const trimmed = renameValue.trim();
+    if (trimmed) {
+      await onRenameWorkspace(renamingId, trimmed);
+    }
+    setRenamingId(null);
+    setRenameValue("");
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
+    setRenameValue("");
+  };
 
   const active = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
@@ -60,18 +78,21 @@ const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
           <div className="workspace-list">
             {workspaces.map((ws) => {
               const selected = ws.id === activeWorkspaceId;
+              const isRenaming = renamingId === ws.id;
               return (
                 <div
                   key={ws.id}
                   className={`workspace-item ${selected ? "selected" : ""}`}
                   onClick={() => {
+                    if (isRenaming) return;
                     onSelectWorkspace(ws.id);
                     setOpen(false);
                   }}
-                  title={ws.name}
+                  title={isRenaming ? undefined : ws.name}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
+                    if (isRenaming) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       onSelectWorkspace(ws.id);
@@ -79,20 +100,39 @@ const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                     }
                   }}
                 >
-                  <span className="truncate">{ws.name}</span>
+                  {isRenaming ? (
+                    <input
+                      ref={renameInputRef}
+                      className="workspace-rename-input"
+                      value={renameValue}
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void commitRename();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                      onBlur={() => void commitRename()}
+                    />
+                  ) : (
+                    <span className="truncate">{ws.name}</span>
+                  )}
 
                   <div className="workspace-item-actions" onClick={(e) => e.stopPropagation()}>
-                    {selected && <Check size={14} className="check-icon" />}
+                    {selected && !isRenaming && <Check size={14} className="check-icon" />}
 
                     <button
                       type="button"
                       className="workspace-action-btn"
-                      onClick={async () => {
-                        const next = window.prompt("Rename workspace", ws.name);
-                        if (next === null) return;
-                        const trimmed = next.trim();
-                        if (!trimmed) return;
-                        await onRenameWorkspace(ws.id, trimmed);
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRenamingId(ws.id);
+                        setRenameValue(ws.name);
                       }}
                       disabled={busy}
                       title="Rename workspace"
