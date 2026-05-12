@@ -66,6 +66,7 @@ interface AppMainContentAreaProps {
     title: string;
   } | null;
   onCloseDocViewer: () => void;
+  onExitPlayground?: () => void;
 }
 
 export default function AppMainContentArea({
@@ -107,11 +108,12 @@ export default function AppMainContentArea({
   onClosePdfViewer,
   docViewerFile,
   onCloseDocViewer,
+  onExitPlayground,
 }: AppMainContentAreaProps) {
   return (
     <>
       {chatMode === "playground" ? (
-        <PlaygroundMode />
+        <PlaygroundMode onNavigateBack={onExitPlayground} />
       ) : chatMode === "podcast" ? (
         <PodcastTab
           hasDocuments={ragDocs.length > 0}

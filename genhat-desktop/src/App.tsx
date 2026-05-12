@@ -73,6 +73,18 @@ import {
 import "./App.css";
 
 function App() {
+  // ── Theme ──────────────────────────────────────────────────────────────────
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem("nela-theme") as "dark" | "light") ?? "dark";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("nela-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
   // ── Model state ────────────────────────────────────────────────────────────
   const [models, setModels] = useState<ModelFile[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
@@ -1196,9 +1208,11 @@ function App() {
 
   // Clean up TTS and general timers on unmount
   useEffect(() => {
+    const ttsInterval = ttsIntervalRef.current;
+    const generalInterval = generalIntervalRef.current;
     return () => {
-      if (ttsIntervalRef.current) clearInterval(ttsIntervalRef.current);
-      if (generalIntervalRef.current) clearInterval(generalIntervalRef.current);
+      if (ttsInterval) clearInterval(ttsInterval);
+      if (generalInterval) clearInterval(generalInterval);
     };
   }, []);
 
@@ -1506,9 +1520,9 @@ function App() {
     });
   }, []);
 
-  const showError = (message: string, title = "Error") => {
+  const showError = useCallback((message: string, title = "Error") => {
     showModal("error", title, message);
-  };
+  }, [showModal]);
 
   const confirmAction = (
     title: string,
@@ -2046,7 +2060,15 @@ function App() {
     setSidebarSection((prev) => (prev === section ? null : section));
     if (section === "playground") {
       setChatMode("playground");
+    } else if (chatMode === "playground") {
+      setChatMode("text");
     }
+  };
+
+  // Exit playground and return to chats view
+  const handleExitPlayground = () => {
+    setChatMode("text");
+    setSidebarSection("chats");
   };
 
   const activeSessionMindmaps = activeSession ? (mindmapsBySession[activeSession.id] ?? []) : [];
@@ -2232,6 +2254,8 @@ function App() {
         onOpenHuggingFaceSearch={handleAddModel}
         workspaceBusy={workspaceBusy}
         canExport={!!activeWorkspace}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       {/* Vertical blue line when sidebar is minimized */}
       {sidebarSection === null && (
@@ -2376,6 +2400,7 @@ function App() {
         onClosePdfViewer={closePdfViewer}
         docViewerFile={docViewerFile}
         onCloseDocViewer={closeDocViewer}
+        onExitPlayground={handleExitPlayground}
       />
 
       <StartupModelToast

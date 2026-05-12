@@ -1,13 +1,17 @@
 //! Lifecycle management: health checks, crash recovery, idle reaping.
 //!
 //! Runs a background loop that periodically:
-//! 1. Health-checks all running instances
-//! 2. Reaps idle ephemeral instances
-//! 3. Logs memory usage
+//! 1. Health-checks all running instances and increments failure counters
+//! 2. Marks unhealthy instances as Error after consecutive failures
+//! 3. Reaps idle ephemeral instances
+//! 4. Logs memory usage
 
 use crate::process::ProcessManager;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Number of consecutive health-check failures before marking an instance as Error.
+const HEALTH_FAILURE_THRESHOLD: u8 = 2;
 
 /// Start the lifecycle management loop in a background thread.
 /// Uses std::thread to avoid Tokio runtime context issues during Tauri setup.
@@ -22,11 +26,14 @@ pub fn start_lifecycle_thread(manager: Arc<ProcessManager>, interval_secs: u64) 
         loop {
             std::thread::sleep(interval);
 
-            // Reap idle ephemeral instances (block on async)
             tauri::async_runtime::block_on(async {
+                // Health-check all running instances before reaping.
+                manager.health_check_all(HEALTH_FAILURE_THRESHOLD).await;
+
+                // Reap idle ephemeral instances.
                 manager.reap_idle().await;
 
-                // Log memory usage
+                // Log memory usage.
                 let mem = manager.memory_usage().await;
                 if mem > 0 {
                     log::debug!("ProcessManager: estimated memory usage = {mem} MB");

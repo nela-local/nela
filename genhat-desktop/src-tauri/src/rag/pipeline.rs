@@ -590,6 +590,11 @@ impl RagPipeline {
 
         // Phase 1: sequential LLM enrichment.
         for chunk in &chunk_records {
+            // Yield to user-facing requests when the user is actively chatting.
+            if self.router.process_manager.is_user_active() {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
             let request = tasks::enrich_request(&chunk.text);
             match self.router.route(&request).await {
                 Ok(TaskResponse::Text(enriched_text)) => {

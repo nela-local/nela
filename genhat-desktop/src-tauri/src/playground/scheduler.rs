@@ -71,7 +71,9 @@ pub async fn start_scheduler(
             let h = app_handle_clone.clone();
             Box::pin(async move {
                 log::info!("[Scheduler] Running pipeline '{}'", p.name);
-                let result = run_pipeline(&p, r, d, h).await;
+                // Scheduled runs are not interactively cancellable; create a dummy receiver.
+                let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                let result = run_pipeline(&p, r, d, h, cancel_rx).await;
                 log::info!(
                     "[Scheduler] Pipeline '{}' finished: {:?}",
                     p.name,

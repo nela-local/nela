@@ -234,6 +234,7 @@ impl super::ModelBackend for LlamaCliBackend {
             port: None,
             started_at: Instant::now(),
             work_dir: std::env::current_dir().unwrap_or_default(),
+            http_client: None,
         }))
     }
 

@@ -12,6 +12,7 @@ import type { RegisteredModel } from "../types";
 import type {
   PlaygroundNode,
   NodeConfig,
+  ManualConfig,
   LlmChatConfig,
   SummarizeConfig,
   ScheduleConfig,
@@ -25,6 +26,10 @@ import type {
   TranscribeConfig,
   RagQueryConfig,
   NotificationConfig,
+  HttpRequestConfig,
+  RssReaderConfig,
+  JsonPathConfig,
+  SetVariableConfig,
 } from "../app/playgroundTypes";
 
 interface Props {
@@ -595,14 +600,27 @@ function TtsForm({
   onChange: (patch: Partial<TtsConfig>) => void;
 }) {
   return (
-    <Field label="TTS Engine ID">
-      <input
-        className={inputCls}
-        value={config.engine_id}
-        onChange={e => onChange({ engine_id: e.target.value })}
-        placeholder="kitten-tts"
-      />
-    </Field>
+    <>
+      <Field label="TTS Engine" hint="Only downloaded models that support the text-to-speech task are listed.">
+        <ModelPicker
+          value={config.engine_id}
+          onChange={id => onChange({ engine_id: id })}
+          taskFilter="tts"
+          placeholder="Select a TTS engine"
+        />
+      </Field>
+      <Field
+        label="Output File Path"
+        hint="Optional. Where to save the generated audio. Leave empty to use a temporary file."
+      >
+        <input
+          className={inputCls}
+          value={config.output_path ?? ""}
+          onChange={e => onChange({ output_path: e.target.value || undefined })}
+          placeholder="/home/user/output.wav"
+        />
+      </Field>
+    </>
   );
 }
 
@@ -614,14 +632,27 @@ function TranscribeForm({
   onChange: (patch: Partial<TranscribeConfig>) => void;
 }) {
   return (
-    <Field label="ASR Model ID">
-      <input
-        className={inputCls}
-        value={config.model_id}
-        onChange={e => onChange({ model_id: e.target.value })}
-        placeholder="parakeet-tdt"
-      />
-    </Field>
+    <>
+      <Field label="ASR Model" hint="Only downloaded models that support the transcription task are listed.">
+        <ModelPicker
+          value={config.model_id}
+          onChange={id => onChange({ model_id: id })}
+          taskFilter="transcribe"
+          placeholder="Select an ASR model"
+        />
+      </Field>
+      <Field
+        label="Audio File Path"
+        hint="Optional. Provide an audio file path directly. If left empty, the output of the previous node is used as the file path."
+      >
+        <input
+          className={inputCls}
+          value={config.file_path ?? ""}
+          onChange={e => onChange({ file_path: e.target.value || undefined })}
+          placeholder="/home/user/recording.wav"
+        />
+      </Field>
+    </>
   );
 }
 
@@ -634,20 +665,165 @@ function RagQueryForm({
 }) {
   return (
     <>
-      <Field label="Workspace ID">
-        <input
-          className={inputCls}
-          value={config.workspace_id}
-          onChange={e => onChange({ workspace_id: e.target.value })}
-          placeholder="workspace-uuid"
-        />
-      </Field>
-      <Field label="Top K Results">
+      <div className="flex items-start gap-2 p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-300">
+        <p className="text-[10px] leading-snug">
+          Queries the <strong>currently active Knowledge Base</strong> workspace. Open the KB
+          sidebar and activate a workspace before running this pipeline.
+        </p>
+      </div>
+      <Field label="Top K Results" hint="Number of relevant chunks to retrieve.">
         <input
           type="number"
           className={inputCls}
           value={config.top_k ?? 5}
+          min={1}
+          max={50}
           onChange={e => onChange({ top_k: parseInt(e.target.value, 10) })}
+        />
+      </Field>
+      <Field
+        label="Query Template"
+        hint="Optional. Handlebars template to build the query string. Leave empty to use the previous node's output as the query."
+      >
+        <textarea
+          className={textareaCls}
+          value={config.query_template ?? ""}
+          onChange={e => onChange({ query_template: e.target.value || undefined })}
+          placeholder="Summarize key facts about: {{output}}"
+          rows={3}
+        />
+      </Field>
+    </>
+  );
+}
+
+function HttpRequestForm({
+  config,
+  onChange,
+}: {
+  config: HttpRequestConfig;
+  onChange: (patch: Partial<HttpRequestConfig>) => void;
+}) {
+  return (
+    <>
+      <Field label="URL">
+        <input
+          className={inputCls}
+          value={config.url}
+          onChange={e => onChange({ url: e.target.value })}
+          placeholder="https://api.example.com/data"
+        />
+      </Field>
+      <Field label="Method">
+        <select
+          className={inputCls}
+          value={config.method}
+          onChange={e => onChange({ method: e.target.value as HttpRequestConfig["method"] })}
+        >
+          {(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map(m => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Timeout (seconds)">
+        <input
+          type="number"
+          className={inputCls}
+          value={config.timeout_secs ?? 30}
+          onChange={e => onChange({ timeout_secs: parseInt(e.target.value, 10) })}
+        />
+      </Field>
+      <Field
+        label="Body Template"
+        hint="Handlebars template. Only used for POST/PUT/PATCH requests."
+      >
+        <textarea
+          className={textareaCls}
+          value={config.body_template ?? ""}
+          onChange={e => onChange({ body_template: e.target.value || undefined })}
+          placeholder='{"input": "{{output}}"}'
+        />
+      </Field>
+    </>
+  );
+}
+
+function RssReaderForm({
+  config,
+  onChange,
+}: {
+  config: RssReaderConfig;
+  onChange: (patch: Partial<RssReaderConfig>) => void;
+}) {
+  return (
+    <>
+      <Field label="Feed URL">
+        <input
+          className={inputCls}
+          value={config.url}
+          onChange={e => onChange({ url: e.target.value })}
+          placeholder="https://example.com/feed.rss"
+        />
+      </Field>
+      <Field label="Max Items">
+        <input
+          type="number"
+          className={inputCls}
+          value={config.max_items ?? 10}
+          min={1}
+          max={100}
+          onChange={e => onChange({ max_items: parseInt(e.target.value, 10) })}
+        />
+      </Field>
+    </>
+  );
+}
+
+function JsonPathForm({
+  config,
+  onChange,
+}: {
+  config: JsonPathConfig;
+  onChange: (patch: Partial<JsonPathConfig>) => void;
+}) {
+  return (
+    <Field
+      label="JSON Pointer"
+      hint="RFC 6901 syntax. e.g. /items/0/title extracts the first item's title field."
+    >
+      <input
+        className={inputCls + " font-mono"}
+        value={config.path}
+        onChange={e => onChange({ path: e.target.value })}
+        placeholder="/items/0/title"
+      />
+    </Field>
+  );
+}
+
+function SetVariableForm({
+  config,
+  onChange,
+}: {
+  config: SetVariableConfig;
+  onChange: (patch: Partial<SetVariableConfig>) => void;
+}) {
+  return (
+    <>
+      <Field label="Variable Name" hint="Stored in ctx.vars for subsequent nodes.">
+        <input
+          className={inputCls + " font-mono"}
+          value={config.name}
+          onChange={e => onChange({ name: e.target.value })}
+          placeholder="my_var"
+        />
+      </Field>
+      <Field label="Value Template" hint="Handlebars — {{output}}, {{date}}, etc.">
+        <textarea
+          className={textareaCls}
+          value={config.value_template}
+          onChange={e => onChange({ value_template: e.target.value })}
+          placeholder="{{output}}"
         />
       </Field>
     </>
@@ -747,10 +923,38 @@ export default function PlaygroundNodeConfig({ node, onUpdateConfig, onClose, on
         {kind === "RagQuery" && (
           <RagQueryForm config={config as RagQueryConfig} onChange={patch} />
         )}
-        {(kind === "Manual") && (
-          <p className="text-xs text-txt-muted">
-            This node triggers the pipeline when you press Run.
-          </p>
+        {kind === "HttpRequest" && (
+          <HttpRequestForm config={config as HttpRequestConfig} onChange={patch} />
+        )}
+        {kind === "RssReader" && (
+          <RssReaderForm config={config as RssReaderConfig} onChange={patch} />
+        )}
+        {kind === "JsonPath" && (
+          <JsonPathForm config={config as JsonPathConfig} onChange={patch} />
+        )}
+        {kind === "SetVariable" && (
+          <SetVariableForm config={config as SetVariableConfig} onChange={patch} />
+        )}
+        {kind === "Manual" && (
+          <>
+            <p className="text-xs text-txt-muted">
+              This node triggers the pipeline when you press Run.
+            </p>
+            <Field
+              label="Seed Input"
+              hint="Optional. Text injected into the pipeline context when run manually. Leave empty to start with a blank context."
+            >
+              <textarea
+                className={textareaCls}
+                value={(config as ManualConfig).prompt ?? ""}
+                onChange={e =>
+                  patch({ prompt: e.target.value || undefined } as Partial<ManualConfig>)
+                }
+                placeholder="Enter an initial prompt or text to pass to the first node…"
+                rows={3}
+              />
+            </Field>
+          </>
         )}
       </div>
     </aside>

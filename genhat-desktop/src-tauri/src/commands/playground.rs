@@ -17,15 +17,19 @@ pub struct PlaygroundState {
     pub store: Arc<PipelineStore>,
     /// Active run tracking — wrapped in Arc so it can be shared with spawned tasks.
     pub active_run: Arc<Mutex<Option<PipelineRun>>>,
+    /// Cancel signal — send `true` to abort the current run.
+    pub cancel_tx: Arc<tokio::sync::watch::Sender<bool>>,
 }
 
 impl PlaygroundState {
     pub fn new(app_data_dir: &PathBuf) -> Result<Self, String> {
         let store = PipelineStore::new(app_data_dir)
             .map_err(|e| format!("Failed to init pipeline store: {e}"))?;
+        let (cancel_tx, _) = tokio::sync::watch::channel(false);
         Ok(Self {
             store: Arc::new(store),
             active_run: Arc::new(Mutex::new(None)),
+            cancel_tx: Arc::new(cancel_tx),
         })
     }
 }
@@ -83,6 +87,10 @@ pub async fn playground_run_pipeline(
     let router = router_state.0.clone();
     let active_run = state.active_run.clone();
 
+    // Reset cancel flag so any previous cancellation doesn't bleed into this run.
+    state.cancel_tx.send(false).ok();
+    let cancel_rx = state.cancel_tx.subscribe();
+
     // Generate a stable run_id up front and return it immediately.
     // The pipeline runs in a background task and emits `playground-run-update`
     // / `playground-run-complete` events as each node finishes.
@@ -90,7 +98,7 @@ pub async fn playground_run_pipeline(
     let run_id_clone = run_id.clone();
 
     tokio::spawn(async move {
-        let run = run_pipeline(&pipeline, router, app_data_dir, app_handle).await;
+        let run = run_pipeline(&pipeline, router, app_data_dir, app_handle, cancel_rx).await;
         let mut guard = active_run.lock().await;
         *guard = Some(run);
         log::info!("Pipeline run '{run_id_clone}' complete");
@@ -104,7 +112,8 @@ pub async fn playground_cancel_run(
     _run_id: String,
     state: State<'_, PlaygroundState>,
 ) -> Result<(), String> {
-    // In this implementation runs complete atomically; cancellation just clears state.
+    // Signal the background task to stop between nodes.
+    state.cancel_tx.send(true).ok();
     let mut guard = state.active_run.lock().await;
     *guard = None;
     Ok(())

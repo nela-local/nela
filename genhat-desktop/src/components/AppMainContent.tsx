@@ -120,6 +120,7 @@ interface AppMainContentProps {
     title: string;
   } | null;
   onCloseDocViewer: () => void;
+  onExitPlayground?: () => void;
 }
 
 export default function AppMainContent({
@@ -198,6 +199,7 @@ export default function AppMainContent({
   onClosePdfViewer,
   docViewerFile,
   onCloseDocViewer,
+  onExitPlayground,
 }: AppMainContentProps) {
   return (
     <main className="flex-1 flex flex-col bg-void-900 min-w-0 relative">
@@ -292,6 +294,7 @@ export default function AppMainContent({
         onClosePdfViewer={onClosePdfViewer}
         docViewerFile={docViewerFile}
         onCloseDocViewer={onCloseDocViewer}
+        onExitPlayground={onExitPlayground}
       />
     </main>
   );

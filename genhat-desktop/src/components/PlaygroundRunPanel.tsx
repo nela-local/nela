@@ -37,9 +37,10 @@ export default function PlaygroundRunPanel({ run, running, onRun, onCancel, onSa
   // Auto-expand log panel when a run starts or finishes
   useEffect(() => {
     if (running || run) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpanded(true);
     }
-  }, [running, run?.run_id]);
+  }, [running, run]);
 
   // Auto-scroll log to bottom on new log entries
   useEffect(() => {

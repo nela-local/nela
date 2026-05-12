@@ -21,7 +21,11 @@ export type NodeKind =
   | "Condition"
   | "Template"
   | "Notification"
-  | "Script";
+  | "Script"
+  | "HttpRequest"
+  | "RssReader"
+  | "JsonPath"
+  | "SetVariable";
 
 // ─── Node config — one union member per NodeKind ──────────────────────────────
 
@@ -30,7 +34,8 @@ export interface ScheduleConfig {
 }
 
 export interface ManualConfig {
-  label?: string;
+  /** Optional text injected into ctx.output when the pipeline is run manually. */
+  prompt?: string;
 }
 
 export interface LlmChatConfig {
@@ -52,20 +57,24 @@ export interface SummarizeConfig {
 
 export interface TranscribeConfig {
   model_id: string;
+  /** Optional audio file path. If omitted, the pipeline input (ctx.output) is used as the path. */
+  file_path?: string;
 }
 
 export interface TtsConfig {
   engine_id: string;
+  /** Optional path where the generated audio file should be saved. Uses a temp file if omitted. */
+  output_path?: string;
 }
 
 export interface RagQueryConfig {
-  workspace_id: string;
   top_k?: number;
+  /** Optional Handlebars template to construct the query. Uses {{output}} by default. */
+  query_template?: string;
 }
 
 export interface FileReadConfig {
   path: string;
-  encoding?: "utf8" | "base64";
 }
 
 export interface FileWriteConfig {
@@ -100,8 +109,30 @@ export interface NotificationConfig {
 export interface ScriptConfig {
   script_path: string;
   interpreter?: string; // "python3" | "node" | "bash" | …
-  args?: string[];
   timeout_secs?: number;
+}
+
+export interface HttpRequestConfig {
+  url: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  headers?: Record<string, string>;
+  body_template?: string;
+  timeout_secs?: number;
+}
+
+export interface RssReaderConfig {
+  url: string;
+  max_items?: number;
+}
+
+export interface JsonPathConfig {
+  /** JSON Pointer (RFC 6901) e.g. "/items/0/title" */
+  path: string;
+}
+
+export interface SetVariableConfig {
+  name: string;
+  value_template: string; // Handlebars template
 }
 
 export type NodeConfig =
@@ -118,7 +149,11 @@ export type NodeConfig =
   | ConditionConfig
   | TemplateConfig
   | NotificationConfig
-  | ScriptConfig;
+  | ScriptConfig
+  | HttpRequestConfig
+  | RssReaderConfig
+  | JsonPathConfig
+  | SetVariableConfig;
 
 // ─── Graph primitives ─────────────────────────────────────────────────────────
 
@@ -205,7 +240,7 @@ export const PALETTE: PaletteEntry[] = [
     label: "Manual Run",
     description: "Triggered manually by the user",
     category: "trigger",
-    defaultConfig: { label: "Start" } satisfies ManualConfig,
+    defaultConfig: {} satisfies ManualConfig,
   },
   // AI
   {
@@ -227,21 +262,21 @@ export const PALETTE: PaletteEntry[] = [
     label: "Transcribe",
     description: "Speech-to-text via Parakeet ASR",
     category: "ai",
-    defaultConfig: { model_id: "parakeet-tdt" } satisfies TranscribeConfig,
+    defaultConfig: { model_id: "" } satisfies TranscribeConfig,
   },
   {
     kind: "Tts",
     label: "Text to Speech",
     description: "Convert text to audio using KittenTTS",
     category: "ai",
-    defaultConfig: { engine_id: "kitten-tts" } satisfies TtsConfig,
+    defaultConfig: { engine_id: "" } satisfies TtsConfig,
   },
   {
     kind: "RagQuery",
     label: "RAG Query",
     description: "Retrieve context from an ingested knowledge base",
     category: "ai",
-    defaultConfig: { workspace_id: "", top_k: 5 } satisfies RagQueryConfig,
+    defaultConfig: { top_k: 5 } satisfies RagQueryConfig,
   },
   // I/O
   {
@@ -295,6 +330,36 @@ export const PALETTE: PaletteEntry[] = [
     category: "logic",
     defaultConfig: { template: "{{output}}" } satisfies TemplateConfig,
   },
+  // I/O — network
+  {
+    kind: "HttpRequest",
+    label: "HTTP Request",
+    description: "Fetch or post data to an HTTP endpoint",
+    category: "io",
+    defaultConfig: { url: "", method: "GET" } satisfies HttpRequestConfig,
+  },
+  {
+    kind: "RssReader",
+    label: "RSS Reader",
+    description: "Fetch and parse an RSS or Atom feed",
+    category: "io",
+    defaultConfig: { url: "", max_items: 10 } satisfies RssReaderConfig,
+  },
+  // logic — data
+  {
+    kind: "JsonPath",
+    label: "JSON Path",
+    description: "Extract a value from JSON input using a JSON Pointer",
+    category: "logic",
+    defaultConfig: { path: "/0/title" } satisfies JsonPathConfig,
+  },
+  {
+    kind: "SetVariable",
+    label: "Set Variable",
+    description: "Store a Handlebars-rendered value into a named pipeline variable",
+    category: "logic",
+    defaultConfig: { name: "", value_template: "{{output}}" } satisfies SetVariableConfig,
+  },
   // script
   {
     kind: "Script",
@@ -304,7 +369,6 @@ export const PALETTE: PaletteEntry[] = [
     defaultConfig: {
       script_path: "",
       interpreter: "",
-      args: [],
       timeout_secs: 30,
     } satisfies ScriptConfig,
   },

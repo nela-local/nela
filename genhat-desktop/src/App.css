@@ -1648,6 +1648,439 @@
   line-height: 1.6;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   LIGHT MODE OVERRIDES
+   All rules here are scoped to html[data-theme="light"] so they only apply
+   when the user has switched to light mode. CSS variables (--color-*) are
+   already overridden in index.css; these rules fix hardcoded rgba/hex values
+   that couldn't be expressed as variables.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Glass effects ── */
+html[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.70);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+html[data-theme="light"] .glass-strong {
+  background: rgba(255, 255, 255, 0.80);
+  border: 1px solid rgba(0, 0, 0, 0.11);
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+html[data-theme="light"] .glass-btn {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+}
+
+html[data-theme="light"] .glass-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.16);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Scrollbars ── */
+html[data-theme="light"] .messages-area::-webkit-scrollbar-thumb,
+html[data-theme="light"] .kb-sidebar-docs::-webkit-scrollbar-thumb,
+html[data-theme="light"] .kb-sidebar-sources::-webkit-scrollbar-thumb,
+html[data-theme="light"] .podcast-transcript::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.14);
+}
+
+html[data-theme="light"] .messages-area::-webkit-scrollbar-thumb:hover,
+html[data-theme="light"] .kb-sidebar-docs::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.22);
+}
+
+/* ── Dragging clone ── */
+html[data-theme="light"] .dragging-clone {
+  background: var(--color-void-800);
+  border-color: rgba(0, 153, 204, 0.4);
+}
+
+/* ── Markdown: chat ── */
+html[data-theme="light"] .markdown-body h1,
+html[data-theme="light"] .markdown-body h2,
+html[data-theme="light"] .markdown-body h3,
+html[data-theme="light"] .markdown-body h4,
+html[data-theme="light"] .markdown-body h5,
+html[data-theme="light"] .markdown-body h6 {
+  color: var(--color-txt);
+}
+
+html[data-theme="light"] .markdown-body h1,
+html[data-theme="light"] .markdown-body h2 {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .markdown-body strong {
+  color: var(--color-txt);
+}
+
+html[data-theme="light"] .markdown-body hr {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .inline-code {
+  background-color: rgba(0, 100, 180, 0.08);
+  color: #0055aa;
+  border-color: rgba(0, 100, 180, 0.14);
+}
+
+html[data-theme="light"] .code-block-wrapper {
+  border-color: rgba(0, 0, 0, 0.08);
+  background-color: #f6f8fa;
+}
+
+html[data-theme="light"] .code-block-header {
+  background-color: rgba(0, 0, 0, 0.03);
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="light"] .code-copy-btn {
+  border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+html[data-theme="light"] .code-copy-btn:hover {
+  border-color: var(--color-neon) !important;
+  background: rgba(0, 153, 204, 0.06) !important;
+}
+
+html[data-theme="light"] .code-block {
+  background-color: #f6f8fa;
+}
+
+html[data-theme="light"] .code-block code {
+  color: #24292e;
+}
+
+html[data-theme="light"] .md-blockquote {
+  background-color: rgba(0, 153, 204, 0.05);
+}
+
+html[data-theme="light"] .table-wrapper {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .md-table th {
+  background-color: rgba(0, 0, 0, 0.03);
+  border-bottom-color: rgba(0, 0, 0, 0.10);
+}
+
+html[data-theme="light"] .md-table td {
+  border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="light"] .md-table tr:hover td {
+  background-color: rgba(0, 153, 204, 0.04);
+}
+
+html[data-theme="light"] .md-link {
+  color: #0077aa;
+}
+
+html[data-theme="light"] .md-link:hover {
+  color: #005588;
+  border-bottom-color: #005588;
+}
+
+/* ── Syntax highlighting: chat (GitHub Light style) ── */
+html[data-theme="light"] .hljs {
+  background: transparent !important;
+  color: #24292e !important;
+}
+
+html[data-theme="light"] .hljs-keyword,
+html[data-theme="light"] .hljs-selector-tag {
+  color: #d73a49;
+}
+
+html[data-theme="light"] .hljs-string,
+html[data-theme="light"] .hljs-addition {
+  color: #032f62;
+}
+
+html[data-theme="light"] .hljs-comment,
+html[data-theme="light"] .hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+
+html[data-theme="light"] .hljs-number,
+html[data-theme="light"] .hljs-literal {
+  color: #005cc5;
+}
+
+html[data-theme="light"] .hljs-built_in {
+  color: #6f42c1;
+}
+
+html[data-theme="light"] .hljs-function .hljs-title,
+html[data-theme="light"] .hljs-title.function_ {
+  color: #6f42c1;
+}
+
+html[data-theme="light"] .hljs-type,
+html[data-theme="light"] .hljs-class .hljs-title {
+  color: #6f42c1;
+}
+
+html[data-theme="light"] .hljs-attr,
+html[data-theme="light"] .hljs-attribute {
+  color: #005cc5;
+}
+
+html[data-theme="light"] .hljs-variable,
+html[data-theme="light"] .hljs-template-variable {
+  color: #e36209;
+}
+
+html[data-theme="light"] .hljs-regexp {
+  color: #032f62;
+}
+
+html[data-theme="light"] .hljs-symbol {
+  color: #005cc5;
+}
+
+html[data-theme="light"] .hljs-meta {
+  color: #6a737d;
+}
+
+html[data-theme="light"] .hljs-deletion {
+  color: #b31d28;
+  background-color: rgba(179, 29, 40, 0.1);
+}
+
+html[data-theme="light"] .hljs-section {
+  color: #005cc5;
+  font-weight: bold;
+}
+
+html[data-theme="light"] .hljs-params {
+  color: #24292e;
+}
+
+html[data-theme="light"] .hljs-tag {
+  color: #22863a;
+}
+
+html[data-theme="light"] .hljs-name {
+  color: #22863a;
+}
+
+html[data-theme="light"] .hljs-selector-class {
+  color: #6f42c1;
+}
+
+html[data-theme="light"] .hljs-selector-id {
+  color: #005cc5;
+}
+
+/* ── Typing dots ── */
+html[data-theme="light"] .tts-timer-pulse {
+  box-shadow: 0 0 6px rgba(0, 153, 204, 0.5);
+}
+
+/* ── PDF / spinner ── */
+html[data-theme="light"] .pdf-spinner,
+html[data-theme="light"] .dv-spinner {
+  border-color: rgba(0, 0, 0, 0.10);
+  border-top-color: var(--color-neon);
+}
+
+html[data-theme="light"] .pdf-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 153, 204, 0.20);
+}
+
+html[data-theme="light"] .pdf-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 153, 204, 0.36);
+}
+
+html[data-theme="light"] .pdf-page-loading {
+  background: rgba(244, 244, 248, 0.7);
+}
+
+html[data-theme="light"] .pdf-loading-overlay {
+  background: rgba(244, 244, 248, 0.88);
+}
+
+/* ── Document viewer ── */
+html[data-theme="light"] .dv-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+html[data-theme="light"] .dv-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.20);
+}
+
+html[data-theme="light"] .dv-image-scroll {
+  background-image:
+    linear-gradient(45deg, #dddde8 25%, transparent 25%),
+    linear-gradient(-45deg, #dddde8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dddde8 75%),
+    linear-gradient(-45deg, transparent 75%, #dddde8 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+}
+
+html[data-theme="light"] .dv-audio-player {
+  filter: none;
+}
+
+/* ── Document viewer markdown (light) ── */
+html[data-theme="light"] .dv-markdown-container h1,
+html[data-theme="light"] .dv-markdown-container h2,
+html[data-theme="light"] .dv-markdown-container h3,
+html[data-theme="light"] .dv-markdown-container h4 {
+  color: var(--color-txt);
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .dv-markdown-container code {
+  background: rgba(0, 0, 0, 0.05);
+  color: #0055aa;
+}
+
+html[data-theme="light"] .dv-markdown-container pre {
+  background: #f6f8fa;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .dv-markdown-container pre code {
+  color: #24292e;
+}
+
+html[data-theme="light"] .dv-markdown-container blockquote {
+  background: rgba(0, 153, 204, 0.05);
+  color: #4a4860;
+}
+
+html[data-theme="light"] .dv-markdown-container th,
+html[data-theme="light"] .dv-markdown-container td {
+  border-color: rgba(0, 0, 0, 0.09);
+}
+
+html[data-theme="light"] .dv-markdown-container th {
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--color-txt);
+}
+
+html[data-theme="light"] .dv-markdown-container hr {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .dv-markdown-container a {
+  color: #0077aa;
+}
+
+/* ── Document viewer syntax (VS Code Light style) ── */
+html[data-theme="light"] .dv-code-container .hljs {
+  background: transparent !important;
+  color: #24292e;
+}
+
+html[data-theme="light"] .dv-code-container .hljs-keyword { color: #d73a49; }
+html[data-theme="light"] .dv-code-container .hljs-built_in { color: #6f42c1; }
+html[data-theme="light"] .dv-code-container .hljs-type { color: #6f42c1; }
+html[data-theme="light"] .dv-code-container .hljs-literal { color: #005cc5; }
+html[data-theme="light"] .dv-code-container .hljs-number { color: #005cc5; }
+html[data-theme="light"] .dv-code-container .hljs-string { color: #032f62; }
+html[data-theme="light"] .dv-code-container .hljs-regexp { color: #032f62; }
+html[data-theme="light"] .dv-code-container .hljs-variable,
+html[data-theme="light"] .dv-code-container .hljs-template-variable { color: #e36209; }
+html[data-theme="light"] .dv-code-container .hljs-attr { color: #005cc5; }
+html[data-theme="light"] .dv-code-container .hljs-comment { color: #6a737d; font-style: italic; }
+html[data-theme="light"] .dv-code-container .hljs-title { color: #6f42c1; }
+html[data-theme="light"] .dv-code-container .hljs-title.function_ { color: #6f42c1; }
+html[data-theme="light"] .dv-code-container .hljs-title.class_ { color: #6f42c1; }
+html[data-theme="light"] .dv-code-container .hljs-params { color: #24292e; }
+html[data-theme="light"] .dv-code-container .hljs-tag { color: #22863a; }
+html[data-theme="light"] .dv-code-container .hljs-name { color: #22863a; }
+html[data-theme="light"] .dv-code-container .hljs-section { color: #005cc5; }
+html[data-theme="light"] .dv-code-container .hljs-meta { color: #6a737d; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — PLAYGROUND + GLOBAL WHITE-ALPHA FIXES
+   All rules scoped to html[data-theme="light"].
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* -- White-alpha borders → subtle dark borders (invisible otherwise) --------- */
+html[data-theme="light"] .border-white\/10  { border-color: rgba(0,0,0,0.08) !important; }
+html[data-theme="light"] .border-white\/15  { border-color: rgba(0,0,0,0.10) !important; }
+html[data-theme="light"] .border-white\/20  { border-color: rgba(0,0,0,0.13) !important; }
+html[data-theme="light"] .border-white\/30  { border-color: rgba(0,0,0,0.18) !important; }
+html[data-theme="light"] .border-white\/40  { border-color: rgba(0,0,0,0.22) !important; }
+
+/* -- White-alpha backgrounds → dark-tinted (invisible otherwise) ------------ */
+html[data-theme="light"] .bg-white\/5  { background-color: rgba(0,0,0,0.03) !important; }
+html[data-theme="light"] .bg-white\/8  { background-color: rgba(0,0,0,0.05) !important; }
+html[data-theme="light"] .bg-white\/10 { background-color: rgba(0,0,0,0.07) !important; }
+
+/* -- White-alpha hover states ------------------------------------------------ */
+html[data-theme="light"] .hover\:bg-white\/5:hover  { background-color: rgba(0,0,0,0.04) !important; }
+html[data-theme="light"] .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.07) !important; }
+
+/* -- Focus borders on node config inputs ------------------------------------ */
+html[data-theme="light"] .focus\:border-white\/30:focus { border-color: rgba(0,0,0,0.28) !important; }
+
+/* -- White ring on selected nodes → neon ring ------------------------------- */
+html[data-theme="light"] .ring-white\/40 { --tw-ring-color: rgba(0,153,204,0.55) !important; }
+
+/* -- React Flow: canvas background dots ------------------------------------- */
+html[data-theme="light"] .react-flow__background circle { fill: rgba(0,0,0,0.14) !important; }
+html[data-theme="light"] .react-flow__background path   { fill: rgba(0,0,0,0.14) !important; }
+
+/* -- React Flow: zoom/pan controls ----------------------------------------- */
+html[data-theme="light"] .react-flow__controls {
+  background: var(--color-void-800) !important;
+  border-color: rgba(0,0,0,0.10) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10) !important;
+}
+html[data-theme="light"] .react-flow__controls-button {
+  background: var(--color-void-800) !important;
+  border-color: rgba(0,0,0,0.08) !important;
+  color: var(--color-txt-secondary) !important;
+}
+html[data-theme="light"] .react-flow__controls-button:hover {
+  background: var(--color-void-700) !important;
+}
+html[data-theme="light"] .react-flow__controls-button svg {
+  fill: var(--color-txt-secondary) !important;
+}
+
+/* -- React Flow: minimap ---------------------------------------------------- */
+html[data-theme="light"] .react-flow__minimap {
+  background: var(--color-void-800) !important;
+  border: 1px solid rgba(0,0,0,0.10) !important;
+}
+html[data-theme="light"] .react-flow__minimap-mask { fill: rgba(0,0,0,0.07) !important; }
+html[data-theme="light"] .react-flow__minimap-node { fill: rgba(99,102,241,0.6) !important; }
+
+/* -- React Flow: edges and connection lines --------------------------------- */
+html[data-theme="light"] .react-flow__edge-path { stroke: rgba(0,0,0,0.30) !important; }
+html[data-theme="light"] .react-flow__edge.selected .react-flow__edge-path { stroke: var(--color-neon) !important; }
+html[data-theme="light"] .react-flow__connection-path { stroke: var(--color-neon) !important; }
+
+/* -- React Flow: connection handles ---------------------------------------- */
+html[data-theme="light"] .react-flow__handle {
+  background-color: rgba(0,0,0,0.35) !important;
+  border-color:     rgba(0,0,0,0.18) !important;
+}
+
+/* -- Playground node cards: all icon+text → dark in light mode -------------- */
+html[data-theme="light"] .react-flow__node-playgroundNode > div {
+  color: var(--color-txt) !important;
+}
+
+/* -- Podcast source chunks: remove hardcoded white-alpha -------------------- */
+html[data-theme="light"] .podcast-source-chunk {
+  background: rgba(0,0,0,0.03);
+  border-color: rgba(0,0,0,0.07);
+}
+
 .dv-pptx-slide-content p {
   margin: 0.4em 0;
 }

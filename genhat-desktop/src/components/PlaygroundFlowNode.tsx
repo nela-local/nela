@@ -21,6 +21,10 @@ import {
   Code2,
   Bell,
   Terminal,
+  Globe,
+  Rss,
+  Braces,
+  VariableIcon,
   type LucideIcon,
 } from "lucide-react";
 import type { PlaygroundNodeData, NodeKind } from "../app/playgroundTypes";
@@ -40,6 +44,10 @@ const KIND_ICON: Record<NodeKind, LucideIcon> = {
   Template: Code2,
   Notification: Bell,
   Script: Terminal,
+  HttpRequest: Globe,
+  RssReader: Rss,
+  JsonPath: Braces,
+  SetVariable: VariableIcon,
 };
 
 const KIND_COLOR: Record<NodeKind, string> = {
@@ -57,6 +65,10 @@ const KIND_COLOR: Record<NodeKind, string> = {
   Template: "bg-teal-500/20 border-teal-500/40 text-teal-300",
   Notification: "bg-sky-500/20 border-sky-500/40 text-sky-300",
   Script: "bg-pink-500/20 border-pink-500/40 text-pink-300",
+  HttpRequest: "bg-lime-500/20 border-lime-500/40 text-lime-300",
+  RssReader: "bg-orange-500/20 border-orange-500/40 text-orange-300",
+  JsonPath: "bg-yellow-500/20 border-yellow-500/40 text-yellow-300",
+  SetVariable: "bg-teal-500/20 border-teal-500/40 text-teal-300",
 };
 
 interface PlaygroundFlowNodeProps {

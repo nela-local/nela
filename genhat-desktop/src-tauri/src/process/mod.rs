@@ -12,10 +12,34 @@ use crate::registry::types::{
     ModelStatus, TaskRequest, TaskResponse, TaskType,
 };
 use crate::registry::ModelRegistry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pipeline Reservation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A handle representing a set of pre-warmed, pinned model instances for a
+/// multi-model pipeline (e.g. podcast: script LLM + TTS).
+/// Call `ProcessManager::release_pipeline()` when the pipeline is done.
+#[must_use]
+pub struct PipelineReservation {
+    pub id: String,
+    pub model_ids: Vec<String>,
+}
+
+impl PipelineReservation {
+    pub fn new(model_ids: Vec<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            model_ids,
+        }
+    }
+}
 
 /// Central process manager — holds all model instances and backends.
 pub struct ProcessManager {
@@ -31,6 +55,11 @@ pub struct ProcessManager {
     active_llm_id: Arc<RwLock<String>>,
     /// Previously-active LLM model id (kept warm; at most one)
     previous_llm_id: Arc<RwLock<Option<String>>>,
+    /// Unix timestamp (ms) of the most recent user-facing request. Used by
+    /// background tasks to yield when a user is actively using the app.
+    user_last_active_ms: Arc<AtomicU64>,
+    /// Model IDs currently pinned by an active PipelineReservation.
+    reserved_model_ids: Arc<RwLock<HashSet<String>>>,
 }
 
 impl std::fmt::Debug for ProcessManager {
@@ -69,6 +98,7 @@ impl ProcessManager {
                 ManagedModel {
                     def: def.clone(),
                     instances: Vec::new(),
+                    last_crash: None,
                 },
             );
         }
@@ -89,6 +119,8 @@ impl ProcessManager {
             memory_budget_mb: 0, // 0 = unlimited, set via config later
             active_llm_id: Arc::new(RwLock::new(default_llm_id)),
             previous_llm_id: Arc::new(RwLock::new(None)),
+            user_last_active_ms: Arc::new(AtomicU64::new(0)),
+            reserved_model_ids: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -216,6 +248,7 @@ impl ProcessManager {
             ManagedModel {
                 def,
                 instances: Vec::new(),
+                last_crash: None,
             },
         );
 
@@ -294,14 +327,14 @@ impl ProcessManager {
             (managed.def.memory_mb, managed.def.max_instances)
         };
 
-        // Memory budget check (before mutating)
+        // Memory budget check: try to evict idle models first, then fail.
         if self.memory_budget_mb > 0 {
             let current_usage = self.current_memory_usage_internal(&models);
             if current_usage + needed_mb > self.memory_budget_mb {
-                return Err(format!(
-                    "Memory budget exceeded: current={current_usage}MB, needed={needed_mb}MB, budget={}MB",
-                    self.memory_budget_mb
-                ));
+                drop(models);
+                self.evict_until_fits(needed_mb, model_id).await?;
+                // Re-acquire write lock after eviction.
+                models = self.models.write().await;
             }
         }
 
@@ -378,6 +411,7 @@ impl ProcessManager {
             ephemeral,
             last_activity: std::time::Instant::now(),
             active_requests: 0,
+            consecutive_health_failures: 0,
         });
 
         let def = managed.def.clone();
@@ -833,6 +867,256 @@ impl ProcessManager {
         for (backend, inst) in stop_actions {
             inst_stop(&backend, inst).await;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // User activity tracking
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Health-check all running instances and update failure counters.
+    /// Called periodically by the lifecycle thread.
+    /// Instances with >= `threshold` consecutive failures are marked Error.
+    pub async fn health_check_all(&self, threshold: u8) {
+        let check_items: Vec<(String, String)> = {
+            let models = self.models.read().await;
+            models
+                .iter()
+                .flat_map(|(model_id, m)| {
+                    m.instances
+                        .iter()
+                        .filter(|i| {
+                            i.status == ModelStatus::Ready || i.status == ModelStatus::Loading
+                        })
+                        .map(|i| (model_id.clone(), i.instance_id.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+
+        for (model_id, instance_id) in check_items {
+            let is_healthy = {
+                let models = self.models.read().await;
+                let backends = self.backends.read().await;
+                let Some(m) = models.get(&model_id) else { continue };
+                let Some(inst) = m.instances.iter().find(|i| i.instance_id == instance_id) else { continue };
+                let Some(handle_arc) = inst.handle.as_ref() else { continue };
+                let Some(backend_arc) = backends.get(&model_id) else { continue };
+                backend_arc.is_healthy(handle_arc).await
+            };
+
+            let mut models = self.models.write().await;
+            let Some(m) = models.get_mut(&model_id) else { continue };
+            let Some(inst) = m.instances.iter_mut().find(|i| i.instance_id == instance_id) else { continue };
+
+            if is_healthy {
+                inst.consecutive_health_failures = 0;
+            } else {
+                inst.consecutive_health_failures =
+                    inst.consecutive_health_failures.saturating_add(1);
+                log::warn!(
+                    "Health check failed for '{}' instance '{}' (consecutive={})",
+                    model_id,
+                    instance_id,
+                    inst.consecutive_health_failures
+                );
+                if inst.consecutive_health_failures >= threshold {
+                    log::error!(
+                        "Instance '{}' of '{}' exceeded health threshold; marking Error",
+                        instance_id,
+                        model_id
+                    );
+                    inst.status = ModelStatus::Error(format!(
+                        "Failed {} consecutive health checks",
+                        inst.consecutive_health_failures
+                    ));
+                    m.last_crash = Some(Instant::now());
+                }
+            }
+        }
+    }
+
+    /// Record that a user-facing request just arrived. Background tasks check
+    /// `is_user_active()` and yield to avoid starving the user's response.
+    pub fn mark_user_activity(&self) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.user_last_active_ms.store(now_ms, Ordering::Relaxed);
+    }
+
+    /// Returns `true` if a user-facing request arrived within the last 10 seconds.
+    pub fn is_user_active(&self) -> bool {
+        let last_ms = self.user_last_active_ms.load(Ordering::Relaxed);
+        if last_ms == 0 {
+            return false;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        now_ms.saturating_sub(last_ms) < 10_000
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Capacity helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Returns `true` if the model has at least one Ready instance with no active requests.
+    pub async fn has_free_instance(&self, model_id: &str) -> bool {
+        let models = self.models.read().await;
+        models.get(model_id).map_or(false, |m| {
+            m.instances
+                .iter()
+                .any(|i| i.status == ModelStatus::Ready && i.active_requests == 0)
+        })
+    }
+
+    /// Returns the number of non-shutting-down instances for a model.
+    pub async fn instance_count(&self, model_id: &str) -> usize {
+        let models = self.models.read().await;
+        models.get(model_id).map_or(0, |m| {
+            m.instances
+                .iter()
+                .filter(|i| i.status != ModelStatus::ShuttingDown)
+                .count()
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Memory eviction
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Attempt to free enough memory for `needed_mb` by stopping idle models.
+    /// Models in `skip_id` or pinned by a reservation are never evicted.
+    /// Returns an error only if budget is still exceeded after eviction.
+    async fn evict_until_fits(&self, needed_mb: u32, skip_id: &str) -> Result<(), String> {
+        let reserved = self.reserved_model_ids.read().await.clone();
+
+        for _attempt in 0..5 {
+            let candidates = self.collect_eviction_candidates(skip_id, &reserved).await;
+            if candidates.is_empty() {
+                break;
+            }
+
+            // Check if we already have room (another task may have freed memory).
+            {
+                let models = self.models.read().await;
+                let current = self.current_memory_usage_internal(&models);
+                if current + needed_mb <= self.memory_budget_mb {
+                    return Ok(());
+                }
+            }
+
+            // Evict the highest-memory idle candidate.
+            let best = candidates.into_iter().max_by_key(|(_, mb)| *mb);
+            if let Some((evict_id, _)) = best {
+                log::info!("evict_until_fits: evicting '{evict_id}' to free memory");
+                let _ = self.stop_model(&evict_id).await;
+            }
+        }
+
+        // Final check.
+        let models = self.models.read().await;
+        let current = self.current_memory_usage_internal(&models);
+        if current + needed_mb > self.memory_budget_mb {
+            return Err(format!(
+                "Memory budget exceeded after eviction: current={current}MB, needed={needed_mb}MB, budget={}MB",
+                self.memory_budget_mb
+            ));
+        }
+        Ok(())
+    }
+
+    /// Collect (model_id, memory_mb) pairs of idle models eligible for eviction.
+    async fn collect_eviction_candidates(
+        &self,
+        skip_id: &str,
+        reserved: &HashSet<String>,
+    ) -> Vec<(String, u32)> {
+        let models = self.models.read().await;
+        models
+            .iter()
+            .filter(|(id, m)| {
+                *id != skip_id
+                    && !reserved.contains(*id)
+                    && m.instances.iter().all(|i| {
+                        i.active_requests == 0
+                            && i.status != ModelStatus::ShuttingDown
+                            && i.status != ModelStatus::Loading
+                    })
+                    && !m.instances.is_empty()
+            })
+            .map(|(id, m)| (id.clone(), m.def.memory_mb))
+            .collect()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pipeline reservations (parallel pre-warm + pin for multi-model pipelines)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Pre-warm all models in `model_ids` in parallel and pin them so the
+    /// eviction loop cannot remove them while the pipeline is running.
+    /// Returns a `PipelineReservation` that must be passed to `release_pipeline()`
+    /// when the pipeline completes.
+    pub async fn reserve_pipeline(
+        self: &Arc<Self>,
+        model_ids: Vec<String>,
+    ) -> Result<PipelineReservation, String> {
+        // Pin the model IDs immediately so concurrent eviction cannot race.
+        {
+            let mut reserved = self.reserved_model_ids.write().await;
+            for id in &model_ids {
+                reserved.insert(id.clone());
+            }
+        }
+
+        // Pre-warm all models in parallel.
+        let warm_tasks: Vec<_> = model_ids
+            .iter()
+            .map(|id| {
+                let mgr = Arc::clone(self);
+                let id = id.clone();
+                async move {
+                    mgr.ensure_running(&id, false).await.map(|_| ())
+                }
+            })
+            .collect();
+
+        let results = futures_util::future::join_all(warm_tasks).await;
+
+        // If any pre-warm failed, unpin everything and return the error.
+        let mut errors: Vec<String> = results.into_iter().filter_map(|r| r.err()).collect();
+        if !errors.is_empty() {
+            let mut reserved = self.reserved_model_ids.write().await;
+            for id in &model_ids {
+                reserved.remove(id);
+            }
+            return Err(format!(
+                "Pipeline pre-warm failed: {}",
+                errors.join("; ")
+            ));
+        }
+
+        Ok(PipelineReservation::new(model_ids))
+    }
+
+    /// Release a pipeline reservation, unpinning its models so they can be evicted.
+    pub async fn release_pipeline(&self, reservation: PipelineReservation) {
+        let mut reserved = self.reserved_model_ids.write().await;
+        for id in &reservation.model_ids {
+            reserved.remove(id);
+        }
+        log::debug!(
+            "Released pipeline reservation '{}' ({} models)",
+            &reservation.id[..8],
+            reservation.model_ids.len()
+        );
+    }
+
+    /// Snapshot of currently-reserved model IDs (for lifecycle/health checks).
+    pub async fn reserved_model_ids_snapshot(&self) -> HashSet<String> {
+        self.reserved_model_ids.read().await.clone()
     }
 }
 

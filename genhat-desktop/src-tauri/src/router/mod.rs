@@ -13,6 +13,7 @@ use crate::registry::types::{TaskRequest, TaskResponse, TaskType};
 use crate::registry::types::ModelDef;
 use crate::registry::ModelRegistry;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The task router — stateless, uses registry for lookups and process manager for execution.
 pub struct TaskRouter {
@@ -43,6 +44,23 @@ impl TaskRouter {
         // Determine candidate models (ranked) and try them in order.
         let candidates = self.resolve_model_candidates(request).await?;
         let is_ephemeral = pool::is_ephemeral_task(&request.task_type);
+        let is_high = pool::is_high_priority(&request.task_type);
+
+        // High-priority (user-facing) requests stamp the activity clock.
+        if is_high {
+            self.process_manager.mark_user_activity();
+        }
+
+        // Low-priority background requests yield if a user is actively waiting.
+        // This prevents enrichment/grading loops from starving chat responses.
+        if !is_high && self.process_manager.is_user_active() {
+            for _ in 0..pool::LOW_PRIORITY_YIELD_RETRIES {
+                if self.any_candidate_has_free_slot(&candidates).await {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(pool::LOW_PRIORITY_YIELD_MS)).await;
+            }
+        }
 
         // If the request specifies a larger ctx_size than the model is currently
         // running with, stop and respawn with the new context size.
@@ -105,6 +123,16 @@ impl TaskRouter {
             errors.join(" | ")
         ))
         }) // end Box::pin
+    }
+
+    /// Check if any candidate model has at least one ready, idle instance.
+    async fn any_candidate_has_free_slot(&self, candidates: &[String]) -> bool {
+        for id in candidates {
+            if self.process_manager.has_free_instance(id).await {
+                return true;
+            }
+        }
+        false
     }
 
     /// Resolve which model should handle a request.

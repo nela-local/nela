@@ -1,0 +1,74 @@
+{
+  "name": "Code Review",
+  "description": "Read a source file, ask an LLM to review it, write the review to a markdown file, and notify when done.",
+  "auto_resume": false,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "playgroundNode",
+      "position": { "x": 80, "y": 160 },
+      "data": {
+        "kind": "Manual",
+        "label": "Start",
+        "config": { "label": "Start" }
+      }
+    },
+    {
+      "id": "n2",
+      "type": "playgroundNode",
+      "position": { "x": 320, "y": 160 },
+      "data": {
+        "kind": "FileRead",
+        "label": "Read Source File",
+        "config": { "path": "", "encoding": "utf8" }
+      }
+    },
+    {
+      "id": "n3",
+      "type": "playgroundNode",
+      "position": { "x": 560, "y": 160 },
+      "data": {
+        "kind": "LlmChat",
+        "label": "LLM Code Review",
+        "config": {
+          "model_id": "",
+          "system_prompt": "You are an expert code reviewer. Review the code provided and give structured feedback covering: correctness, potential bugs, security issues, performance, readability, and suggestions for improvement. Use markdown with clear section headers.",
+          "max_tokens": 2048,
+          "ctx_size": 16384
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "type": "playgroundNode",
+      "position": { "x": 800, "y": 160 },
+      "data": {
+        "kind": "FileWrite",
+        "label": "Save Review",
+        "config": {
+          "path": "~/Documents/code-review.md",
+          "append": false
+        }
+      }
+    },
+    {
+      "id": "n5",
+      "type": "playgroundNode",
+      "position": { "x": 1040, "y": 160 },
+      "data": {
+        "kind": "Notification",
+        "label": "Done",
+        "config": {
+          "title": "Code Review Complete",
+          "body_template": "Review saved to ~/Documents/code-review.md"
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1-2", "source": "n1", "target": "n2" },
+    { "id": "e2-3", "source": "n2", "target": "n3" },
+    { "id": "e3-4", "source": "n3", "target": "n4" },
+    { "id": "e4-5", "source": "n4", "target": "n5" }
+  ]
+}

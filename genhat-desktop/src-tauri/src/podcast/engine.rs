@@ -111,7 +111,66 @@ fn dynamic_top_k_with_feedback(query: &str, max_turns: usize) -> usize {
 /// 2. **Scripting** — LLM generates a two-person dialogue
 /// 3. **TTS** — each line is synthesized with the assigned voice
 /// 4. **Merging** — all WAV segments are concatenated
+///
+/// Models for script and TTS are pre-warmed in parallel and pinned via
+/// a `PipelineReservation` for the duration of the pipeline to prevent
+/// the memory eviction loop from unloading them mid-generation.
 pub async fn generate_podcast(
+    app: &AppHandle,
+    request: PodcastRequest,
+    rag_pipeline: Arc<RagPipeline>,
+    router: Arc<TaskRouter>,
+) -> Result<PodcastResult, String> {
+    // ─── Pre-warm and pin both models (parallel) ──────────────────────────
+    // Discover model IDs for podcast script (LLM) and TTS. We gather
+    // candidates from the router and pre-warm them concurrently so the user
+    // doesn't pay cold-start cost for the second model after the first finishes.
+    let script_model = router
+        .get_model_def_for_task(&TaskType::PodcastScript)
+        .await;
+    let tts_model = router
+        .get_model_def_for_task(&TaskType::Tts)
+        .await;
+
+    let mut model_ids: Vec<String> = Vec::new();
+    if let Some(def) = &script_model {
+        model_ids.push(def.id.clone());
+    }
+    if let Some(def) = &tts_model {
+        if !model_ids.contains(&def.id) {
+            model_ids.push(def.id.clone());
+        }
+    }
+
+    // Pin models (parallel pre-warm). Returns an error if any model fails to start.
+    let reservation = if !model_ids.is_empty() {
+        match router
+            .process_manager
+            .reserve_pipeline(model_ids)
+            .await
+        {
+            Ok(r) => Some(r),
+            Err(e) => {
+                log::warn!("Podcast: pipeline reservation failed ({e}); proceeding without pin");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let result = generate_podcast_inner(app, request, rag_pipeline, router.clone()).await;
+
+    // Release the reservation regardless of whether generation succeeded.
+    if let Some(res) = reservation {
+        router.process_manager.release_pipeline(res).await;
+    }
+
+    result
+}
+
+/// Inner implementation — runs all 4 pipeline stages.
+async fn generate_podcast_inner(
     app: &AppHandle,
     request: PodcastRequest,
     rag_pipeline: Arc<RagPipeline>,

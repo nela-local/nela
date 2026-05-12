@@ -432,6 +432,12 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
     // Metal GPU init can take a few seconds even on a healthy start.
     let stuck_check_after = std::time::Duration::from_secs(15);
 
+    // Adaptive poll backoff: start fast (50ms), ramp up to 500ms.
+    // This keeps cold-start latency low while reducing CPU churn once the
+    // model is actually loading memory.
+    let poll_delays_ms: &[u64] = &[50, 100, 200, 500];
+    let mut poll_step: usize = 0;
+
     loop {
         if Instant::now() > deadline {
             // Timeout — kill the process since it's likely stuck
@@ -509,7 +515,11 @@ async fn wait_for_ready(port: u16, pid: u32, timeout_secs: u64) -> Result<(), St
                 return Ok(());
             }
             _ => {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let delay_ms = poll_delays_ms[poll_step.min(poll_delays_ms.len() - 1)];
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                if poll_step < poll_delays_ms.len() - 1 {
+                    poll_step += 1;
+                }
             }
         }
     }
@@ -555,6 +565,14 @@ impl ModelBackend for LlamaServerBackend {
             port: Some(port),
             started_at: Instant::now(),
             work_dir,
+            // Persistent client: connection pooling + TCP keep-alive avoids
+            // re-establishing a new TCP connection for every inference request.
+            http_client: reqwest::Client::builder()
+                .pool_max_idle_per_host(2)
+                .tcp_keepalive(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .build()
+                .ok(),
         });
 
         // Wait for the server to be ready (up to 120s for large models with big ctx).
@@ -595,19 +613,22 @@ impl ModelBackend for LlamaServerBackend {
         request: &TaskRequest,
         _models_dir: &Path,
     ) -> Result<TaskResponse, String> {
-        let port = match handle {
-            Process(ph) => ph.port.ok_or("llama-server has no port assigned")?,
+        let (port, persistent_client) = match handle {
+            Process(ph) => (
+                ph.port.ok_or("llama-server has no port assigned")?,
+                ph.http_client.as_ref(),
+            ),
             _ => return Err("LlamaServerBackend requires a ProcessHandle".into()),
         };
 
         // ── Embedding requests go to /v1/embeddings ──
         if request.task_type == crate::registry::types::TaskType::Embed {
-            return self.execute_embedding(port, request).await;
+            return self.execute_embedding(port, request, persistent_client).await;
         }
 
         // ── Classification requests get a short completion and parse the label ──
         if request.task_type == crate::registry::types::TaskType::Classify {
-            return self.execute_classification(port, request).await;
+            return self.execute_classification(port, request, persistent_client).await;
         }
 
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
@@ -759,7 +780,15 @@ impl ModelBackend for LlamaServerBackend {
             | crate::registry::types::TaskType::PodcastScript => 180,
             _ => 90,
         };
-        let client = http_client_with_timeout(timeout_secs)?;
+        // Use the instance's persistent client when available (avoids TCP reconnect
+        // per request). Fall back to a short-lived client if none was stored.
+        let owned_client;
+        let client: &reqwest::Client = if let Some(c) = persistent_client {
+            c
+        } else {
+            owned_client = http_client_with_timeout(timeout_secs)?;
+            &owned_client
+        };
         let resp = client
             .post(&url)
             .json(&body)
@@ -879,6 +908,7 @@ impl LlamaServerBackend {
         &self,
         port: u16,
         request: &TaskRequest,
+        persistent_client: Option<&reqwest::Client>,
     ) -> Result<TaskResponse, String> {
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
 
@@ -900,7 +930,13 @@ impl LlamaServerBackend {
             "max_tokens": 16
         });
 
-        let client = http_client_with_timeout(15)?;
+        let owned_client;
+        let client: &reqwest::Client = if let Some(c) = persistent_client {
+            c
+        } else {
+            owned_client = http_client_with_timeout(15)?;
+            &owned_client
+        };
         let resp = client
             .post(&url)
             .json(&body)
@@ -945,6 +981,7 @@ impl LlamaServerBackend {
         &self,
         port: u16,
         request: &TaskRequest,
+        persistent_client: Option<&reqwest::Client>,
     ) -> Result<TaskResponse, String> {
         let url = format!("http://127.0.0.1:{port}/v1/embeddings");
 
@@ -956,7 +993,13 @@ impl LlamaServerBackend {
             "input": texts
         });
 
-        let client = http_client_with_timeout(180)?;
+        let owned_client;
+        let client: &reqwest::Client = if let Some(c) = persistent_client {
+            c
+        } else {
+            owned_client = http_client_with_timeout(180)?;
+            &owned_client
+        };
         let resp = client
             .post(&url)
             .json(&body)

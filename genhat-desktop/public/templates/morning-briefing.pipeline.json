@@ -1,0 +1,59 @@
+{
+  "name": "Morning Briefing",
+  "description": "Fetch RSS headlines every morning, summarize them, and show a notification.",
+  "auto_resume": true,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "playgroundNode",
+      "position": { "x": 80, "y": 160 },
+      "data": {
+        "kind": "Schedule",
+        "label": "Every Morning",
+        "config": { "cron": "0 7 * * *" }
+      }
+    },
+    {
+      "id": "n2",
+      "type": "playgroundNode",
+      "position": { "x": 320, "y": 160 },
+      "data": {
+        "kind": "RssReader",
+        "label": "Fetch Headlines",
+        "config": { "url": "https://feeds.bbci.co.uk/news/rss.xml", "max_items": 8 }
+      }
+    },
+    {
+      "id": "n3",
+      "type": "playgroundNode",
+      "position": { "x": 560, "y": 160 },
+      "data": {
+        "kind": "Summarize",
+        "label": "Summarize",
+        "config": {
+          "model_id": "",
+          "style": "bullet",
+          "max_tokens": 512
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "type": "playgroundNode",
+      "position": { "x": 800, "y": 160 },
+      "data": {
+        "kind": "Notification",
+        "label": "Morning Briefing",
+        "config": {
+          "title": "Morning Briefing",
+          "body_template": "{{output}}"
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1-2", "source": "n1", "target": "n2" },
+    { "id": "e2-3", "source": "n2", "target": "n3" },
+    { "id": "e3-4", "source": "n3", "target": "n4" }
+  ]
+}

@@ -2,6 +2,7 @@
 
 /* ── Void Glass Theme ── */
 @theme {
+  --color-void-950: #04040a;
   --color-void-900: #08080c;
   --color-void-800: #0e0e14;
   --color-void-700: #15151e;
@@ -27,6 +28,36 @@
   --color-success: #34d399;
   --color-warning: #fbbf24;
   --color-danger: #f87171;
+}
+
+/* ── Light Mode Overrides ── */
+html[data-theme="light"] {
+  --color-void-950: #eeeef5;
+  --color-void-900: #f4f4f8;
+  --color-void-800: #eaeaf2;
+  --color-void-700: #dddde8;
+  --color-void-600: #d0d0de;
+  --color-void-500: #bdbdce;
+
+  --color-glass-bg: rgba(0, 0, 0, 0.02);
+  --color-glass-border: rgba(0, 0, 0, 0.09);
+  --color-glass-hover: rgba(0, 0, 0, 0.05);
+
+  --color-neon: #0099cc;
+  --color-neon-hover: #007aaa;
+  --color-neon-subtle: rgba(0, 153, 204, 0.10);
+  --color-neon-glow: rgba(0, 153, 204, 0.22);
+
+  --color-coral: #e05050;
+  --color-coral-subtle: rgba(224, 80, 80, 0.10);
+
+  --color-txt: #1c1c2e;
+  --color-txt-secondary: #4a4860;
+  --color-txt-muted: #8886a0;
+
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
 }
 
 /* ── Base Layer ── */

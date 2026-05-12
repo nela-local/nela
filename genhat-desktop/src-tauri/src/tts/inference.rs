@@ -4,8 +4,9 @@
 //!   text → preprocess → phonemize → tokenize → ONNX inference → audio
 //!
 //! The engine holds the loaded ONNX session, voice bank, and config.
-//! It is designed to be wrapped in `Arc<Mutex<…>>` for thread safety
-//! and stored inside an `InMemoryHandle` by the backend.
+//! Stored inside an `Arc<KittenTtsEngine>` for thread-safe concurrent inference:
+//! ort 2.x `Session::run()` takes `&self` and is safe to call from multiple
+//! threads simultaneously, so no `Mutex` is required.
 
 use crate::tts::{
     phonemizer,
@@ -18,7 +19,6 @@ use ort::session::Session;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config (parsed from config.json in the model directory)
@@ -43,8 +43,11 @@ pub struct KittenTtsConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The fully loaded KittenTTS inference engine.
+///
+/// `Session::run()` takes `&mut self`, so the session is wrapped in a
+/// `Mutex` to allow concurrent access from an `Arc<KittenTtsEngine>`.
 pub struct KittenTtsEngine {
-    session: Mutex<Session>,
+    session: std::sync::Mutex<Session>,
     voice_bank: VoiceBank,
     text_cleaner: TextCleaner,
     preprocessor: TextPreprocessor,
@@ -93,7 +96,7 @@ impl KittenTtsEngine {
         }
 
         Ok(Self {
-            session: Mutex::new(session),
+            session: std::sync::Mutex::new(session),
             voice_bank,
             text_cleaner: TextCleaner::new(),
             preprocessor: TextPreprocessor::new(),
@@ -217,13 +220,9 @@ impl KittenTtsEngine {
         let speed_value = ort::value::Value::from_array(([1usize], vec![effective_speed]))
             .map_err(|e| format!("ORT speed: {e}"))?;
 
-        // Run inference
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|e| format!("KittenTTS session lock poisoned: {e}"))?;
-
-        let outputs = session
+        // Run inference — lock the session mutex for the duration of this call.
+        let mut session_guard = self.session.lock().unwrap();
+        let outputs = session_guard
             .run(ort::inputs![
                 "input_ids" => input_ids,
                 "style" => style_value,

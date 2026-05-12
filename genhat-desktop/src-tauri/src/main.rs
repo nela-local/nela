@@ -58,6 +58,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 1. Load model registry from embedded models.toml
             let registry = Arc::new(

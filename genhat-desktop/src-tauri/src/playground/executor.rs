@@ -17,6 +17,7 @@ pub async fn run_pipeline(
     router: Arc<TaskRouter>,
     app_data_dir: PathBuf,
     app_handle: tauri::AppHandle,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
 ) -> PipelineRun {
     let run_id = Uuid::new_v4().to_string();
     let mut node_states: HashMap<String, NodeRunState> = HashMap::new();
@@ -35,6 +36,14 @@ pub async fn run_pipeline(
             None => continue,
         };
 
+        // Check cancellation before executing each node
+        if *cancel_rx.borrow() {
+            log.push("[pipeline] run cancelled by user".to_string());
+            final_status = RunStatus::Error;
+            emit_update(&app_handle, &run_id, pipeline, &node_states, RunStatus::Error, &log);
+            break;
+        }
+
         log.push(format!("[{}] Starting node '{}'", node.data.kind, node.data.label));
 
         node_states.insert(
@@ -50,7 +59,7 @@ pub async fn run_pipeline(
         // Emit "node running" snapshot
         emit_update(&app_handle, &run_id, pipeline, &node_states, RunStatus::Running, &log);
 
-        match execute_node(node, &mut ctx, &router, &app_data_dir).await {
+        match execute_node(node, &mut ctx, &router, &app_data_dir, &app_handle).await {
             Ok(output) => {
                 log.push(format!(
                     "[{}] '{}' OK ({} chars)",

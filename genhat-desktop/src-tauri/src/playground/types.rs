@@ -22,6 +22,10 @@ pub enum NodeConfig {
     Template(TemplateConfig),
     Notification(NotificationConfig),
     Script(ScriptConfig),
+    HttpRequest(HttpRequestConfig),
+    RssReader(RssReaderConfig),
+    JsonPath(JsonPathConfig),
+    SetVariable(SetVariableConfig),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +34,11 @@ pub struct ScheduleConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManualConfig {}
+pub struct ManualConfig {
+    /// Optional text injected into ctx.output when the pipeline is triggered manually.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmChatConfig {
@@ -61,18 +69,26 @@ pub struct SummarizeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscribeConfig {
     pub model_id: String,
+    /// Optional audio file path. If absent, the pipeline context output is treated as the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtsConfig {
     pub engine_id: String,
+    /// Optional path where the generated audio file is saved. Uses a temp file if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RagQueryConfig {
-    pub workspace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
+    /// Optional Handlebars template to build the query string from ctx. Defaults to {{output}}.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_template: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +155,43 @@ pub struct ScriptConfig {
 
 fn default_timeout() -> u64 {
     30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpRequestConfig {
+    pub url: String,
+    #[serde(default = "default_method")]
+    pub method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+fn default_method() -> String {
+    "GET".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RssReaderConfig {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_items: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonPathConfig {
+    /// JSON Pointer (RFC 6901) e.g. "/items/0/title".
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetVariableConfig {
+    pub name: String,
+    /// Handlebars template rendered against run context.
+    pub value_template: String,
 }
 
 // ─── Graph elements ───────────────────────────────────────────────────────────

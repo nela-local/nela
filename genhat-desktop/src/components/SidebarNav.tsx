@@ -8,6 +8,8 @@ import {
   Save,
   Settings,
   HelpCircle,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 interface SidebarNavProps {
@@ -20,6 +22,8 @@ interface SidebarNavProps {
   onOpenHuggingFaceSearch?: () => void;
   workspaceBusy?: boolean;
   canExport?: boolean;
+  theme?: "dark" | "light";
+  onToggleTheme?: () => void;
 }
 
 const SidebarNav: React.FC<SidebarNavProps> = ({
@@ -32,6 +36,8 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
   onOpenHuggingFaceSearch,
   workspaceBusy = false,
   canExport = false,
+  theme = "dark",
+  onToggleTheme,
 }) => {
   return (
     <nav
@@ -80,6 +86,13 @@ const SidebarNav: React.FC<SidebarNavProps> = ({
           data-tour="sidebar-hf"
         >
           <span role="img" aria-label="Hugging Face" style={{ fontSize: "22px" }}>🤗</span>
+        </button>
+        <button
+          className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={onToggleTheme}
+        >
+          {theme === "dark" ? <Sun size={22} /> : <Moon size={22} />}
         </button>
         <button
           className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg transition-colors text-txt-secondary hover:text-neon"

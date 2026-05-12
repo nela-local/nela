@@ -1,10 +1,12 @@
 //! Playground node handlers — one function per NodeKind.
 
 use super::types::*;
+use crate::commands::rag::RagPipelineState;
 use crate::registry::types::{TaskRequest, TaskResponse, TaskType};
 use crate::router::TaskRouter;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tauri::{Emitter, Manager};
 
 /// Mutable execution context passed between nodes.
 pub struct RunContext {
@@ -89,13 +91,20 @@ pub async fn execute_node(
     ctx: &mut RunContext,
     router: &Arc<TaskRouter>,
     app_data_dir: &std::path::PathBuf,
+    app_handle: &tauri::AppHandle,
 ) -> Result<String, String> {
     let kind = node.data.kind.as_str();
     let cfg_val = node.data.config.clone();
 
     match kind {
         "Manual" | "Schedule" => {
-            // Trigger nodes — just pass through existing context
+            // Trigger nodes — seed ctx.output with the configured prompt if present,
+            // otherwise pass through existing context.
+            if let Ok(cfg) = serde_json::from_value::<ManualConfig>(cfg_val) {
+                if let Some(prompt) = cfg.prompt.filter(|p| !p.trim().is_empty()) {
+                    return Ok(prompt);
+                }
+            }
             Ok(ctx.output.clone())
         }
 
@@ -214,8 +223,13 @@ pub async fn execute_node(
             } else {
                 ctx.output.clone()
             };
-            // Log the notification since system-level toast depends on platform plugin at runtime
-            log::info!("[Notification] {}: {}", cfg.title, body);
+            // Send an OS-level desktop notification via notify-rust (direct D-Bus call on Linux,
+            // native API on macOS/Windows). Works even when the app window is minimised.
+            notify_rust::Notification::new()
+                .summary(&cfg.title)
+                .body(&body)
+                .show()
+                .map_err(|e| format!("Notification failed: {e}"))?;
             Ok(ctx.output.clone())
         }
 
@@ -225,9 +239,143 @@ pub async fn execute_node(
             run_script(&cfg, ctx, app_data_dir).await
         }
 
-        "Transcribe" | "Tts" | "RagQuery" => {
-            // These node kinds require the running model subsystem; log a stub for now.
-            log::warn!("Node kind '{kind}' is not fully handled in pipeline executor yet.");
+        "Transcribe" => {
+            let cfg: TranscribeConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid Transcribe config: {e}"))?;
+            // Use the explicit file_path if configured, otherwise treat ctx.output as the audio path.
+            let audio_path = cfg.file_path
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .unwrap_or(&ctx.output);
+            let req = TaskRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task_type: TaskType::Transcribe,
+                input: audio_path.to_string(),
+                model_override: if cfg.model_id.is_empty() { None } else { Some(cfg.model_id.clone()) },
+                extra: Default::default(),
+            };
+            match router.route(&req).await? {
+                TaskResponse::Transcription { segments } => {
+                    Ok(segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" "))
+                }
+                TaskResponse::Error(e) => Err(format!("Transcribe error: {e}")),
+                other => Err(format!("Unexpected Transcribe response: {:?}", other)),
+            }
+        }
+
+        "Tts" => {
+            let cfg: TtsConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid Tts config: {e}"))?;
+            let mut extra = HashMap::new();
+            if let Some(out_path) = cfg.output_path.as_deref().filter(|p| !p.is_empty()) {
+                extra.insert("output_path".to_string(), out_path.to_string());
+            }
+            let req = TaskRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                task_type: TaskType::Tts,
+                input: ctx.output.clone(),
+                model_override: if cfg.engine_id.is_empty() { None } else { Some(cfg.engine_id.clone()) },
+                extra,
+            };
+            match router.route(&req).await? {
+                TaskResponse::FilePath(path) => Ok(path),
+                TaskResponse::Error(e) => Err(format!("TTS error: {e}")),
+                other => Err(format!("Unexpected TTS response: {:?}", other)),
+            }
+        }
+
+        "RagQuery" => {
+            let cfg: RagQueryConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid RagQuery config: {e}"))?;
+            let rag_state = app_handle
+                .try_state::<RagPipelineState>()
+                .ok_or_else(|| "RAG pipeline state not available".to_string())?;
+            let pipeline = rag_state.active_pipeline()?;
+            let top_k = cfg.top_k.unwrap_or(5) as usize;
+            // Build the query: render the template if provided, otherwise use ctx.output directly.
+            let query = if let Some(tmpl) = &cfg.query_template {
+                render_handlebars(tmpl, ctx).unwrap_or_else(|_| ctx.output.clone())
+            } else {
+                ctx.output.clone()
+            };
+            let result = pipeline.query(&query, top_k).await?;
+            Ok(result.answer)
+        }
+
+        "HttpRequest" => {
+            let cfg: HttpRequestConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid HttpRequest config: {e}"))?;
+            let url = render_handlebars(&cfg.url, ctx).unwrap_or_else(|_| cfg.url.clone());
+            let method = cfg.method.to_uppercase();
+            let timeout_secs = cfg.timeout_secs.unwrap_or(30);
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(timeout_secs))
+                .build()
+                .map_err(|e| format!("HTTP client build error: {e}"))?;
+            let mut req = match method.as_str() {
+                "POST" => client.post(&url),
+                "PUT" => client.put(&url),
+                "PATCH" => client.patch(&url),
+                "DELETE" => client.delete(&url),
+                "HEAD" => client.head(&url),
+                _ => client.get(&url),
+            };
+            if let Some(headers) = &cfg.headers {
+                for (k, v) in headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+            }
+            if let Some(body_tmpl) = &cfg.body_template {
+                let body = render_handlebars(body_tmpl, ctx).unwrap_or_default();
+                req = req.body(body);
+            }
+            let resp = req.send().await.map_err(|e| format!("HTTP request failed: {e}"))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(format!("HTTP {}", status.as_u16()));
+            }
+            resp.text().await.map_err(|e| format!("HTTP response read failed: {e}"))
+        }
+
+        "RssReader" => {
+            let cfg: RssReaderConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid RssReader config: {e}"))?;
+            let max_items = cfg.max_items.unwrap_or(10) as usize;
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .map_err(|e| format!("HTTP client build error: {e}"))?;
+            let xml = client
+                .get(&cfg.url)
+                .header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml")
+                .send()
+                .await
+                .map_err(|e| format!("RSS fetch failed: {e}"))?
+                .text()
+                .await
+                .map_err(|e| format!("RSS read failed: {e}"))?;
+            parse_feed(&xml, max_items)
+        }
+
+        "JsonPath" => {
+            let cfg: JsonPathConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid JsonPath config: {e}"))?;
+            let parsed: serde_json::Value = serde_json::from_str(&ctx.output)
+                .map_err(|e| format!("JsonPath: input is not valid JSON: {e}"))?;
+            let result = parsed
+                .pointer(&cfg.path)
+                .ok_or_else(|| format!("JsonPath: path '{}' not found", cfg.path))?;
+            Ok(match result {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+        }
+
+        "SetVariable" => {
+            let cfg: SetVariableConfig =
+                serde_json::from_value(cfg_val).map_err(|e| format!("Invalid SetVariable config: {e}"))?;
+            let value = render_handlebars(&cfg.value_template, ctx)?;
+            ctx.vars.insert(cfg.name.clone(), serde_json::Value::String(value));
             Ok(ctx.output.clone())
         }
 
@@ -409,4 +557,80 @@ async fn run_script(
         }
     }
     Ok(stdout)
+}
+
+// ─── RSS / Atom feed parser ────────────────────────────────────────────────────
+
+fn parse_feed(xml: &str, max_items: usize) -> Result<String, String> {
+    let mut items: Vec<String> = Vec::new();
+    let mut search_from = 0;
+
+    while items.len() < max_items {
+        // Find the next <item> or <entry> opening tag (RSS vs Atom)
+        let item_pos = xml[search_from..].find("<item").map(|p| (search_from + p, "item"));
+        let entry_pos = xml[search_from..].find("<entry").map(|p| (search_from + p, "entry"));
+
+        let (abs_start, tag_name) = match (item_pos, entry_pos) {
+            (Some(a), Some(b)) => if a.0 <= b.0 { a } else { b },
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => break,
+        };
+
+        let close_tag = format!("</{}>", tag_name);
+        let Some(rel_end) = xml[abs_start..].find(&close_tag) else { break };
+        let abs_end = abs_start + rel_end + close_tag.len();
+        let block = &xml[abs_start..abs_end];
+
+        let title = extract_xml_text(block, "title").unwrap_or_default();
+        let link = extract_xml_text(block, "link")
+            .filter(|s| s.starts_with("http"))
+            .or_else(|| extract_xml_attr(block, "link", "href"))
+            .unwrap_or_default();
+
+        if !title.is_empty() {
+            items.push(if link.is_empty() {
+                format!("• {title}")
+            } else {
+                format!("• {title}\n  {link}")
+            });
+        }
+
+        search_from = abs_end;
+    }
+
+    if items.is_empty() {
+        Ok("(no items found in feed)".to_string())
+    } else {
+        Ok(items.join("\n\n"))
+    }
+}
+
+fn extract_xml_text(xml: &str, tag: &str) -> Option<String> {
+    let open_prefix = format!("<{}", tag);
+    let close_tag = format!("</{}>", tag);
+    let start = xml.find(&open_prefix)?;
+    let gt = xml[start..].find('>')?;
+    let content_start = start + gt + 1;
+    let end = xml[content_start..].find(&close_tag)?;
+    let content = xml[content_start..content_start + end].trim();
+    // Strip CDATA wrapper
+    let content = content
+        .strip_prefix("<![CDATA[")
+        .and_then(|s| s.strip_suffix("]]>"))
+        .unwrap_or(content)
+        .trim();
+    if content.is_empty() { None } else { Some(content.to_string()) }
+}
+
+fn extract_xml_attr(xml: &str, tag: &str, attr: &str) -> Option<String> {
+    let open_prefix = format!("<{}", tag);
+    let start = xml.find(&open_prefix)?;
+    let gt = xml[start..].find('>')?;
+    let tag_content = &xml[start..start + gt];
+    let attr_prefix = format!("{}=\"", attr);
+    let attr_start = tag_content.find(&attr_prefix)?;
+    let value_start = attr_start + attr_prefix.len();
+    let value_end = tag_content[value_start..].find('"')?;
+    Some(tag_content[value_start..value_start + value_end].to_string())
 }

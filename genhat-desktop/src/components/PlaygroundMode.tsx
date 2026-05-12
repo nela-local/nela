@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Trash2, RefreshCw, Clock, Download, Upload, Sparkles, ToggleLeft, ToggleRight } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Clock, Download, Upload, Sparkles, X as XIcon, ToggleLeft, ToggleRight, ArrowLeft } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { ReactFlowProvider } from "@xyflow/react";
 import { usePipelineStore } from "../hooks/usePipelineStore";
 import PlaygroundCanvas from "./PlaygroundCanvas";
@@ -151,6 +152,48 @@ function PipelineList({
             </p>
           </div>
         </button>
+        <button
+          onClick={() => onLoadTemplate("/templates/morning-briefing.pipeline.json")}
+          className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-white/5 transition-colors group/tpl"
+          title="Add Morning Briefing pipeline from starter template"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-txt-primary font-medium group-hover/tpl:text-indigo-300 transition-colors">
+              Morning Briefing
+            </p>
+            <p className="text-[10px] text-txt-muted leading-snug">
+              Schedule → RSS → Summarize → Notify
+            </p>
+          </div>
+        </button>
+        <button
+          onClick={() => onLoadTemplate("/templates/voice-memo.pipeline.json")}
+          className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-white/5 transition-colors group/tpl"
+          title="Add Voice Memo pipeline from starter template"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-txt-primary font-medium group-hover/tpl:text-indigo-300 transition-colors">
+              Voice Memo Note
+            </p>
+            <p className="text-[10px] text-txt-muted leading-snug">
+              Transcribe → LLM → FileWrite
+            </p>
+          </div>
+        </button>
+        <button
+          onClick={() => onLoadTemplate("/templates/code-review.pipeline.json")}
+          className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-white/5 transition-colors group/tpl"
+          title="Add Code Review pipeline from starter template"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-txt-primary font-medium group-hover/tpl:text-indigo-300 transition-colors">
+              Code Review
+            </p>
+            <p className="text-[10px] text-txt-muted leading-snug">
+              FileRead → LLM → FileWrite → Notify
+            </p>
+          </div>
+        </button>
       </div>
     </aside>
   );
@@ -158,14 +201,27 @@ function PipelineList({
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
-export default function PlaygroundMode() {
+export default function PlaygroundMode({ onNavigateBack }: { onNavigateBack?: () => void }) {
   const store = usePipelineStore();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ title: string; body: string } | null>(null);
+
+  // Listen for backend-emitted notifications from pipeline Notification nodes
+  useEffect(() => {
+    const unlistenPromise = listen<{ title: string; body: string }>("playground-notification", e => {
+      setNotification(e.payload);
+      const timer = setTimeout(() => setNotification(null), 6000);
+      return () => clearTimeout(timer);
+    });
+    return () => {
+      unlistenPromise.then(fn => fn());
+    };
+  }, []);
 
   // On mount, load the pipeline list
   useEffect(() => {
     store.loadPipelines();
-  }, []);
+  }, [store]);
 
   const selectedNode = store.activePipeline?.nodes.find(n => n.id === selectedNodeId) ?? null;
 
@@ -242,6 +298,20 @@ export default function PlaygroundMode() {
 
   return (
     <div className="flex flex-col h-full w-full bg-void-900 overflow-hidden">
+      {/* breadcrumb back bar */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/10 bg-void-950/60 shrink-0">
+        <button
+          onClick={onNavigateBack}
+          disabled={!onNavigateBack}
+          className="flex items-center gap-1.5 text-[11px] text-txt-muted hover:text-neon disabled:opacity-30 disabled:cursor-default transition-colors"
+          title="Back to Chat"
+        >
+          <ArrowLeft size={12} />
+          Back to Chat
+        </button>
+        <span className="text-[11px] text-txt-muted opacity-40">/</span>
+        <span className="text-[11px] text-txt font-medium">Playground</span>
+      </div>
       {/* main row */}
       <div className="flex flex-1 overflow-hidden">
         {/* pipeline list sidebar */}
@@ -325,6 +395,22 @@ export default function PlaygroundMode() {
               <ToggleLeft size={14} />
             )}
             {store.activePipeline.auto_resume ? "Scheduled" : "Manual only"}
+          </button>
+        </div>
+      )}
+
+      {/* Notification toast from pipeline Notification nodes */}
+      {notification && (
+        <div className="absolute bottom-6 right-6 z-50 max-w-xs bg-void-800 border border-white/15 rounded-xl shadow-xl px-4 py-3 flex items-start gap-3 animate-fade-in">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-txt-primary">{notification.title}</p>
+            <p className="text-xs text-txt-muted mt-0.5 leading-snug">{notification.body}</p>
+          </div>
+          <button
+            onClick={() => setNotification(null)}
+            className="text-txt-muted hover:text-txt-primary transition-colors mt-0.5"
+          >
+            <XIcon size={12} />
           </button>
         </div>
       )}

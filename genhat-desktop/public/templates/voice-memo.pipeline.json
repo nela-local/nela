@@ -1,0 +1,59 @@
+{
+  "name": "Voice Memo Note",
+  "description": "Manually trigger: transcribe an audio file, clean up the transcript with an LLM, and save to a note.",
+  "auto_resume": false,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "playgroundNode",
+      "position": { "x": 80, "y": 160 },
+      "data": {
+        "kind": "Manual",
+        "label": "Start",
+        "config": { "label": "Start" }
+      }
+    },
+    {
+      "id": "n2",
+      "type": "playgroundNode",
+      "position": { "x": 320, "y": 160 },
+      "data": {
+        "kind": "Transcribe",
+        "label": "Transcribe Audio",
+        "config": { "model_id": "parakeet-tdt" }
+      }
+    },
+    {
+      "id": "n3",
+      "type": "playgroundNode",
+      "position": { "x": 560, "y": 160 },
+      "data": {
+        "kind": "LlmChat",
+        "label": "Clean up transcript",
+        "config": {
+          "model_id": "",
+          "system_prompt": "You are a note-taking assistant. The user has provided a raw voice memo transcript. Clean it up: fix punctuation, remove filler words (um, uh, like), and organize it into clear paragraphs. Output only the cleaned note — no preamble.",
+          "max_tokens": 1024
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "type": "playgroundNode",
+      "position": { "x": 800, "y": 160 },
+      "data": {
+        "kind": "FileWrite",
+        "label": "Save Note",
+        "config": {
+          "path": "~/Documents/voice-memo-note.md",
+          "append": false
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1-2", "source": "n1", "target": "n2" },
+    { "id": "e2-3", "source": "n2", "target": "n3" },
+    { "id": "e3-4", "source": "n3", "target": "n4" }
+  ]
+}

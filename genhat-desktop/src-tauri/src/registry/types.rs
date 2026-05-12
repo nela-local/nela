@@ -248,6 +248,8 @@ pub struct ProcessHandle {
     pub started_at: Instant,
     /// Working directory of the process.
     pub work_dir: PathBuf,
+    /// Persistent HTTP client for this instance (connection pooling + keep-alive).
+    pub http_client: Option<reqwest::Client>,
 }
 
 /// Handle to an in-process model instance (placeholder for candle models).
@@ -290,12 +292,16 @@ pub struct ManagedInstance {
     pub last_activity: Instant,
     /// Number of in-flight requests on this instance.
     pub active_requests: u32,
+    /// Number of consecutive health check failures (reset on success).
+    pub consecutive_health_failures: u8,
 }
 
 /// All instances + metadata for a single registered model.
 pub struct ManagedModel {
     pub def: ModelDef,
     pub instances: Vec<ManagedInstance>,
+    /// Timestamp of the most recent instance crash, if any.
+    pub last_crash: Option<Instant>,
 }
 
 impl std::fmt::Debug for ManagedModel {

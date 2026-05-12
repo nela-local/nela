@@ -641,8 +641,8 @@ class BenchmarkRunner:
             last_ts, last_r, last_w = self._last_io
             dt = ts - last_ts
             if dt > 0:
-                read_rate = (stats["read_bytes"] - last_r) / dt
-                write_rate = (stats["write_bytes"] - last_w) / dt
+                read_rate = max(0.0, (stats["read_bytes"] - last_r) / dt)
+                write_rate = max(0.0, (stats["write_bytes"] - last_w) / dt)
         self._last_io = (ts, stats["read_bytes"], stats["write_bytes"])
 
         minflt_rate = None
